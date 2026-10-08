@@ -123,6 +123,10 @@ python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --docu
 
 ## 維護與 Release
 
+目前版本：`0.1.1`。本版新增更新後分支處理流程範本，並同步生成與必要審查規則。
+
+`04_上線指引.md` 必須包含更新後分支處理流程：正式驗證與部署SHA確認、release／hotfix回合併至正式及開發分支、衝突處理與測試、PR審核、tag核對、分支保留／清理條件及處理紀錄。依目標專案慣例填寫並附來源；分支名稱或策略未知列待確認，不自行猜測。插件只提供流程指引，未執行作業保持未執行狀態；必要審查同步核對這些內容。
+
 需要 Python 3.11–3.13 與 Git；腳本僅用標準函式庫。CI 在 Linux／Windows 執行：
 
 ```text
