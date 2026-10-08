@@ -2,34 +2,75 @@
 
 依目標 Git 專案的實際證據產出四份版更文件及必要審查報告。名稱 `release-docs`，版本 `0.1.0`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
 
-## 插件管理器
+## 插件安裝
 
-[原始碼](https://github.com/zokmi/release-docs-plugin) 目前為 private；遠端下載與 Release 需要有該 repository 的存取權，公開使用者目前不能直接安裝。提供 Claude `.claude-plugin/marketplace.json` 與 Codex `.agents/plugins/marketplace.json`，marketplace 名稱均為 `release-docs-plugins`，來源 `./` 指向這個独立專案根目錄。已以本機 CLI help 與只讀 Claude validator 驗證命令／封裝；未實際安裝、更新或移除使用者插件，未發布 Release，GitHub Actions 尚未在線執行。
+[原始碼](https://github.com/zokmi/release-docs-plugin) 為公開專案，可直接透過插件管理器從 GitHub 安裝，不需先 clone、不需複製 skills，也不需設定 GitHub API token。Marketplace 名稱為 `release-docs-plugins`，插件 ID 為 `release-docs@release-docs-plugins`。兩份 marketplace 的相對來源 `./` 指向下載後的完整專案根目錄。
 
-Claude Code（將本地路徑換成自己的 clone；亦可用有權限的遠端 URL）：
+### Claude Code
 
-```text
-claude plugin marketplace add "C:/path/release-docs-plugin"
-claude plugin install release-docs@release-docs-plugins
-claude plugin marketplace update release-docs-plugins
-claude plugin update release-docs@release-docs-plugins
-claude plugin uninstall release-docs@release-docs-plugins
-claude plugin marketplace remove release-docs-plugins
+在終端機執行：
+
+```sh
+claude plugin marketplace add https://github.com/zokmi/release-docs-plugin.git --scope user --json
+claude plugin install release-docs@release-docs-plugins --scope user --json
 ```
 
-Codex（本機 CLI 支援 add/remove，沒有 plugin install/update 子命令）：
+也可在 Claude Code 對話使用插件指令：
 
 ```text
-codex plugin marketplace add "C:/path/release-docs-plugin" --json
+/plugin marketplace add zokmi/release-docs-plugin
+/plugin install release-docs@release-docs-plugins
+```
+
+更新：
+
+```sh
+claude plugin marketplace update release-docs-plugins --json
+claude plugin update release-docs@release-docs-plugins --scope user --json
+```
+
+移除：
+
+```sh
+claude plugin uninstall release-docs@release-docs-plugins --scope user --json
+claude plugin marketplace remove release-docs-plugins --json
+```
+
+### Codex
+
+在終端機執行：
+
+```sh
+codex plugin marketplace add https://github.com/zokmi/release-docs-plugin.git --ref main --json
 codex plugin add release-docs@release-docs-plugins --json
+```
+
+Codex CLI 的安裝子命令是 `plugin add`，不是 `plugin install`。桌面版可在加入 marketplace 後重新啟動 app，於插件目錄選擇 `Release Docs Plugins` 安裝 `Release Docs`。
+
+更新 marketplace 與重新安裝插件：
+
+```sh
 codex plugin marketplace upgrade release-docs-plugins --json
 codex plugin remove release-docs@release-docs-plugins --json
 codex plugin add release-docs@release-docs-plugins --json
 ```
 
-`marketplace upgrade` 只更新 Git marketplace 快照；本地 clone 先透過 Git 更新。此 CLI 未提供獨立 plugin update，更新插件可經管理器移除後重新 add；這是可用命令組合，實際更新行為尚未驗證。移除 marketplace 用 `codex plugin marketplace remove release-docs-plugins`。安裝／更新後開始新對話以載入技能。產品只使用插件管理器，不要求手動複製 skills。
+此 CLI 沒有獨立的 `plugin update`；上述流程透過插件管理器重新安裝更新後的來源。
 
-Codex marketplace 路徑規則及 CLI 來源格式依 [OpenAI 官方封裝文件](https://developers.openai.com/plugins/build/plugins)，具體命令以本機 help（2026-10-08）為準。
+移除：
+
+```sh
+codex plugin remove release-docs@release-docs-plugins --json
+codex plugin marketplace remove release-docs-plugins --json
+```
+
+安裝／更新後開啟新對話以載入技能。以上安裝指令均以 GitHub repository 為來源，由插件管理器下載與安裝；不使用本機資料夾路徑作為安裝來源。2026-10-08 已在隔離的 Claude／Codex 設定目錄，實際完成上述遠端 marketplace 註冊與首次安裝，沒有改動既有使用者安裝。更新、移除及桌面介面操作尚未實際測試。
+
+Codex marketplace 與桌面插件目錄方式依 [OpenAI 官方封裝文件](https://developers.openai.com/plugins/build/plugins)，具體 CLI 子命令以本機 help 為準。
+
+### 給 agent 的安裝流程
+
+使用者要求安裝時，先判斷目標為 Claude Code 或 Codex，僅對指定工具執行上方插件管理器流程。先查 marketplace／插件狀態；已註冊就更新，未註冊才新增，避免重複。Marketplace 同名但來源不同時，先確認與處理該來源，不修改其他 marketplace 或插件。完成後回讀插件狀態，確認 ID 與版本再回報；缺 CLI 或實際安裝失敗時說明結果，不以複製 skills 代替安裝。
 
 ## 使用
 
@@ -48,7 +89,7 @@ base v1.2.0、target v1.3.0、direct，工作區不納入。
 舊通過報告需要重新驗證識別；缺必要來源保持待確認。
 ```
 
-輸出為 Git 根目錄 `docs/<當地日期>_<安全識別>/01_結構SQL.md`、`02_資料SQL.md`、`03_appsettings異動.md`、`04_上線指引.md`、`05_版更審查報告.md`。沒有類別異動也產文件并記錄盤點範圍。缺基準／識別先詢問；未提交內容分列，不冒充指定 revision。已有執行或簽核記錄另建 `_v2` 等版本。混合 SQL 保持完整執行單位且只執行一次。
+輸出為 Git 根目錄 `docs/<當地日期>_<安全識別>/01_結構SQL.md`、`02_資料SQL.md`、`03_appsettings異動.md`、`04_上線指引.md`、`05_版更審查報告.md`。沒有類別異動也產文件並記錄盤點範圍。缺基準／識別先詢問；未提交內容分列，不冒充指定 revision。已有執行或簽核記錄另建 `_v2` 等版本。混合 SQL 保持完整執行單位且只執行一次。
 
 必要審查僅「通過」「待確認」「未通過」，最多三輪。hash 只驗證證據未變，不替代語意審查；任何文件或來源異動令舊審查失效。敏感值整值遮罩，正式值與部署來源缺漏不可宣稱可上線。
 
@@ -88,7 +129,7 @@ git tag -a v0.1.0 -m "release-docs 0.1.0"
 git push origin v0.1.0
 ```
 
-以上是維護者發布流程，本次沒有執行 tag／push／Release。不要 force 覆寫 tag；版本錯誤使用新版本。Release workflow 支援推送 `v*` tag 與 workflow_dispatch 重跑既有 tag，先驗證嚴格 `vMAJOR.MINOR.PATCH`（禁止前導零與 prerelease），再 checkout。檢查三份版本、必備資源、tag commit 位於 `origin/main` 且 checkout 一致，Linux／Windows 測試通過才建立 GitHub Release。預設 contents:read，僅 release job contents:write。已有 Release 不修改；建立使用 `--verify-tag --generate-notes`。workflow 本身需在預設分支才可手動觸發；private repository 的 Release 仍受存取權限制，Release 不等於公開 marketplace 上架。
+以上是維護者發布流程；一般使用者僅需插件管理器安裝，不需建立 tag。不要 force 覆寫 tag；版本錯誤使用新版本。Release workflow 支援推送 `v*` tag 與 workflow_dispatch 重跑既有 tag，先驗證嚴格 `vMAJOR.MINOR.PATCH`（禁止前導零與 prerelease），再 checkout。檢查三份版本、必備資源、tag commit 位於 `origin/main` 且 checkout 一致，Linux／Windows 測試通過才建立 GitHub Release。預設 contents:read，僅 release job contents:write。已有 Release 不修改；建立使用 `--verify-tag --generate-notes`。workflow 本身需在預設分支才可手動觸發；此專案已公開；GitHub Release 不等於上架到官方插件目錄，安裝來源仍是上述 Git marketplace。
 
 ## 驗證界線
 
