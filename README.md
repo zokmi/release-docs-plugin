@@ -70,7 +70,19 @@ Codex marketplace 與桌面插件目錄方式依 [OpenAI 官方封裝文件](htt
 
 ### 給 agent 的安裝流程
 
-使用者要求安裝時，先判斷目標為 Claude Code 或 Codex，僅對指定工具執行上方插件管理器流程。先查 marketplace／插件狀態；已註冊就更新，未註冊才新增，避免重複。Marketplace 同名但來源不同時，先確認與處理該來源，不修改其他 marketplace 或插件。完成後回讀插件狀態，確認 ID 與版本再回報；缺 CLI 或實際安裝失敗時說明結果，不以複製 skills 代替安裝。
+使用者要求安裝時，先判斷目標為 Claude Code 或 Codex，僅對指定工具執行上方插件管理器流程。先查 marketplace／插件狀態；已註冊就更新，未註冊才新增，避免重複。Marketplace 同名但來源不同時，先確認與處理該來源，不修改其他 marketplace 或插件。完成後回讀插件狀態，確認 ID、版本與技能檔案，接著依下節清理已確認的舊版手動 skill，再回報安裝及備份結果；缺 CLI 或實際安裝失敗時保留舊 skill 並說明結果，不以複製 skills 代替安裝。
+
+### 安裝成功後清理舊版手動 skills（agent 必做）
+
+確認 `release-docs@release-docs-plugins` 已成功安裝且啟用，並確認快取內的 `release-docs`、`release-docs-review`、腳本及範本完整後，才進行清理。安裝失敗、缺檔或插件未啟用時，保留舊 skills 並回報問題。插件管理器本身不會自動移除以前手動安裝的 skill；由執行安裝任務的 agent 完成以下收尾。
+
+1. 僅盤點指定工具的手動 skill 載入目錄：Claude Code 的 `~/.claude/skills/`；Codex 的 `~/.codex/skills/`、共用的 `~/.agents/skills/`，以及目標專案實際使用的 skills 目錄。
+2. 已知被取代的舊技能是 `sql-release-signoff`（SQL 上線簽單）。讀取候選 `SKILL.md` 確認名稱、用途與來源，不以含有 SQL 或 release 字樣就判定可刪。手動安裝的同名 `release-docs`／`release-docs-review` 僅在確認屬於這個插件的舊副本時清理；使用者自行擴充的版本先保留並說明差異。
+3. 備份至載入目錄外，例如 Claude 的 `~/.claude/skill-backups/release-docs/<YYYYMMDD_HHMMSS>/`，或 Codex 的 `~/.codex/skill-backups/release-docs/<YYYYMMDD_HHMMSS>/`。備份不得放回任何 `skills/` 目錄內，避免被再次載入。路徑已存在就另開名稱，不覆寫舊備份。
+4. 驗證來源與備份目的地的解析後絕對路徑，來源必須是已確認的那個手動 skill，目的地必須在選定備份目錄內。遇到符號連結或 junction 先確認目標，不遞迴跟隨未知連結。使用所在平台原生檔案工具將整個舊 skill 目錄搬到備份目錄，保留 assets、references 與 scripts；不刪除整個 skills 根目錄。
+5. 確認原載入位置已無舊目錄、備份完整可還原，並再次確認插件仍已安裝且啟用。開啟新對話載入插件技能，回報移除的 skill、原位置、備份完整路徑及略過原因。舊版不存在就回報「無需清理」，不重複建立備份。
+
+保留插件管理器維護的所有 cache、其他工具設定與其他 skills。`redmine` 插件的 `release-change-items`、`redmine-issue-writing`、`issue-code-consistency-check` 不在本次清理範圍：它們提供版更 TSV、開單與需求查核，未被本插件完整取代。
 
 ## 使用
 
