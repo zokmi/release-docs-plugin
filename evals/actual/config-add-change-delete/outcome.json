@@ -1,0 +1,17 @@
+{
+  "outcome": "agent-observed; no automatic PASS grading",
+  "review_status": "待確認",
+  "rounds": 1,
+  "generated_documents": 5,
+  "sql_executed": false,
+  "checks": {
+    "completeness": "前後appsettings完整讀取，Feature三種變更及ConnectionStrings.Db修改列全",
+    "correctness": "Old真→不存在，Enabled不存在→真，Timeout10→20；整連線遮罩",
+    "execution": "CFG-001完整鍵核對，缺消費程式/provider，未猜正式值",
+    "verification": "正式安全来源/有效值/reload與恢复缺證，停止正式套用",
+    "safety": "輸出與安全來源匯出整連線遮罩、已知秘密不入成品"
+  },
+  "final_source_identity_matches_reviewed": true,
+  "report_write_does_not_invalidate": true,
+  "final_fingerprint": "5d5b8718b70494bee47343973e87634aeabbee34c145218a286ed9f9bdc2237c"
+}

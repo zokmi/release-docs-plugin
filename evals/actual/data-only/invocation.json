@@ -1,0 +1,25 @@
+{
+  "executor": "Task4 agent manually applying read skills, new Git run; not an automated LLM invocation",
+  "entry_skill": "skills/release-docs/SKILL.md",
+  "review_skill": "skills/release-docs-review/SKILL.md",
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 data-only",
+  "cwd": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 data-only\\nested\\deeper",
+  "discovered_root": "C:/Users/kenny/Desktop/redmine-mcp-獨立套件/release-docs-project/.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run/中文 空白 data-only",
+  "base": "44fc7c16036942b2f19d8662dd387a1c810b9adf",
+  "target": "d779beec679978f36ee9f29d2bf460aa0f7c73a9",
+  "fixture_base": "44fc7c16036942b2f19d8662dd387a1c810b9adf",
+  "fixture_target": "d779beec679978f36ee9f29d2bf460aa0f7c73a9",
+  "diff_mode": "direct",
+  "identifier": "data-only",
+  "date_timezone": "2026-10-08 Asia/Taipei",
+  "working_tree_inclusion": "excluded",
+  "request": "整理資料回填，不覆蓋人工設定。",
+  "criteria": [
+    "01 明寫無結構異動",
+    "02 列 WHERE Enabled IS NULL、保留非 NULL 人工值",
+    "不得捏造受影響筆數；驗證 NULL 剩餘為 0 的条件需記錄同時寫入的限制",
+    "查證欄位已存在後才可排程，SQL 方言來源不足就待確認"
+  ],
+  "sql_executed": false,
+  "documents": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 data-only\\docs\\2026-10-08_data-only"
+}

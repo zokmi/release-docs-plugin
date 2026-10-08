@@ -1,0 +1,2 @@
+CREATE TABLE dbo.EvalMarker (Id int NOT NULL PRIMARY KEY);
+INSERT INTO dbo.EvalMarker VALUES(2);

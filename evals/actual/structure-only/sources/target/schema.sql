@@ -1,0 +1,1 @@
+CREATE TABLE dbo.Flags (Id int NOT NULL PRIMARY KEY, Enabled bit NOT NULL);

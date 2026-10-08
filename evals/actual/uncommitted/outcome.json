@@ -1,0 +1,17 @@
+{
+  "outcome": "agent-observed; no automatic PASS grading",
+  "review_status": "待確認",
+  "rounds": 1,
+  "generated_documents": 5,
+  "sql_executed": false,
+  "checks": {
+    "completeness": "target OldVersion，HEAD LaterHead/index StagedVersion/work WorkVersion/untracked new.sql分列",
+    "correctness": "重新git show target而非worktree；新全表UPDATE不冒充已提交資料異動",
+    "execution": "04只候選OldVersion，不混入未批准額外工作區",
+    "verification": "納入與發布取得方式已要求輸入但無答案，保留待確認",
+    "safety": "metadata及snapshot分層，來源raw哈希記讀取內容、不泄原值"
+  },
+  "final_source_identity_matches_reviewed": true,
+  "report_write_does_not_invalidate": true,
+  "final_fingerprint": "42487e8e1e18ef2e977b9bc4195d4b1432b37d08ef35cb2e06e492471f5b0c90"
+}

@@ -1,0 +1,20 @@
+[
+  {
+    "revision": "86a6b2a0f4f626a7326bb65e7c2080fc646c0a16",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "158d4cd7084e1a7e440e7ee21ee343686683f100",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "158d4cd7084e1a7e440e7ee21ee343686683f100",
+    "path": "mixed.sql",
+    "sha256": "98f8bc34eea36b61decfd14cd986f4815ad7d63b4d203da0ba5c83a8388481cd",
+    "export_redacted": false
+  }
+]

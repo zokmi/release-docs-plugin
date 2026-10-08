@@ -1,0 +1,26 @@
+[
+  {
+    "revision": "e5561caa5de808a829a75e6df6dd39c26682c85f",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "d4245edc157f888e1cc13bd9c8a357e6200cc405",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "d4245edc157f888e1cc13bd9c8a357e6200cc405",
+    "path": "appsettings.json",
+    "sha256": "97b89757d7fbbf5d22f0df4578f895094a69d1dc1807e483b36dff7163f18775",
+    "export_redacted": true
+  },
+  {
+    "revision": "d4245edc157f888e1cc13bd9c8a357e6200cc405",
+    "path": "schema.sql",
+    "sha256": "7e0696bea60ec244c6623af3b658b8e881ccc6708b5df58e357892091d6c2a91",
+    "export_redacted": false
+  }
+]

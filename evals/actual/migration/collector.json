@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "repo_root": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 migration",
+  "base_sha": "b633e44e7dddf1f64c9fcde8b4a4841c6e531876",
+  "target_sha": "febd8e919834735bf35196d39328002638df5d66",
+  "diff_mode": "direct",
+  "committed_changes": [
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "Migrations/20261008_AddEnabled.cs",
+      "source_revision": "febd8e919834735bf35196d39328002638df5d66"
+    },
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "deploy.md",
+      "source_revision": "febd8e919834735bf35196d39328002638df5d66"
+    }
+  ],
+  "working_tree_changes": {
+    "staged": [],
+    "unstaged": [],
+    "untracked": []
+  }
+}

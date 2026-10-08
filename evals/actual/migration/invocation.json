@@ -1,0 +1,25 @@
+{
+  "executor": "Task4 agent manually applying read skills, new Git run; not an automated LLM invocation",
+  "entry_skill": "skills/release-docs/SKILL.md",
+  "review_skill": "skills/release-docs-review/SKILL.md",
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 migration",
+  "cwd": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 migration\\nested\\deeper",
+  "discovered_root": "C:/Users/kenny/Desktop/redmine-mcp-獨立套件/release-docs-project/.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run/中文 空白 migration",
+  "base": "b633e44e7dddf1f64c9fcde8b4a4841c6e531876",
+  "target": "febd8e919834735bf35196d39328002638df5d66",
+  "fixture_base": "b633e44e7dddf1f64c9fcde8b4a4841c6e531876",
+  "fixture_target": "febd8e919834735bf35196d39328002638df5d66",
+  "diff_mode": "direct",
+  "identifier": "migration",
+  "date_timezone": "2026-10-08 Asia/Taipei",
+  "working_tree_inclusion": "excluded",
+  "request": "使用既有 EF migration 產文件。",
+  "criteria": [
+    "記錄 migration ID、工具、歷史表與目前版本確認",
+    "不將 Up/Down 拆成手写 SQL 部署檔",
+    "UAT 指令不得冒充正式 bundle 指令；缺 bundle artifact 待確認",
+    "Down 刪欄位會失去資料，不宣稱安全回滾"
+  ],
+  "sql_executed": false,
+  "documents": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 migration\\docs\\2026-10-08_migration"
+}

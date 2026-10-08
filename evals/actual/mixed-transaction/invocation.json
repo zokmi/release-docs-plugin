@@ -1,0 +1,25 @@
+{
+  "executor": "Task4 agent manually applying read skills, new Git run; not an automated LLM invocation",
+  "entry_skill": "skills/release-docs/SKILL.md",
+  "review_skill": "skills/release-docs-review/SKILL.md",
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 mixed-transaction",
+  "cwd": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 mixed-transaction\\nested\\deeper",
+  "discovered_root": "C:/Users/kenny/Desktop/redmine-mcp-獨立套件/release-docs-project/.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run/中文 空白 mixed-transaction",
+  "base": "86a6b2a0f4f626a7326bb65e7c2080fc646c0a16",
+  "target": "158d4cd7084e1a7e440e7ee21ee343686683f100",
+  "fixture_base": "86a6b2a0f4f626a7326bb65e7c2080fc646c0a16",
+  "fixture_target": "158d4cd7084e1a7e440e7ee21ee343686683f100",
+  "diff_mode": "direct",
+  "identifier": "mixed-transaction",
+  "date_timezone": "2026-10-08 Asia/Taipei",
+  "working_tree_inclusion": "excluded",
+  "request": "完整執行混合腳本，不拆 SQL。",
+  "criteria": [
+    "01 與 02 引用同一執行 ID，04 只有一次執行單位",
+    "保留 GO 批次與交易完整來源",
+    "字串中的 DELETE/CREATE 不構成異動；不存在 Decoy 表與 Users 刪除",
+    "不把 XACT_ABORT 或有交易等同可安全重跑或全部自動回復"
+  ],
+  "sql_executed": false,
+  "documents": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 mixed-transaction\\docs\\2026-10-08_mixed-transaction"
+}

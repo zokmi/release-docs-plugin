@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repo_root": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 review-stale-report",
+  "base_sha": "28ffb8a6846bd39fd8956c7c907c5220e84514cf",
+  "target_sha": "3f5cdab3683de2a4e3518b422ed457aefe58b050",
+  "diff_mode": "direct",
+  "committed_changes": [
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "docs/migration.sql",
+      "source_revision": "3f5cdab3683de2a4e3518b422ed457aefe58b050"
+    }
+  ],
+  "working_tree_changes": {
+    "staged": [],
+    "unstaged": [],
+    "untracked": []
+  }
+}

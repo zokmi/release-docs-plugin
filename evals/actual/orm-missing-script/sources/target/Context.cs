@@ -1,0 +1,1 @@
+public DbSet<Invoice> Invoices { get; set; }

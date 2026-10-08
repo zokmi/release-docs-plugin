@@ -1,0 +1,12 @@
+{
+  "name": "release-docs-plugins",
+  "interface": { "displayName": "Release Docs Plugins" },
+  "plugins": [
+    {
+      "name": "release-docs",
+      "source": { "source": "local", "path": "./" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

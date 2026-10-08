@@ -1,0 +1,1 @@
+builder.Configuration.Sources.Clear(); builder.Configuration.AddEnvironmentVariables(); builder.Configuration.AddJsonFile("appsettings.json", optional: false); var url = builder.Configuration["Endpoints:0:Url"];

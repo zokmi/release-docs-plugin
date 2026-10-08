@@ -1,0 +1,1 @@
+CREATE TABLE dbo.OldVersion (Id int);

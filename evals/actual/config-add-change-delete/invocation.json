@@ -1,0 +1,25 @@
+{
+  "executor": "Task4 agent manually applying read skills, new Git run; not an automated LLM invocation",
+  "entry_skill": "skills/release-docs/SKILL.md",
+  "review_skill": "skills/release-docs-review/SKILL.md",
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 config-add-change-delete",
+  "cwd": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 config-add-change-delete\\nested\\deeper",
+  "discovered_root": "C:/Users/kenny/Desktop/redmine-mcp-獨立套件/release-docs-project/.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run/中文 空白 config-add-change-delete",
+  "base": "523654cc315c485a9e87766763e42b7000d25c78",
+  "target": "ab771e6cfb4e6e104e67c9387693f9fb91a8d3fa",
+  "fixture_base": "523654cc315c485a9e87766763e42b7000d25c78",
+  "fixture_target": "ab771e6cfb4e6e104e67c9387693f9fb91a8d3fa",
+  "diff_mode": "direct",
+  "identifier": "config-add-change-delete",
+  "date_timezone": "2026-10-08 Asia/Taipei",
+  "working_tree_inclusion": "excluded",
+  "request": "整理設定鍵新增、修改及移除。",
+  "criteria": [
+    "完整鍵 Feature:Old 移除、Feature:Enabled 新增、Feature:Timeout 10→20",
+    "連線字串舊新值整體遮罩，不只遮 Password",
+    "缺消費程式與正式來源時保留待確認，不聲稱正式有效",
+    "產出、日誌與 evidence 不出現敏感原值"
+  ],
+  "sql_executed": false,
+  "documents": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 config-add-change-delete\\docs\\2026-10-08_config-add-change-delete"
+}

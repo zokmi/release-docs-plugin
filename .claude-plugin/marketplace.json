@@ -1,0 +1,8 @@
+{
+  "name": "release-docs-plugins",
+  "owner": { "name": "Kenny Zheng" },
+  "metadata": { "description": "Release Docs plugins" },
+  "plugins": [
+    { "name": "release-docs", "source": "./", "description": "Git 證據、版更文件與必要審查" }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "executor": "Task4 agent manually applying read skills, new Git run; not an automated LLM invocation",
+  "entry_skill": "skills/release-docs/SKILL.md",
+  "review_skill": "skills/release-docs-review/SKILL.md",
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 orm-missing-script",
+  "cwd": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 orm-missing-script\\nested\\deeper",
+  "discovered_root": "C:/Users/kenny/Desktop/redmine-mcp-獨立套件/release-docs-project/.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run/中文 空白 orm-missing-script",
+  "base": "0c6810829285b6d6f1b55d0d8c50633934544bae",
+  "target": "13b547b87b8db9731650fc35ca5621a0acc63238",
+  "fixture_base": "0c6810829285b6d6f1b55d0d8c50633934544bae",
+  "fixture_target": "13b547b87b8db9731650fc35ca5621a0acc63238",
+  "diff_mode": "direct",
+  "identifier": "orm-missing-script",
+  "date_timezone": "2026-10-08 Asia/Taipei",
+  "working_tree_inclusion": "excluded",
+  "request": "新增實體已完成，整理上線指引。",
+  "criteria": [
+    "查完整範圍與 migration 後仍缺腳本，明寫 ORM 與資料庫部署缺口",
+    "不能把無 SQL 檔當成無資料庫異動",
+    "04 停止部署並要求 migration/既有 schema 證據，必要審查未通過"
+  ],
+  "sql_executed": false,
+  "documents": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 orm-missing-script\\docs\\2026-10-08_orm-missing-script"
+}

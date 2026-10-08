@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "repo_root": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 arrays-env-override",
+  "base_sha": "36a96cd3c131e13f3d19d46a3e37ca6ac37e5c77",
+  "target_sha": "0639e627d41d512895b24a64d4d3385b0d4de9ac",
+  "diff_mode": "direct",
+  "committed_changes": [
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "Program.cs",
+      "source_revision": "0639e627d41d512895b24a64d4d3385b0d4de9ac"
+    },
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "appsettings.json",
+      "source_revision": "0639e627d41d512895b24a64d4d3385b0d4de9ac"
+    },
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "deployment.yaml",
+      "source_revision": "0639e627d41d512895b24a64d4d3385b0d4de9ac"
+    }
+  ],
+  "working_tree_changes": {
+    "staged": [],
+    "unstaged": [],
+    "untracked": []
+  }
+}

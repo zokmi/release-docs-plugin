@@ -1,0 +1,43 @@
+{
+  "sources": [
+    {
+      "revision": "28ffb8a6846bd39fd8956c7c907c5220e84514cf",
+      "path": "AGENTS.md",
+      "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7"
+    },
+    {
+      "revision": "3f5cdab3683de2a4e3518b422ed457aefe58b050",
+      "path": "AGENTS.md",
+      "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7"
+    },
+    {
+      "revision": "3f5cdab3683de2a4e3518b422ed457aefe58b050",
+      "path": "docs/migration.sql",
+      "sha256": "27f2368fcf59e5bc76ee4cdac0afc760bc04df0b6c5247da2eafc704d13d135a"
+    },
+    {
+      "revision": "working-tree",
+      "path": "docs/migration.sql",
+      "sha256": "4740ccd788a170fc067660fc906438f2c8c4bcb5c6241c0b8ddad188217f8b4d"
+    }
+  ],
+  "documents": [
+    {
+      "path": "01_結構SQL.md",
+      "sha256": "b25f0639e6b677181fe98352ca45dd3b62d59bc7488e67b6a08a70192007d440"
+    },
+    {
+      "path": "02_資料SQL.md",
+      "sha256": "f2b7ca613d406b8868ac5952ea0995826b1791bc538381eb7755c43f382bbb3c"
+    },
+    {
+      "path": "03_appsettings異動.md",
+      "sha256": "2cc3c8cf2c25f7ea61ca2417a96ad36988e06818759c1cde56e429d9928d03a4"
+    },
+    {
+      "path": "04_上線指引.md",
+      "sha256": "fa83303206602615d75655c30b45e990b7126c30f91c6b6e20d4c0011acb54d1"
+    }
+  ],
+  "sql_executed": false
+}

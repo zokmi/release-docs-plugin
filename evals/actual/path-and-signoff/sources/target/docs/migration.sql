@@ -1,0 +1,1 @@
+CREATE TABLE dbo.EvalMarker (Id int NOT NULL PRIMARY KEY);

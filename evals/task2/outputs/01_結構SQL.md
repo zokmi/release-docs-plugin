@@ -17,7 +17,7 @@ SQL-001 為 target:mixed.sql 的完整執行單位；新增 dbo.Flags，Id int N
 
 執行前在既有 SQL Server 工具查 `SELECT OBJECT_ID(N'dbo.Flags', N'U');`，預期 NULL，表示不存在；若非 NULL 停止，核對既有 schema 與來源，不直接重跑。來源無存在性保護；同名物件會衝突。
 
-執行後執行 `SELECT name, TYPE_NAME(user_type_id) AS type_name, is_nullable FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.Flags', N'U');`，預期 Id/int/0 與 Note/nvarchar/1；另查 `SELECT name FROM sys.key_constraints WHERE parent_object_id = OBJECT_ID(N'dbo.Flags', N'U') AND type = 'PK';`，預期一筆主鍵。查詢是文件建議，未在資料庫執行。
+執行後執行 `SELECT name, TYPE_NAME(user_type_id) AS type_name, max_length, is_nullable FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.Flags', N'U');`，預期 Id/int/4/0 與 Note/nvarchar/200/1（nvarchar 長度以 bytes 表示）；另查 `SELECT c.name, ic.key_ordinal FROM sys.key_constraints k JOIN sys.index_columns ic ON ic.object_id=k.parent_object_id AND ic.index_id=k.unique_index_id JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id WHERE k.parent_object_id=OBJECT_ID(N'dbo.Flags', N'U') AND k.type='PK';`，預期 Id/key_ordinal=1 一筆。查詢是文件建議，未在資料庫執行。
 
 完整來源含 GO、BEGIN TRANSACTION、COMMIT 與 XACT_ABORT ON（1-7）；不拆批次或重新組合。只列一次 SQL-001。未提供工具的錯誤續跑策略與正式資料量，不能推定跨批次全部自動回復、可安全重跑或耗時。失敗即停止後續程式部署，保留訊息与已完成批次，查明交易狀態後再決定恢復；回復流程待確認。
 

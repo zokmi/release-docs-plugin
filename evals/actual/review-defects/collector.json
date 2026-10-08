@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "repo_root": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 review-defects",
+  "base_sha": "e5561caa5de808a829a75e6df6dd39c26682c85f",
+  "target_sha": "d4245edc157f888e1cc13bd9c8a357e6200cc405",
+  "diff_mode": "direct",
+  "committed_changes": [
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "appsettings.json",
+      "source_revision": "d4245edc157f888e1cc13bd9c8a357e6200cc405"
+    },
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "schema.sql",
+      "source_revision": "d4245edc157f888e1cc13bd9c8a357e6200cc405"
+    }
+  ],
+  "working_tree_changes": {
+    "staged": [],
+    "unstaged": [],
+    "untracked": []
+  }
+}

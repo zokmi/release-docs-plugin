@@ -1,0 +1,59 @@
+{
+  "sources": [
+    {
+      "revision": "37d881982a4ba7733ace4ffb0fd9c4bb7799367b",
+      "path": "AGENTS.md",
+      "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7"
+    },
+    {
+      "revision": "0110e36a8a8f82ab3031e03ddb166b31d8a17b46",
+      "path": "AGENTS.md",
+      "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7"
+    },
+    {
+      "revision": "0110e36a8a8f82ab3031e03ddb166b31d8a17b46",
+      "path": "schema.sql",
+      "sha256": "bf8df4c0b9a88b1f611f595a7279a4e1725b275c9b01db9fdcb3309c1c783f09"
+    },
+    {
+      "revision": "HEAD",
+      "path": "schema.sql",
+      "sha256": "ed0f4d1f2776f33eb48b8e6bc74e575f965c1cc0e4e3c229c729acf240fbcf4b"
+    },
+    {
+      "revision": "index",
+      "path": "schema.sql",
+      "sha256": "dc6ec0217b93166a66f97cd85f6c369a906740c8efc36be002525b8df71c249c"
+    },
+    {
+      "revision": "working-tree",
+      "path": "schema.sql",
+      "sha256": "cc5a81a9e9b8760260e9130d7d4823cc5fe220a75522b064222301baac0754b9"
+    },
+    {
+      "revision": "untracked",
+      "path": "new.sql",
+      "sha256": "389db8c910e9a0ad809bda49336f160c988a7f637abe3d7a1e36ce10e2219b1b"
+    }
+  ],
+  "documents": [
+    {
+      "path": "01_結構SQL.md",
+      "sha256": "cf41e6b855ecc2a1b9d9599d4efda7fc517c10e0ba8ca2ea8f3f46698988044c"
+    },
+    {
+      "path": "02_資料SQL.md",
+      "sha256": "a4f723441a72259069d6a8f3d908aa5c542d487f6f3673de22d258fb78edd30a"
+    },
+    {
+      "path": "03_appsettings異動.md",
+      "sha256": "fb4a5dd2e921712ce11bf68077d1508ea27a0390c6685188de5afcb2c78914e2"
+    },
+    {
+      "path": "04_上線指引.md",
+      "sha256": "4288210c61f795d39e9c24fd383bcb68d8ee2e334e617a92c63d070d7122f1c6"
+    }
+  ],
+  "sql_executed": false,
+  "method": "separate source+artifact reread; hash records what was read, does not decide semantic status"
+}

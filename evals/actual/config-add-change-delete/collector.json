@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repo_root": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 config-add-change-delete",
+  "base_sha": "523654cc315c485a9e87766763e42b7000d25c78",
+  "target_sha": "ab771e6cfb4e6e104e67c9387693f9fb91a8d3fa",
+  "diff_mode": "direct",
+  "committed_changes": [
+    {
+      "status": "M",
+      "old_path": null,
+      "path": "appsettings.json",
+      "source_revision": "ab771e6cfb4e6e104e67c9387693f9fb91a8d3fa"
+    }
+  ],
+  "working_tree_changes": {
+    "staged": [],
+    "unstaged": [],
+    "untracked": []
+  }
+}

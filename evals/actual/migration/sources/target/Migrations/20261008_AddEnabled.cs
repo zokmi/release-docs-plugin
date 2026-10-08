@@ -1,0 +1,2 @@
+protected override void Up(MigrationBuilder b) { b.AddColumn<bool>(name: "Enabled", table: "Users", nullable: false, defaultValue: true); }
+protected override void Down(MigrationBuilder b) { b.DropColumn(name: "Enabled", table: "Users"); }

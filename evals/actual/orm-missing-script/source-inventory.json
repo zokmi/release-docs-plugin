@@ -1,0 +1,26 @@
+[
+  {
+    "revision": "0c6810829285b6d6f1b55d0d8c50633934544bae",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "13b547b87b8db9731650fc35ca5621a0acc63238",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "13b547b87b8db9731650fc35ca5621a0acc63238",
+    "path": "Context.cs",
+    "sha256": "187c2a1fed1495bee73c50af61e7b690ed4f4f669650f690b80e7e65631ab974",
+    "export_redacted": false
+  },
+  {
+    "revision": "13b547b87b8db9731650fc35ca5621a0acc63238",
+    "path": "Models/Invoice.cs",
+    "sha256": "8e2a4557a07d46bae723762ec57c5b83ee00ead693990a662a358a6106f8af40",
+    "export_redacted": false
+  }
+]

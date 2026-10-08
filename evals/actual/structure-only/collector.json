@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repo_root": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 structure-only",
+  "base_sha": "531c6e8fdf96f6e6d25051d0f9389d60044902c7",
+  "target_sha": "e9ef25d82126c9fecf45ed3c42a82e2ae1f63bbc",
+  "diff_mode": "direct",
+  "committed_changes": [
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "schema.sql",
+      "source_revision": "e9ef25d82126c9fecf45ed3c42a82e2ae1f63bbc"
+    }
+  ],
+  "working_tree_changes": {
+    "staged": [],
+    "unstaged": [],
+    "untracked": []
+  }
+}

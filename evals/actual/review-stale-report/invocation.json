@@ -1,0 +1,24 @@
+{
+  "executor": "Task4 agent manually applying read skills, new Git run; not an automated LLM invocation",
+  "entry_skill": "skills/release-docs/SKILL.md",
+  "review_skill": "skills/release-docs-review/SKILL.md",
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 review-stale-report",
+  "cwd": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 review-stale-report\\nested\\deeper",
+  "discovered_root": "C:/Users/kenny/Desktop/redmine-mcp-獨立套件/release-docs-project/.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run/中文 空白 review-stale-report",
+  "base": "28ffb8a6846bd39fd8956c7c907c5220e84514cf",
+  "target": "3f5cdab3683de2a4e3518b422ed457aefe58b050",
+  "fixture_base": "28ffb8a6846bd39fd8956c7c907c5220e84514cf",
+  "fixture_target": "3f5cdab3683de2a4e3518b422ed457aefe58b050",
+  "diff_mode": "direct",
+  "identifier": "review-stale-report",
+  "date_timezone": "2026-10-08 Asia/Taipei",
+  "working_tree_inclusion": "excluded",
+  "request": "沿用昨日通過報告；今天修改 02 或 docs/migration.sql。",
+  "criteria": [
+    "重算 fingerprint，不符宣告舊報告失效並重新語意審查",
+    "05 寫入不使識別失效，docs/migration.sql 仍在來源範圍",
+    "先更新 04 狀態，後算最終 snapshot 寫 05"
+  ],
+  "sql_executed": false,
+  "documents": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 review-stale-report\\docs\\2026-10-08_review-stale-report"
+}

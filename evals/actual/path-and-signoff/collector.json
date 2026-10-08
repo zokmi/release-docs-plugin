@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "repo_root": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 path-and-signoff",
+  "base_sha": "8aa4c34e7481ba39378b1865e306a0d43b829477",
+  "target_sha": "e13ca05bede101459bd9fb38988038042cd3480e",
+  "diff_mode": "direct",
+  "committed_changes": [
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "docs/migration.sql",
+      "source_revision": "e13ca05bede101459bd9fb38988038042cd3480e"
+    }
+  ],
+  "working_tree_changes": {
+    "staged": [],
+    "unstaged": [],
+    "untracked": [
+      {
+        "status": "?",
+        "old_path": null,
+        "path": "docs/2026-10-08_#42正式/04_上線指引.md",
+        "source_revision": "working-tree"
+      }
+    ]
+  }
+}

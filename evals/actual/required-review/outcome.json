@@ -1,0 +1,17 @@
+{
+  "outcome": "agent-observed; no automatic PASS grading",
+  "review_status": "待確認",
+  "rounds": 1,
+  "generated_documents": 5,
+  "sql_executed": false,
+  "checks": {
+    "completeness": "從四份新草稿再讀原始docs/migration.sql與四成品，完成必要review流程",
+    "correctness": "依EvalMarker源核對Id/PK，工具方言未證，不任意通過",
+    "execution": "SQL-001唯一完整單位，source docs不是被整個排除",
+    "verification": "先04待確認狀態再最終snapshot，五項檢查与未解缺證報告",
+    "safety": "來源snapshot與已審snapshot一致後寫05；未執行SQL/人工簽核"
+  },
+  "final_source_identity_matches_reviewed": true,
+  "report_write_does_not_invalidate": true,
+  "final_fingerprint": "d88591ebed34260506f3a17a61ee031e97864fc2436e22c615278561a8959866"
+}

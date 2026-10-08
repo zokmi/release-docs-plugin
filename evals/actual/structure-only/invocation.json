@@ -1,0 +1,25 @@
+{
+  "executor": "Task4 agent manually applying read skills, new Git run; not an automated LLM invocation",
+  "entry_skill": "skills/release-docs/SKILL.md",
+  "review_skill": "skills/release-docs-review/SKILL.md",
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 structure-only",
+  "cwd": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 structure-only\\nested\\deeper",
+  "discovered_root": "C:/Users/kenny/Desktop/redmine-mcp-獨立套件/release-docs-project/.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run/中文 空白 structure-only",
+  "base": "531c6e8fdf96f6e6d25051d0f9389d60044902c7",
+  "target": "e9ef25d82126c9fecf45ed3c42a82e2ae1f63bbc",
+  "fixture_base": "531c6e8fdf96f6e6d25051d0f9389d60044902c7",
+  "fixture_target": "e9ef25d82126c9fecf45ed3c42a82e2ae1f63bbc",
+  "diff_mode": "direct",
+  "identifier": "structure-only",
+  "date_timezone": "2026-10-08 Asia/Taipei",
+  "working_tree_inclusion": "excluded",
+  "request": "整理 base 到 target 的純結構 SQL 過版文件。",
+  "criteria": [
+    "01 列 Flags 的 Id 主鍵與 Enabled 非空欄位，引用完整來源與 revision",
+    "02 明寫無資料異動",
+    "每個新表列執行前存在性與欄位檢查，04 只列一次完整來源",
+    "重跑會同名衝突，不能宣稱可直接重跑"
+  ],
+  "sql_executed": false,
+  "documents": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 structure-only\\docs\\2026-10-08_structure-only"
+}

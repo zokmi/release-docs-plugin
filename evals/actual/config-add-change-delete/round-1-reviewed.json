@@ -1,0 +1,23 @@
+{
+  "base": "523654cc315c485a9e87766763e42b7000d25c78",
+  "committed": {
+    "base": "9351574c611fbd7c346ad21ef6d4e14d6fc64928bca70184224316b9acde866f",
+    "diff": "36132ab0085daead9b2d79044a79e6b71b839b624d6c4745ac355a67d39f1e32",
+    "target": "461547fe05297ed10d811fc51c7e8de5cb51d428384f1aac1a1daa9039caef0f"
+  },
+  "diff_mode": "two-dot",
+  "documents": {
+    "01_結構SQL.md": "7f054d02c57d8c19e771277eda94c6d5c0b9f20cb2d89a2f3d5ff9b1b90ebcd4",
+    "02_資料SQL.md": "4f239aee632be10c5d9ae959e30d6f32995c70bbd2d90b0fd284c9c0a8f6ea9c",
+    "03_appsettings異動.md": "c8112cd5cfe463168b6833650dbf606fc38ad3a48e80a47a75461ad1028c50a8",
+    "04_上線指引.md": "a3c3fc9b3f8496e7a9a4c7e30bc708a6c75e9e99d0102c20956251264a3b659a"
+  },
+  "fingerprint": "c6e5a3150f63bb11dc5343e61311b2dc093a0c17e522536fe1a829af15f90bcd",
+  "schema_version": 1,
+  "target": "ab771e6cfb4e6e104e67c9387693f9fb91a8d3fa",
+  "working_tree": {
+    "staged": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "unstaged": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "untracked": {}
+  }
+}

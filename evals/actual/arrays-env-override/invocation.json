@@ -1,0 +1,25 @@
+{
+  "executor": "Task4 agent manually applying read skills, new Git run; not an automated LLM invocation",
+  "entry_skill": "skills/release-docs/SKILL.md",
+  "review_skill": "skills/release-docs-review/SKILL.md",
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 arrays-env-override",
+  "cwd": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 arrays-env-override\\nested\\deeper",
+  "discovered_root": "C:/Users/kenny/Desktop/redmine-mcp-獨立套件/release-docs-project/.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run/中文 空白 arrays-env-override",
+  "base": "36a96cd3c131e13f3d19d46a3e37ca6ac37e5c77",
+  "target": "0639e627d41d512895b24a64d4d3385b0d4de9ac",
+  "fixture_base": "36a96cd3c131e13f3d19d46a3e37ca6ac37e5c77",
+  "fixture_target": "0639e627d41d512895b24a64d4d3385b0d4de9ac",
+  "diff_mode": "direct",
+  "identifier": "arrays-env-override",
+  "date_timezone": "2026-10-08 Asia/Taipei",
+  "working_tree_inclusion": "excluded",
+  "request": "陣列與環境覆寫需查程式的實際來源順序。",
+  "criteria": [
+    "完整鍵 Endpoints:0:Url 並說明環境鍵 Endpoints__0__Url 的映射",
+    "來源順序 Clear→environment→json，後加入 json 覆寫，不能套用默认環境優先",
+    "Environment 範圍與陣列變動逐索引保留，未改索引不得宣稱刪除",
+    "驗證有效值及來源但不可印出 secrets"
+  ],
+  "sql_executed": false,
+  "documents": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 arrays-env-override\\docs\\2026-10-08_arrays-env-override"
+}

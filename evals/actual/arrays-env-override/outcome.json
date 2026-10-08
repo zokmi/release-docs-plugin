@@ -1,0 +1,17 @@
+{
+  "outcome": "agent-observed; no automatic PASS grading",
+  "review_status": "待確認",
+  "rounds": 1,
+  "generated_documents": 5,
+  "sql_executed": false,
+  "checks": {
+    "completeness": "完整Program/config/deployment來源，新增索引0及Notify鍵，无不存在的索引刪除",
+    "correctness": "Clear→environment→json，fixture Url=json值；雙底線映射與完整鍵一致",
+    "execution": "配置就緒才啟動讀值，正式artifact/重啟方案缺證",
+    "verification": "脫敏有效來源與Url功能驗證，正式有效值待確認，未猜reload",
+    "safety": "來源与輸出共同SHA，五份連結，無秘密"
+  },
+  "final_source_identity_matches_reviewed": true,
+  "report_write_does_not_invalidate": true,
+  "final_fingerprint": "6e7f99c7873af95e1881ab46711dc10154bf05ed0daeb957df7a380f49237e6b"
+}

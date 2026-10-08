@@ -1,0 +1,17 @@
+{
+  "outcome": "agent-observed; no automatic PASS grading",
+  "review_status": "待確認",
+  "rounds": 2,
+  "generated_documents": 5,
+  "sql_executed": false,
+  "checks": {
+    "completeness": "02及working-tree docs/migration.sql實際改動被新fingerprint識別，舊報告失效",
+    "correctness": "第2輪完整新source CREATE+INSERT2與target只有CREATE分開，未納入worktree",
+    "execution": "target腳本一列完整單位，候選混合工作區不能另重跑CREATE",
+    "verification": "拒絕無五項語意證據的旧PASS，納入決策/正式工具待確認",
+    "safety": "已審source identity更新需新review，不直接存新hash當通過；寫05不再改变识别"
+  },
+  "final_source_identity_matches_reviewed": true,
+  "report_write_does_not_invalidate": true,
+  "final_fingerprint": "4296de18d629743417e7aed14cc859eac17b30f2a8cb3e6e7ce2bbfc0b15718d"
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "revision": "b633e44e7dddf1f64c9fcde8b4a4841c6e531876",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "febd8e919834735bf35196d39328002638df5d66",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "febd8e919834735bf35196d39328002638df5d66",
+    "path": "Migrations/20261008_AddEnabled.cs",
+    "sha256": "d8af4fa4fc4129343f8a8f81aa41fa80f1b4d9153fc854d90871af8cc114bd70",
+    "export_redacted": false
+  },
+  {
+    "revision": "febd8e919834735bf35196d39328002638df5d66",
+    "path": "deploy.md",
+    "sha256": "a36c2972f93c47a7da5155e7eab5c8c4279643589b42eff4c3c935857272d822",
+    "export_redacted": false
+  }
+]

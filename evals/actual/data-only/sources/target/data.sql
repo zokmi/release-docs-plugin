@@ -1,0 +1,1 @@
+UPDATE dbo.Users SET Enabled = 1 WHERE Enabled IS NULL;

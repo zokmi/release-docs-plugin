@@ -1,0 +1,25 @@
+{
+  "executor": "Task4 agent manually applying read skills, new Git run; not an automated LLM invocation",
+  "entry_skill": "skills/release-docs/SKILL.md",
+  "review_skill": "skills/release-docs-review/SKILL.md",
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 uncommitted",
+  "cwd": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 uncommitted\\nested\\deeper",
+  "discovered_root": "C:/Users/kenny/Desktop/redmine-mcp-獨立套件/release-docs-project/.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run/中文 空白 uncommitted",
+  "base": "37d881982a4ba7733ace4ffb0fd9c4bb7799367b",
+  "target": "0110e36a8a8f82ab3031e03ddb166b31d8a17b46",
+  "fixture_base": "37d881982a4ba7733ace4ffb0fd9c4bb7799367b",
+  "fixture_target": "0110e36a8a8f82ab3031e03ddb166b31d8a17b46",
+  "diff_mode": "direct",
+  "identifier": "uncommitted",
+  "date_timezone": "2026-10-08 Asia/Taipei",
+  "working_tree_inclusion": "unspecified",
+  "request": "整理指定舊 target，staged/unstaged/untracked 是否納入未指定。",
+  "criteria": [
+    "指定版本來源仍為 OldVersion",
+    "staged、unstaged、untracked 分列并詢問納入決策",
+    "未取得決策時不混入已提交部署步驟，標待確認",
+    "若納入則記錄原 SHA 與額外工作區來源識別；發版取得方式待確認"
+  ],
+  "sql_executed": false,
+  "documents": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 uncommitted\\docs\\2026-10-08_uncommitted"
+}

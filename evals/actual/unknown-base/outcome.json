@@ -1,0 +1,7 @@
+{
+  "outcome": "stopped/requested-input",
+  "review_status": null,
+  "generated_documents": 0,
+  "sql_executed": false,
+  "criteria_evidence": "interaction.md; invocation has null base/target; fixture cwd read only"
+}

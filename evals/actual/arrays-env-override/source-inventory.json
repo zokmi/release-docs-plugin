@@ -1,0 +1,32 @@
+[
+  {
+    "revision": "36a96cd3c131e13f3d19d46a3e37ca6ac37e5c77",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "0639e627d41d512895b24a64d4d3385b0d4de9ac",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "0639e627d41d512895b24a64d4d3385b0d4de9ac",
+    "path": "Program.cs",
+    "sha256": "3739f915bdd2bc0f9776749137604673302594eeddf6e4a33d5c309bfa038e8f",
+    "export_redacted": false
+  },
+  {
+    "revision": "0639e627d41d512895b24a64d4d3385b0d4de9ac",
+    "path": "appsettings.json",
+    "sha256": "768edc5e3d5daeec9c20963715b56f2132b9fa50865fd02b8f277dd349e6d483",
+    "export_redacted": false
+  },
+  {
+    "revision": "0639e627d41d512895b24a64d4d3385b0d4de9ac",
+    "path": "deployment.yaml",
+    "sha256": "61435d5d6029e042323e73a4dd740b882be7c70b3128bc1f0bc944c4757de49b",
+    "export_redacted": false
+  }
+]

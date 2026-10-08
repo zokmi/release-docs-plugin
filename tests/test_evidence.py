@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -90,9 +91,10 @@ class EvidenceTests(unittest.TestCase):
 
     def test_non_repository_fails(self):
         with tempfile.TemporaryDirectory(dir=SCRIPT.parents[3]) as outside:
-            result = self.collect(repo=outside)
+            result = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--repo', outside, '--base', self.base, '--target', self.target, '--diff-mode', 'direct'], capture_output=True, text=True, encoding='utf-8', env={**os.environ, 'GIT_CEILING_DIRECTORIES': str(Path(outside).parent)})
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, '')
+        self.assertIn('not a git repository', result.stderr.lower())
 
 
 if __name__ == '__main__':

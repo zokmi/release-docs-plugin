@@ -1,0 +1,26 @@
+[
+  {
+    "revision": "523654cc315c485a9e87766763e42b7000d25c78",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "523654cc315c485a9e87766763e42b7000d25c78",
+    "path": "appsettings.json",
+    "sha256": "798993b3695dd6f816a77790373f9c8e7698e502bd9058f813b328b5dc2b535f",
+    "export_redacted": true
+  },
+  {
+    "revision": "ab771e6cfb4e6e104e67c9387693f9fb91a8d3fa",
+    "path": "AGENTS.md",
+    "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7",
+    "export_redacted": false
+  },
+  {
+    "revision": "ab771e6cfb4e6e104e67c9387693f9fb91a8d3fa",
+    "path": "appsettings.json",
+    "sha256": "2c0840d148cdcac2e1ea8e8d63bf1581dd56f9498130582fa27c472bd6df2378",
+    "export_redacted": true
+  }
+]

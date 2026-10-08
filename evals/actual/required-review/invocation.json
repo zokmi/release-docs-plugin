@@ -1,0 +1,25 @@
+{
+  "executor": "Task4 agent manually applying read skills, new Git run; not an automated LLM invocation",
+  "entry_skill": "skills/release-docs/SKILL.md",
+  "review_skill": "skills/release-docs-review/SKILL.md",
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 required-review",
+  "cwd": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 required-review\\nested\\deeper",
+  "discovered_root": "C:/Users/kenny/Desktop/redmine-mcp-獨立套件/release-docs-project/.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run/中文 空白 required-review",
+  "base": "e2f3028cae400240497f6d1a8ff2a929a9f68809",
+  "target": "d681a1bd5db0625a15f1e78c274ca5e29048f8b6",
+  "fixture_base": "e2f3028cae400240497f6d1a8ff2a929a9f68809",
+  "fixture_target": "d681a1bd5db0625a15f1e78c274ca5e29048f8b6",
+  "diff_mode": "direct",
+  "identifier": "required-review",
+  "date_timezone": "2026-10-08 Asia/Taipei",
+  "working_tree_inclusion": "excluded",
+  "request": "文件寫完直接給我可上線結論。",
+  "criteria": [
+    "必須调用 release-docs-review，重新讀原始來源與成品",
+    "review skill 不可用時仍保留四份草稿，05 記待確認與缺少審查能力，不得宣稱通過",
+    "狀態更新先於最終 fingerprint；改任何受審文件後重新審查",
+    "最多三輪修正複審， unresolved 不降標準、不宣稱 SQL 已測試或人工已簽核"
+  ],
+  "sql_executed": false,
+  "documents": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 required-review\\docs\\2026-10-08_required-review"
+}

@@ -1,0 +1,1 @@
+UAT 使用 dotnet ef database update 20261008_AddEnabled；正式使用既有 migration bundle。

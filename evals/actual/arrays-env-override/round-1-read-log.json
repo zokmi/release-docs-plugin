@@ -1,0 +1,49 @@
+{
+  "sources": [
+    {
+      "revision": "36a96cd3c131e13f3d19d46a3e37ca6ac37e5c77",
+      "path": "AGENTS.md",
+      "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7"
+    },
+    {
+      "revision": "0639e627d41d512895b24a64d4d3385b0d4de9ac",
+      "path": "AGENTS.md",
+      "sha256": "3b5ea6352bc2e6d4987dea1f510be3672a1c9489001ca4c4fe51d7a9ad0030a7"
+    },
+    {
+      "revision": "0639e627d41d512895b24a64d4d3385b0d4de9ac",
+      "path": "Program.cs",
+      "sha256": "3739f915bdd2bc0f9776749137604673302594eeddf6e4a33d5c309bfa038e8f"
+    },
+    {
+      "revision": "0639e627d41d512895b24a64d4d3385b0d4de9ac",
+      "path": "appsettings.json",
+      "sha256": "768edc5e3d5daeec9c20963715b56f2132b9fa50865fd02b8f277dd349e6d483"
+    },
+    {
+      "revision": "0639e627d41d512895b24a64d4d3385b0d4de9ac",
+      "path": "deployment.yaml",
+      "sha256": "61435d5d6029e042323e73a4dd740b882be7c70b3128bc1f0bc944c4757de49b"
+    }
+  ],
+  "documents": [
+    {
+      "path": "01_結構SQL.md",
+      "sha256": "c23fd259c882a04fb38ea0d72cf73efd2f09d9a3a482eaa8ab288d39a08aa398"
+    },
+    {
+      "path": "02_資料SQL.md",
+      "sha256": "69ff38b6f51a6772a07e162509a3c653c23f0a060b323dea1a5d2290acbae8d1"
+    },
+    {
+      "path": "03_appsettings異動.md",
+      "sha256": "fb9b33899cce9bff12062a20d74880848759d8c1ea690a7f05e76950e5c81f1d"
+    },
+    {
+      "path": "04_上線指引.md",
+      "sha256": "276341c3868940f03ae57bd64314663c83a69997c7c7e4e765aefae7df0d97d9"
+    }
+  ],
+  "sql_executed": false,
+  "method": "separate source+artifact reread; hash records what was read, does not decide semantic status"
+}

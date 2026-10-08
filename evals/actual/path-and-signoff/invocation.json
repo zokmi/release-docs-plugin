@@ -1,0 +1,24 @@
+{
+  "executor": "Task4 agent manually applying read skills, new Git run; not an automated LLM invocation",
+  "entry_skill": "skills/release-docs/SKILL.md",
+  "review_skill": "skills/release-docs-review/SKILL.md",
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 path-and-signoff",
+  "cwd": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 path-and-signoff\\nested\\deeper",
+  "discovered_root": "C:/Users/kenny/Desktop/redmine-mcp-獨立套件/release-docs-project/.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run/中文 空白 path-and-signoff",
+  "base": "8aa4c34e7481ba39378b1865e306a0d43b829477",
+  "target": "e13ca05bede101459bd9fb38988038042cd3480e",
+  "fixture_base": "8aa4c34e7481ba39378b1865e306a0d43b829477",
+  "fixture_target": "e13ca05bede101459bd9fb38988038042cd3480e",
+  "diff_mode": "direct",
+  "identifier": "../#42\\正式",
+  "date_timezone": "2026-10-08 Asia/Taipei",
+  "working_tree_inclusion": "excluded",
+  "request": "從巢狀目錄產出識別 ../#42\\正式，已有簽名。",
+  "criteria": [
+    "使用 Git 根目錄 docs、當地日期，移除分隔符與不合法字元并檢查解析路徑邊界",
+    "docs 若是指向外部的 symlink/junction 必須停止寫入",
+    "另建 _v2 或下一個空閒版本，保留原簽名並記錄取代理由"
+  ],
+  "sql_executed": false,
+  "documents": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 path-and-signoff\\docs\\2026-10-08_#42正式_v2"
+}

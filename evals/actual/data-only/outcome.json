@@ -1,0 +1,17 @@
+{
+  "outcome": "agent-observed; no automatic PASS grading",
+  "review_status": "待確認",
+  "rounds": 1,
+  "generated_documents": 5,
+  "sql_executed": false,
+  "checks": {
+    "completeness": "data.sql:1 UPDATE完整納入；結構無但既有schema尚缺證",
+    "correctness": "WHERE Enabled IS NULL保留非NULL人工值，不造筆數",
+    "execution": "SQL-001一列，既有欄位/方言先證再执行",
+    "verification": "維護窗口內NULL剩餘0有明確前提，trigger/备份缺證待確認",
+    "safety": "全樹兩檔，四份SHA/連結/遮罩一致"
+  },
+  "final_source_identity_matches_reviewed": true,
+  "report_write_does_not_invalidate": true,
+  "final_fingerprint": "0a8d4af7e84ccbecf4e58d788dacc9f704da4d8217281b9adb6a6bed13299bb9"
+}

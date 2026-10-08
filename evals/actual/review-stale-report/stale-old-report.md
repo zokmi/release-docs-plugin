@@ -1,0 +1,29 @@
+# 舊報告（刻意缺陷）
+
+狀態：通過（無語意證據，不得信任）。
+
+```json
+{
+  "base": "28ffb8a6846bd39fd8956c7c907c5220e84514cf",
+  "committed": {
+    "base": "97f2019082686128f47d188d0ba7c2a6ba43e9ba79ab797c4cb73661e4ab7a07",
+    "diff": "a3078f1403103a3fa77185d28ce45cee87d1c8f2d8761a8f25faf7835f71bd9e",
+    "target": "4b29cf01d74c99a5f86d872c1f17e43d7b4d6380c444753cfe6db627b721b080"
+  },
+  "diff_mode": "two-dot",
+  "documents": {
+    "01_結構SQL.md": "c96b7a53624727e34b836cdb2794b993e6ecd5044f9748ca52ccee9147d055f0",
+    "02_資料SQL.md": "65c633614012e398362a9aaf1db14cd1f89a67cd24dd75b1fe58c02f859db8a5",
+    "03_appsettings異動.md": "d5c59acc855734836cc48702c860294f72fc962e1679e9dac1860086ca049722",
+    "04_上線指引.md": "38bfdcfa2311860ff1431753d914fb2054614685d0cd71512ebf9918e87d7064"
+  },
+  "fingerprint": "8bfb339033f3cda78080e048772f10db62f665566fa092a8924f7e29c255d9b9",
+  "schema_version": 1,
+  "target": "3f5cdab3683de2a4e3518b422ed457aefe58b050",
+  "working_tree": {
+    "staged": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "unstaged": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "untracked": {}
+  }
+}
+```

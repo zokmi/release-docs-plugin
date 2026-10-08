@@ -1,0 +1,17 @@
+{
+  "outcome": "agent-observed; no automatic PASS grading",
+  "review_status": "未通過",
+  "rounds": 1,
+  "generated_documents": 5,
+  "sql_executed": false,
+  "checks": {
+    "completeness": "Invoice與DbSet新增但全樹無SQL/migration/schema證明，部署缺口明列",
+    "correctness": "不虛構dbo.Invoices或無資料庫異動，需對映/schema",
+    "execution": "04停止相关部署，無可執行單位，不自行補SQL",
+    "verification": "無工具/備份不宣稱可上線；阻擋未解",
+    "safety": "四份草稿与必要05存在，共同範圍，无錯誤通過"
+  },
+  "final_source_identity_matches_reviewed": true,
+  "report_write_does_not_invalidate": true,
+  "final_fingerprint": "81d8e87b850f467242b38dfa205c3ef7fb1db7b0ff83fecb1e09cbaf8df2986f"
+}

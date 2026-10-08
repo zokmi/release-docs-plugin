@@ -1,0 +1,1 @@
+CREATE TABLE dbo.Flags (Id int); INSERT INTO dbo.Flags VALUES(1);

@@ -1,0 +1,17 @@
+{
+  "outcome": "agent-observed; no automatic PASS grading",
+  "review_status": "待確認",
+  "rounds": 1,
+  "generated_documents": 5,
+  "sql_executed": false,
+  "checks": {
+    "completeness": "schema.sql:1 CREATE Flags，兩欄與PK全列；02與03的無有全樹盤點",
+    "correctness": "Id/int4非NULL、Enabled/bit1非NULL、PK Id；查詢符合來源，工具未證",
+    "execution": "完整SQL-001一列，同名CREATE不可重跑",
+    "verification": "OBJECT_ID前檢NULL，sys欄位/PK後檢明確；備份恢复缺證停止",
+    "safety": "四份共同SHA、連結與無實際簽核，無敏感來源"
+  },
+  "final_source_identity_matches_reviewed": true,
+  "report_write_does_not_invalidate": true,
+  "final_fingerprint": "ecd55fa1a21e7c25da69973c857a2e0e519df35a5edc3f089a090e468e202296"
+}

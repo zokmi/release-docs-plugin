@@ -1,0 +1,1 @@
+狀態：待確認。舊PASS沒有五項語意證據且fingerprint已失效，拒絕沿用。02文件及working-tree:docs/migration.sql新增INSERT Id=2使識別改變。已重新完整讀新来源，但指定target仍只CREATE；工作區未納入且需要使用者決策。第2輪重讀四份文件與來源，不把新snapshot直接存成通過證據。

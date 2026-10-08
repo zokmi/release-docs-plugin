@@ -1,0 +1,26 @@
+# appsettings異動 — required-review
+
+| 項目 | 內容 |
+| --- | --- |
+| 日期／時區 | 2026-10-08／Asia/Taipei |
+| 識別 | required-review → required-review |
+| base SHA | e2f3028cae400240497f6d1a8ff2a929a9f68809 |
+| target SHA | d681a1bd5db0625a15f1e78c274ca5e29048f8b6 |
+| diff 模式 | direct（fingerprint two-dot） |
+| 工作區 | staged/unstaged/untracked無額外部署來源；生成的精確五份成品排除，legacy簽核保留（如有） |
+| 來源 | d681a1bd5db0625a15f1e78c274ca5e29048f8b6:docs/migration.sql:完整閱讀；base/target全樹完整盤點 |
+| 取代文件 | 無 |
+
+## 異動、執行單位與檢查
+
+無（全樹AGENTS.md與docs/migration.sql，没有配置或消費處）。
+
+## 缺口與失敗處理
+
+正式工具/方言、備份、artifact与恢复方案缺證；停止實際部署，不猜安全DROP。
+
+上線唯一執行順序見[04](04_上線指引.md)，混合腳本同一ID只執行一次。
+
+## 更新紀錄
+
+2026-10-08新實際fixture run；沒有執行SQL。

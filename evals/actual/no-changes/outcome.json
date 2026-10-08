@@ -1,0 +1,17 @@
+{
+  "outcome": "agent-observed; no automatic PASS grading",
+  "review_status": "通過",
+  "rounds": 1,
+  "generated_documents": 5,
+  "sql_executed": false,
+  "checks": {
+    "completeness": "base=target同SHA，完整樹僅AGENTS，工作區无，01–03皆無",
+    "correctness": "不是副檔名零命中推定；確實完整無來源异動",
+    "execution": "04無部署動作，仍有05和空白簽核欄",
+    "verification": "無部署動作需恢復；無未解文件問題，未執行UAT/SQL",
+    "safety": "四份共同SHA，五個文件連結可解，source/doc識別穩定"
+  },
+  "final_source_identity_matches_reviewed": true,
+  "report_write_does_not_invalidate": true,
+  "final_fingerprint": "90f690c99f3f1abadf2907e1256155551914e988eaa7f6b00113eac39319dff0"
+}

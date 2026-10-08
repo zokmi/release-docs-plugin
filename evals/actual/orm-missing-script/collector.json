@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "repo_root": "C:\\Users\\kenny\\Desktop\\redmine-mcp-獨立套件\\release-docs-project\\.superpowers\\sdd\\2026-10-08-release-docs-plugin\\actual-run\\中文 空白 orm-missing-script",
+  "base_sha": "0c6810829285b6d6f1b55d0d8c50633934544bae",
+  "target_sha": "13b547b87b8db9731650fc35ca5621a0acc63238",
+  "diff_mode": "direct",
+  "committed_changes": [
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "Context.cs",
+      "source_revision": "13b547b87b8db9731650fc35ca5621a0acc63238"
+    },
+    {
+      "status": "A",
+      "old_path": null,
+      "path": "Models/Invoice.cs",
+      "source_revision": "13b547b87b8db9731650fc35ca5621a0acc63238"
+    }
+  ],
+  "working_tree_changes": {
+    "staged": [],
+    "unstaged": [],
+    "untracked": []
+  }
+}
