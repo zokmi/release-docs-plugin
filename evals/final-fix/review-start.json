@@ -1,0 +1,47 @@
+{
+  "commit_scope": [
+    {
+      "commit": "b60b8948fdebc17c57520ed2375b4e506228bb17",
+      "parent": "38be64ded493bb16e35780d53d7d9aef29493f14"
+    },
+    {
+      "commit": "3d8543e0a460029484e81f01f6758f67900d11a1",
+      "parent": "cfe2cc857464524fc9e761d040e56dc436fd8cd5"
+    }
+  ],
+  "committed": {
+    "pairs": [
+      {
+        "changed_paths": [
+          "01_a.sql"
+        ],
+        "commit_tree": "3dd428bc8c4ea76e83b0f9e536d412a1bb5c9e63a40f225348d8ce2277178ef0",
+        "diff": "7b7acdcf553c17d6e7bed48b30a446be23f93f0c68fa2d3e318d9aa806794469",
+        "parent_tree": "8ee7e254e6a3b63bc3eca9e098d5a106e9435f0e13948e23cc62bd892dc95847",
+        "status": "71fc745291ed40a88e3452fc18ce66bc598ac7e550287fd053c4a073adb18c07"
+      },
+      {
+        "changed_paths": [
+          "03_c.sql"
+        ],
+        "commit_tree": "68244e76a860a11d4fe1ab067afbbe2746f0a720476fef70ef294c4b0fee7a3f",
+        "diff": "36b5360094af919490b49961371dac073355d86254a8833fcbdad8c59cc1dae2",
+        "parent_tree": "ba654df296bd43b3990045732116242819b41090c1f36dae5c122672e5b2cd77",
+        "status": "29d42a06223f346096efb76a9ae52540729a63c54531f4e821eae851ff91c484"
+      }
+    ]
+  },
+  "documents": {
+    "01_\u7d50\u69cbSQL.md": "d4032940790da80b7108c6e25c529497de349a7c2ad3aa6ba5bc1a842cfbe4e2",
+    "02_\u8cc7\u6599SQL.md": "91a43d64ca31dceb271653aaf5b828692473f553850484d3987ea673a754a879",
+    "03_appsettings\u7570\u52d5.md": "66b6e07d5e2aedb28b15ac881b478557fc5221cb9946f5a55ac2237357620ac1",
+    "04_\u4e0a\u7dda\u6307\u5f15.md": "12b4ce27b935f01ffe079544613937d459773fea546cf13f66db096a9e4d37e5"
+  },
+  "fingerprint": "826c7691c578302db59d16757226d7bdc59b01448996e0e5528be92dd93206eb",
+  "schema_version": 1,
+  "working_tree": {
+    "staged": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "unstaged": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "untracked": {}
+  }
+}

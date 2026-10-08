@@ -4,9 +4,11 @@
 | --- | --- |
 | 產出日期／時區 | {{當地日期／時區}} |
 | 識別 | {{原識別／安全資料夾識別}} |
-| base SHA | {{實際比較基準SHA或commit清單及parent}} |
-| target SHA | {{解析後目標SHA或有序commit清單}} |
-| diff 模式 | {{direct／merge-base／commit-list及比較parent}} |
+| 範圍類型 | {{range／commit-list}} |
+| base SHA | {{range的實際比較基準SHA；清單模式不適用}} |
+| target SHA | {{range的解析後目標SHA；清單模式不適用}} |
+| diff 模式 | {{range的direct／merge-base；清單模式不適用}} |
+| commit_scope | {{清單模式完整有序JSON：每個解析後commit及選定direct parent SHA；root parent為null；range不適用}} |
 | 工作區範圍 | {{staged／unstaged／untracked的來源、納入決策及內容識別；無也明寫}} |
 | 來源證據 | {{revision:path:行號／完整盤點範圍與讀取限制}} |
 | 取代文件 | {{無；或舊文件相對連結、取代理由}} |

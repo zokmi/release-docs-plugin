@@ -1,0 +1,40 @@
+test_destinations_are_required_before_any_writes (test_evaluation_fixture.EvaluationFixtureTests.test_destinations_are_required_before_any_writes) ... ok
+test_existing_archive_rejected_before_writes_even_without_run (test_evaluation_fixture.EvaluationFixtureTests.test_existing_archive_rejected_before_writes_even_without_run) ... ok
+test_existing_run_rejected_before_any_archive_writes (test_evaluation_fixture.EvaluationFixtureTests.test_existing_run_rejected_before_any_archive_writes) ... ok
+test_fresh_explicit_destinations_generate_separate_git_and_archive (test_evaluation_fixture.EvaluationFixtureTests.test_fresh_explicit_destinations_generate_separate_git_and_archive) ... ok
+test_merge_base_diff_on_diverged_branches (test_evidence.EvidenceTests.test_merge_base_diff_on_diverged_branches) ... ok
+test_no_changes (test_evidence.EvidenceTests.test_no_changes) ... ok
+test_non_repository_fails (test_evidence.EvidenceTests.test_non_repository_fails) ... ok
+test_old_target_and_nul_paths_are_separate_from_working_tree (test_evidence.EvidenceTests.test_old_target_and_nul_paths_are_separate_from_working_tree) ... ok
+test_unknown_revision_fails_without_json (test_evidence.EvidenceTests.test_unknown_revision_fails_without_json) ... ok
+test_merge_explicit_parent_identity (test_final_fix.CommitScopeTests.test_merge_explicit_parent_identity) ... ok
+test_ordered_noncontiguous_pairs_exclude_intermediate_diff (test_final_fix.CommitScopeTests.test_ordered_noncontiguous_pairs_exclude_intermediate_diff) ... ok
+test_revision_aliases_resolve_to_exact_shas (test_final_fix.CommitScopeTests.test_revision_aliases_resolve_to_exact_shas) ... ok
+test_root_and_direct_parent_validation (test_final_fix.CommitScopeTests.test_root_and_direct_parent_validation) ... ok
+test_scope_range_options_mutually_exclusive (test_final_fix.CommitScopeTests.test_scope_range_options_mutually_exclusive) ... ok
+test_all_named_symlinks_refused_without_target_mutation (test_final_fix.OutputPathTests.test_all_named_symlinks_refused_without_target_mutation) ... ok
+test_directory_symlink_outside_docs_is_refused (test_final_fix.OutputPathTests.test_directory_symlink_outside_docs_is_refused) ... ok
+test_hardlinks_refused (test_final_fix.OutputPathTests.test_hardlinks_refused) ... skipped "OS does not permit hardlinks: [WinError 5] 存取被拒。: 'C:\\\\Users\\\\kenny\\\\Desktop\\\\redmine-mcp-獨立套件\\\\release-docs-project\\\\tmpxz7fc05j\\\\中文 repo\\\\schema.sql' -> 'C:\\\\Users\\\\kenny\\\\Desktop\\\\redmine-mcp-獨立套件\\\\release-docs-project\\\\tmpxz7fc05j\\\\中文 repo\\\\docs\\\\2026-10-08_fixture\\\\01_結構SQL.md'"
+test_nonregular_outputs_refused (test_final_fix.OutputPathTests.test_nonregular_outputs_refused) ... ok
+test_regular_and_not_yet_created_docs_are_permitted_read_only (test_final_fix.OutputPathTests.test_regular_and_not_yet_created_docs_are_permitted_read_only) ... ok
+test_local_marketplaces_resolve_to_plugin_root (test_packaging.PackagingTests.test_local_marketplaces_resolve_to_plugin_root) ... ok
+test_manifests_have_consistent_identity_and_resolvable_skills (test_packaging.PackagingTests.test_manifests_have_consistent_identity_and_resolvable_skills) ... ok
+test_package_has_license_readme_and_collector (test_packaging.PackagingTests.test_package_has_license_readme_and_collector) ... ok
+test_skill_frontmatter_and_all_local_references_resolve (test_packaging.PackagingTests.test_skill_frontmatter_and_all_local_references_resolve) ... ok
+test_real_git_tag_must_resolve_on_main_and_match_checkout (test_release.ReleaseTests.test_real_git_tag_must_resolve_on_main_and_match_checkout) ... ok
+test_strict_tag_validation (test_release.ReleaseTests.test_strict_tag_validation) ... ok
+test_versions_and_missing_resources_block_release (test_release.ReleaseTests.test_versions_and_missing_resources_block_release) ... ok
+test_workflow_gate_order_and_scoped_permissions (test_release.ReleaseTests.test_workflow_gate_order_and_scoped_permissions) ... ok
+test_document_symlink_escape_fails (test_review_fingerprint.FingerprintTests.test_document_symlink_escape_fails) ... ok
+test_four_documents_change (test_review_fingerprint.FingerprintTests.test_four_documents_change) ... ok
+test_missing_document_and_outside_docs_fail (test_review_fingerprint.FingerprintTests.test_missing_document_and_outside_docs_fail) ... ok
+test_report_symlink_to_internal_source_fails (test_review_fingerprint.FingerprintTests.test_report_symlink_to_internal_source_fails) ... ok
+test_scope_and_mode_change (test_review_fingerprint.FingerprintTests.test_scope_and_mode_change) ... ok
+test_stable_and_report_write_does_not_invalidate (test_review_fingerprint.FingerprintTests.test_stable_and_report_write_does_not_invalidate) ... ok
+test_staged_unstaged_untracked_and_docs_source_change (test_review_fingerprint.FingerprintTests.test_staged_unstaged_untracked_and_docs_source_change) ... ok
+test_target_content_is_not_worktree_content (test_review_fingerprint.FingerprintTests.test_target_content_is_not_worktree_content) ... ok
+
+----------------------------------------------------------------------
+Ran 35 tests in 61.679s
+
+OK (skipped=1)

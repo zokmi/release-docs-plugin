@@ -1,0 +1,17 @@
+{
+  "repo": "C:\\Users\\kenny\\Desktop\\redmine-mcp-\u7368\u7acb\u5957\u4ef6\\release-docs-project\\.superpowers\\final-fix-run\\source-repo",
+  "baseline": "38be64ded493bb16e35780d53d7d9aef29493f14",
+  "A": "b60b8948fdebc17c57520ed2375b4e506228bb17",
+  "B": "cfe2cc857464524fc9e761d040e56dc436fd8cd5",
+  "C": "3d8543e0a460029484e81f01f6758f67900d11a1",
+  "scope": [
+    {
+      "commit": "b60b8948fdebc17c57520ed2375b4e506228bb17",
+      "parent": "38be64ded493bb16e35780d53d7d9aef29493f14"
+    },
+    {
+      "commit": "3d8543e0a460029484e81f01f6758f67900d11a1",
+      "parent": "cfe2cc857464524fc9e761d040e56dc436fd8cd5"
+    }
+  ]
+}

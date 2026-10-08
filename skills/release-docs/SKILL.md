@@ -18,14 +18,14 @@ description: Use when 使用者要依指定 Git 範圍整理過版／上線文�
 
    消費 schema_version=1、repo_root、base_sha、target_sha、diff_mode、committed_changes、working_tree_changes 的 staged/unstaged/untracked。記錄解析後 SHA，保留刪除與 rename 原路徑。工作區始終分列，標每項是否納入；不明時請使用者決定，先盤點但不混入部署步骤。
 3. metadata 不含檔案內容。完整讀實際 revision 的 SQL、migration、相關程式及設定的前後版本。已提交新增／修改取 target SHA，刪除取 base SHA；rename 对照旧路徑。`git show <SHA>:<path>` 只在安全且可遮罩的工具介面讀取，敏感內容不得出現在可留存日誌。index 用 `git show :<path>`，unstaged/untracked 讀工作區；刪除項讀 metadata 指示的舊來源。各來源明確分開，不用目前檔案代替舊 target。
-4. 明確 commit 清單逐個解析 SHA，讀各 commit 的 parent 差異與完整來源，記錄清單与順序；merge commit 要確認比較 parent，不偽裝連續 range。未納入中間 commit 的相依列待確認。
+4. 明確 commit 清單逐個解析 SHA，保留原順序與每個 commit 的選定 direct parent；merge commit 必須明確選 parent，root commit 的 parent 為 null。以 JSON 有序清單保存 `[{"commit":"<revision>","parent":"<revision或null>"}, ...]`，傳給必要審查與 fingerprint 的 `--commit-scope <JSON檔>`，解析後每一對 SHA 必須一致。逐對蒐集 name/status 與完整前後來源，root 取空樹對 commit；collector 只支援 range，不對清單冒填 base/target 或將 A、C 擴為包含 B 的 range。未納入中間 commit 的相依列待確認；即使完整 source tree 有相依內容，也不將中間 commit 的異動列為此次執行範圍。
 5. 盤點全 repo 的 SQL、migration、ORM/model/schema、內嵌 SQL、設定消費處及部署流程，不限副檔名或固定目錄。零搜尋命中不是已查證的「無」；缺 ORM 对应脚本、方言、實際設定来源或部署 artifact 时列缺口。
 
 ## 判讀與文件
 
 涉及資料庫時讀 [SQL 判讀規則](../../references/sql-review-rules.md)；涉及設定時讀 [設定判讀規則](../../references/config-rules.md)。即使無異動也以完整盤點證據寫「無」，四份必須全部產出。
 
-- 使用 [01_結構SQL](../../assets/01_結構SQL.md)、[02_資料SQL](../../assets/02_資料SQL.md)、[03_appsettings異動](../../assets/03_appsettings異動.md)、[04_上線指引](../../assets/04_上線指引.md)。共同標頭記日期、識別、base/target SHA（清單模式另記所有 SHA／parent）、diff 模式、工作區范围與來源證據；保留真實行號、來源版本及範圍限制。
+- 使用 [01_結構SQL](../../assets/01_結構SQL.md)、[02_資料SQL](../../assets/02_資料SQL.md)、[03_appsettings異動](../../assets/03_appsettings異動.md)、[04_上線指引](../../assets/04_上線指引.md)。共同標頭記日期、識別、範圍類型、range 的 base/target SHA 與 diff 模式，或清單模式的完整有序 commit_scope（解析後 commit／parent SHA；root 為 null，range 欄位不適用）、工作區范围與來源證據；保留真實行號、來源版本及範圍限制。
 - 每個原始 SQL／migration 執行單位分配唯一 ID，兩份 SQL 文件的混合說明引用同一 ID；04 只排一次完整執行單位。按實際 SQL／設定／程式／人工作業相依排程，寫明依據、前後檢查、預期結果、停止點、部分成功與回復限制。
 - 正式設定未知寫待填及安全来源。敏感值在持久化、工具输出、diff 摘錄及文件前遮罩；不為文件開啟会把 secrets 印到日誌的原始 diff/show。可用本機程式读取并僅返回遮罩後摘要；無安全介面則列待確認，不洩漏原值。
 
@@ -33,7 +33,13 @@ description: Use when 使用者要依指定 Git 範圍整理過版／上線文�
 
 固定寫 `<repo_root>/docs/<當地YYYY-MM-DD>_<識別>/`。移除識別中的 `/`、`\`、控制字元及 Windows 不合法字元，去尾端空白／句點，拒絕空值、`.`、`..`、保留裝置名；記錄原識別與安全識別的對應。寫入前解析 docs 與候選目錄實際路徑，確認仍在 Git 根目錄 docs 内；symlink/junction 指向外部即停止，不僅作字串前綴比較。
 
-先讀已有四份文件、審查與簽核／執行紀錄。沒有紀錄可就地更新並留時間與異動摘要；已有任一紀錄或無法判定時使用下一個未占用的 `_v2`／`_v3` 目錄，保留舊文件並記取代理由。
+先讀已有四份文件、審查與簽核／執行紀錄。沒有紀錄可就地更新並留時間與異動摘要；已有任一紀錄或無法判定時使用下一個未占用的 `_v2`／`_v3` 目錄，保留舊文件並記取代理由。先選定最終版本目錄，再執行以下唯讀 preflight；首次建立目錄／文件前，以及每次立即更新、修正、04 狀態更新或 fallback 寫入前，都必須重跑（包含 05）：
+
+```text
+python <此技能目錄>/scripts/validate_output_paths.py --repo "<repo>" --documents "<最終版本目錄>"
+```
+
+檢查 Git 根目錄 docs 內的實際目錄及精確五個具名成品；拒絕任何成品 symlink（即使指向 repo 內）、非一般檔案與 `st_nlink > 1` hard-link 別名。拒絕時立即停止所有該目錄寫入，只在對話交付阻擋原因；不能先寫草稿、05 待確認或覆寫 alias 後才讓 review 檢查。preflight 不建立目錄也不寫檔，通過後才建立或寫入；已有簽核紀錄的版本選擇規則仍適用。
 
 **生成後必須调用 `release-docs-review`** 進行另一輪來源與成品審查，寫同目錄 `05_版更審查報告.md`。無此技能／無法審查時保留四份草稿並写 05「待確認（未完成必要審查，缺少能力／證據）」，不能自評通過。狀態僅通過、待確認、未通過；有阻擋或必要待補證據不得通過。最多三輪修正複審。
 

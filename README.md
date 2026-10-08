@@ -52,6 +52,22 @@ base v1.2.0、target v1.3.0、direct，工作區不納入。
 
 必要審查僅「通過」「待確認」「未通過」，最多三輪。hash 只驗證證據未變，不替代語意審查；任何文件或來源異動令舊審查失效。敏感值整值遮罩，正式值與部署來源缺漏不可宣稱可上線。
 
+明確非連續 commit 清單保留選定順序及每個 direct parent，merge 必須明確選 parent、root 的 parent 為 null。生成與必要審查共用 JSON 有序清單，例如 `[{"commit":"<A>","parent":"<A-parent>"},{"commit":"<C>","parent":"<C-parent>"}]`，不把 A、C 擴為包含 B 的 range；中間相依不足列待確認。collector 仍只接受 range；清單逐對蒐集完整證據。fingerprint 解析每對 SHA、識別 source trees 及選定差異，不在清單 snapshot 虛構 range 欄位：
+
+```text
+python skills/release-docs/scripts/review_fingerprint.py --repo <repo> --documents <repo/docs/日期_識別> --commit-scope <JSON檔>
+```
+
+`--commit-scope` 與 `--base`／`--target`／`--diff-mode` 互斥；既有 range 介面保持相容。開始審查、最終保存及再次使用報告時保留同一範圍；比較來源識別時包含完整有序 `commit_scope`，任何 pair、順序、樹、差異或工作區變動都需重審。hash 相符仍不能替代語意審查。
+
+每次首次建立或立即更新／fallback 寫入前（含第五報告），先選定保留既有簽核的最終版本目錄，再執行唯讀 guard：
+
+```text
+python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --documents <repo/docs/日期_識別>
+```
+
+拒絕越界目錄、五個具名成品的 symlink、非一般檔案及 hard-link 別名。失敗只在對話報告，不嘗試寫 blocked 文件或報告。preflight 不建立目錄，安全的新目錄可在通過後建立；fingerprint 使用同一 guard。
+
 ## 維護與 Release
 
 需要 Python 3.11–3.13 與 Git；腳本僅用標準函式庫。CI 在 Linux／Windows 執行：

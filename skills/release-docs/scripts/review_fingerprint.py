@@ -5,45 +5,72 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from validate_output_paths import DOCUMENTS, REPORT, validate_output_paths
 
-DOCUMENTS = ('01_結構SQL.md', '02_資料SQL.md', '03_appsettings異動.md', '04_上線指引.md')
-REPORT = '05_版更審查報告.md'
 
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def snapshot(repo, documents, base, target, diff_mode):
+def snapshot(repo, documents, base=None, target=None, diff_mode=None, commit_scope=None):
     def git(*args):
-        return subprocess.check_output(['git', '-C', str(repo), *args], stderr=subprocess.PIPE)
+        return subprocess.check_output(['git', '-C', str(repo), *args], input=b'', stderr=subprocess.PIPE)
 
-    repo = Path(git('rev-parse', '--show-toplevel').decode('utf-8').strip()).resolve()
-    docs = Path(documents).resolve(strict=True)
-    docs.relative_to(repo / 'docs')
+    if commit_scope is not None and any(v is not None for v in (base, target, diff_mode)):
+        raise ValueError('Commit scope and range are mutually exclusive')
+    repo, docs = validate_output_paths(repo, documents)
     excluded = []
     document_hashes = {}
     for name in (*DOCUMENTS, REPORT):
         path = docs / name
-        if path.is_symlink():
-            raise ValueError('Named output must not be a symlink')
-        path.resolve().relative_to(repo)
         if name in DOCUMENTS:
             document_hashes[name] = digest(path.read_bytes())
         excluded.append(path.relative_to(repo).as_posix())
     paths = ['--', '.', *[':(exclude,literal)' + p for p in excluded]]
-    base_sha = git('rev-parse', '--verify', base + '^{commit}').decode().strip()
-    target_sha = git('rev-parse', '--verify', target + '^{commit}').decode().strip()
-    start = base_sha
-    if diff_mode == 'three-dot':
-        start = git('merge-base', base_sha, target_sha).decode().strip()
     # Full trees bind referenced source content at the actual revisions, including
     # unchanged dependencies; no working-tree reads substitute for target bytes.
-    committed = {}
-    for label, sha in (('base', base_sha), ('target', target_sha)):
+    def tree_hash(sha):
         entries = git('ls-tree', '-r', '-z', '--full-tree', sha).split(b'\0')
-        committed[label] = digest(b'\0'.join(entry for entry in entries if entry and entry.split(b'\t', 1)[1].decode('utf-8') not in excluded))
-    committed['diff'] = digest(git('diff', '--binary', '--no-ext-diff', '--no-textconv', start, target_sha, *paths))
+        return digest(b'\0'.join(entry for entry in entries if entry and entry.split(b'\t', 1)[1].decode('utf-8') not in excluded))
+
+    def resolve(revision):
+        if not isinstance(revision, str) or not revision or revision.startswith('-'):
+            raise ValueError('Invalid revision')
+        return git('rev-parse', '--verify', revision + '^{commit}').decode().strip()
+
+    if commit_scope is not None:
+        selected = json.loads(Path(commit_scope).read_text(encoding='utf-8'))
+        if not isinstance(selected, list) or not selected:
+            raise ValueError('Commit scope must be a nonempty ordered list')
+        pairs, evidence = [], []
+        for item in selected:
+            if not isinstance(item, dict) or set(item) != {'commit', 'parent'}:
+                raise ValueError('Each selected pair requires commit and parent')
+            commit = resolve(item['commit'])
+            parents = git('rev-list', '--parents', '-n', '1', commit).decode().strip().split()[1:]
+            parent = None if item['parent'] is None else resolve(item['parent'])
+            if (parents and parent not in parents) or (not parents and parent is not None):
+                raise ValueError('Selected parent must be a direct parent; root requires null')
+            pairs.append({'commit': commit, 'parent': parent})
+            # Root comparisons use Git's object-format-specific empty tree.
+            start = parent or git('hash-object', '-t', 'tree', '--stdin').decode().strip()
+            status = git('diff', '--name-status', '-z', '--no-ext-diff', '--no-textconv', start, commit, *paths)
+            changed = git('diff', '--name-only', '-z', '--no-ext-diff', '--no-textconv', start, commit, *paths)
+            evidence.append({'parent_tree': tree_hash(parent) if parent else None,
+                             'commit_tree': tree_hash(commit), 'status': digest(status),
+                             'changed_paths': [p.decode('utf-8') for p in changed.split(b'\0') if p],
+                             'diff': digest(git('diff', '--binary', '--no-ext-diff', '--no-textconv', start, commit, *paths))})
+        identity = {'commit_scope': pairs}
+        committed = {'pairs': evidence}
+    else:
+        if base is None or target is None or diff_mode not in ('two-dot', 'three-dot'):
+            raise ValueError('Range requires base, target and diff mode')
+        base_sha, target_sha = resolve(base), resolve(target)
+        start = base_sha if diff_mode == 'two-dot' else git('merge-base', base_sha, target_sha).decode().strip()
+        identity = {'base': base_sha, 'target': target_sha, 'diff_mode': diff_mode}
+        committed = {'base': tree_hash(base_sha), 'target': tree_hash(target_sha),
+                     'diff': digest(git('diff', '--binary', '--no-ext-diff', '--no-textconv', start, target_sha, *paths))}
     working_tree = {
         'staged': digest(git('diff', '--cached', '--binary', '--no-ext-diff', '--no-textconv', *paths)),
         'unstaged': digest(git('diff', '--binary', '--no-ext-diff', '--no-textconv', *paths)),
@@ -56,8 +83,7 @@ def snapshot(repo, documents, base, target, diff_mode):
         path = repo / name
         path.resolve().relative_to(repo)
         working_tree['untracked'][name] = digest(path.read_bytes())
-    result = {'schema_version': 1, 'base': base_sha, 'target': target_sha,
-              'diff_mode': diff_mode, 'documents': document_hashes,
+    result = {'schema_version': 1, **identity, 'documents': document_hashes,
               'committed': committed, 'working_tree': working_tree}
     result['fingerprint'] = digest(json.dumps(result, sort_keys=True, ensure_ascii=True, separators=(',', ':')).encode())
     return result
@@ -65,9 +91,11 @@ def snapshot(repo, documents, base, target, diff_mode):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for option in ('repo', 'documents', 'base', 'target'):
+    for option in ('repo', 'documents'):
         parser.add_argument('--' + option, required=True)
-    parser.add_argument('--diff-mode', choices=('two-dot', 'three-dot'), required=True)
+    for option in ('base', 'target', 'commit-scope'):
+        parser.add_argument('--' + option)
+    parser.add_argument('--diff-mode', choices=('two-dot', 'three-dot'))
     args = parser.parse_args()
     try:
         result = snapshot(**vars(args))

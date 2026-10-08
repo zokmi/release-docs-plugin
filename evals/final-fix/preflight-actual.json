@@ -1,0 +1,54 @@
+[
+  {
+    "scenario": "initial-internal",
+    "named_output": "01_\u7d50\u69cbSQL.md",
+    "exit": 2,
+    "stderr": "Output preflight refused: unsafe directory or named destination; no files written.",
+    "target_hash_before": "f412f677a3b14e318cfcb11eb62dc5d69d71c841e779eaeff219f8b9e900ab16",
+    "target_hash_after": "f412f677a3b14e318cfcb11eb62dc5d69d71c841e779eaeff219f8b9e900ab16",
+    "generated_or_fallback_files": [],
+    "agent_action": "stop all writes; conversation-only refusal"
+  },
+  {
+    "scenario": "initial-external",
+    "named_output": "01_\u7d50\u69cbSQL.md",
+    "exit": 2,
+    "stderr": "Output preflight refused: unsafe directory or named destination; no files written.",
+    "target_hash_before": "64a2461e099e101ac4b72a2bc76270c5e3e74e4d41b1aef38dd6618abc6f7360",
+    "target_hash_after": "64a2461e099e101ac4b72a2bc76270c5e3e74e4d41b1aef38dd6618abc6f7360",
+    "generated_or_fallback_files": [],
+    "agent_action": "stop all writes; conversation-only refusal"
+  },
+  {
+    "scenario": "fallback-report-internal",
+    "named_output": "05_\u7248\u66f4\u5be9\u67e5\u5831\u544a.md",
+    "exit": 2,
+    "stderr": "Output preflight refused: unsafe directory or named destination; no files written.",
+    "target_hash_before": "f412f677a3b14e318cfcb11eb62dc5d69d71c841e779eaeff219f8b9e900ab16",
+    "target_hash_after": "f412f677a3b14e318cfcb11eb62dc5d69d71c841e779eaeff219f8b9e900ab16",
+    "generated_or_fallback_files": [],
+    "agent_action": "stop all writes; conversation-only refusal"
+  },
+  {
+    "scenario": "existing-four-documents-report-update",
+    "named_output": "05_\u7248\u66f4\u5be9\u67e5\u5831\u544a.md",
+    "exit": 2,
+    "stderr": "Output preflight refused: unsafe directory or named destination; no files written.",
+    "all_document_hashes_before": {
+      "01_\u7d50\u69cbSQL.md": "d4032940790da80b7108c6e25c529497de349a7c2ad3aa6ba5bc1a842cfbe4e2",
+      "02_\u8cc7\u6599SQL.md": "91a43d64ca31dceb271653aaf5b828692473f553850484d3987ea673a754a879",
+      "03_appsettings\u7570\u52d5.md": "66b6e07d5e2aedb28b15ac881b478557fc5221cb9946f5a55ac2237357620ac1",
+      "04_\u4e0a\u7dda\u6307\u5f15.md": "12b4ce27b935f01ffe079544613937d459773fea546cf13f66db096a9e4d37e5",
+      "05_\u7248\u66f4\u5be9\u67e5\u5831\u544a.md": "283153339429a02e746d8f17477f04173f9bb50cb6c43a0ad5dab9e14190ef21"
+    },
+    "all_document_hashes_after": {
+      "01_\u7d50\u69cbSQL.md": "d4032940790da80b7108c6e25c529497de349a7c2ad3aa6ba5bc1a842cfbe4e2",
+      "02_\u8cc7\u6599SQL.md": "91a43d64ca31dceb271653aaf5b828692473f553850484d3987ea673a754a879",
+      "03_appsettings\u7570\u52d5.md": "66b6e07d5e2aedb28b15ac881b478557fc5221cb9946f5a55ac2237357620ac1",
+      "04_\u4e0a\u7dda\u6307\u5f15.md": "12b4ce27b935f01ffe079544613937d459773fea546cf13f66db096a9e4d37e5",
+      "05_\u7248\u66f4\u5be9\u67e5\u5831\u544a.md": "283153339429a02e746d8f17477f04173f9bb50cb6c43a0ad5dab9e14190ef21"
+    },
+    "source_unchanged": true,
+    "agent_action": "refused before status/report/fallback update; conversation-only failure"
+  }
+]
