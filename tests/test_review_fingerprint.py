@@ -103,6 +103,14 @@ class FingerprintTests(unittest.TestCase):
             self.skipTest('OS does not permit symlinks')
         self.assertNotEqual(self.run_cli().returncode, 0)
 
+    def test_report_symlink_to_internal_source_fails(self):
+        report = self.docs / '05_版更審查報告.md'
+        try:
+            report.symlink_to(self.source)
+        except OSError:
+            self.skipTest('OS does not permit symlinks')
+        self.assertNotEqual(self.run_cli().returncode, 0)
+
 
 if __name__ == '__main__':
     unittest.main()

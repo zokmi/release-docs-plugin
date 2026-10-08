@@ -31,6 +31,6 @@ python <插件根>/skills/release-docs/scripts/review_fingerprint.py --repo <rep
 
 模式依原輸入選 two-dot 或 three-dot，不擅自改範圍。JSON 不含原文。四份文件 raw bytes 各自 SHA-256；已提交範圍和 staged／unstaged／untracked 分別識別。只排除此資料夾的精確五份成品，docs 其他來源仍納入。路徑越界、缺文件或證據不可讀即停止並記待確認。
 
-審查完成先再次執行並比較開始 snapshot：若來源識別（base、target、mode、committed、working_tree）改變，丟棄本輪结論重新讀來源；成品更改則重新核對更改內容。先把最終審查狀態與報告連結寫入 04，再計算最終 snapshot 原封不動存入 05。報告本身被排除，寫 05 不會循環失效。
+審查完成先再次執行並比較開始 snapshot：若來源識別（base、target、diff_mode、committed、working_tree）改變，丟棄本輪结論重新讀來源；成品更改則重新核對更改內容。保存完成語意審查時的 snapshot 作為「已審查 snapshot」。先把最終審查狀態與報告連結寫入 04，再計算最終 snapshot；寫入或接受 05 前，必須再次將最終 snapshot 的 base、target、diff_mode、committed、working_tree 逐項對比已審查 snapshot。任何來源識別不符都丟棄該輪結論並重新審查，不能將新來源 snapshot 直接存成通過證據。這段期間成品只允許已核對的 04 狀態／報告連結更新；其他成品變動需重新語意審查。確認一致後才把最終 snapshot 原封不動存入 05。報告本身被排除，寫 05 不會循環失效；五個具名成品不得是 symlink，包括指向 repo 內其他檔案的報告別名。
 
 交付或再次使用通過報告時，重算同參數 snapshot，比較 `fingerprint`；不符代表舊報告失效，重新語意審查。相符只表示證據內容未變，仍需確認報告確有五項審查證據及無未解決事項。摘要同步狀態與阻擋事項。

@@ -75,3 +75,33 @@ No semantic agent execution occurred in Task 3; authored scenarios and manual in
 - Existing Task 2 scenarios remain Task 4's integration obligation, not satisfied by this task's manual checks.
 
 Outstanding: agent-based skill baseline/GREEN and pressure evaluation required by writing-skills is not yet run; semantic correctness of generated deployment artifacts remains the integration gate. Utility tests prove identity behavior only.
+
+## Review fix round 1 (base 1d424e7)
+
+Rejected every symlinked named output, including 05 aliases targeting another source inside repo. Added a real Git fixture test before implementation; previously the CLI accepted the internal report symlink, allowing writing 05 to mutate source evidence and self-invalidate.
+
+RED command: `python -m unittest discover -s tests -p test_review_fingerprint.py -k report_symlink -v`
+
+```text
+test_report_symlink_to_internal_source_fails ... FAIL
+AssertionError: 0 == 0
+Ran 1 test in 1.476s
+FAILED (failures=1)
+```
+
+GREEN command (only requested test file): `python -m unittest discover -s tests -p test_review_fingerprint.py -v`
+
+```text
+test_document_symlink_escape_fails ... ok
+test_four_documents_change ... ok
+test_missing_document_and_outside_docs_fail ... ok
+test_report_symlink_to_internal_source_fails ... ok
+test_scope_and_mode_change ... ok
+test_stable_and_report_write_does_not_invalidate ... ok
+test_staged_unstaged_untracked_and_docs_source_change ... ok
+test_target_content_is_not_worktree_content ... ok
+Ran 8 tests in 32.214s
+OK
+```
+
+Review skill now explicitly saves the reviewed snapshot, updates only the checked 04 status/report link, then compares final base/target/diff_mode/committed/working_tree against the reviewed snapshot before writing or accepting 05. Any source change discards the conclusion and requires fresh source reading and semantic review. Other document changes also require renewed review. This procedure change is documented, not claimed as executed agent evaluation; Task 4 integration obligation remains.

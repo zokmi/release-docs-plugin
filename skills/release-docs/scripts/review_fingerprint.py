@@ -25,6 +25,8 @@ def snapshot(repo, documents, base, target, diff_mode):
     document_hashes = {}
     for name in (*DOCUMENTS, REPORT):
         path = docs / name
+        if path.is_symlink():
+            raise ValueError('Named output must not be a symlink')
         path.resolve().relative_to(repo)
         if name in DOCUMENTS:
             document_hashes[name] = digest(path.read_bytes())
