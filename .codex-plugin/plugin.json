@@ -1,0 +1,15 @@
+{
+  "name": "release-docs",
+  "version": "0.1.0",
+  "description": "依 Git 證據產出版更文件與必要審查報告。",
+  "author": {"name": "Kenny Zheng"},
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Release Docs",
+    "shortDescription": "Git 證據、版更文件與審查",
+    "developerName": "Kenny Zheng",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"]
+  }
+}
