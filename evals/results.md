@@ -26,7 +26,7 @@
 
 ## 重現
 
-1. 在新clone或新實驗工作區執行 `python -X utf8 evals/prepare_actual_fixtures.py`，只建立Git來源，拒絕覆寫既有run。新commit SHA可能不同；由invocation重新取參數，不硬編碼已存SHA。
+1. 明確選擇兩個尚不存在的獨立目的地，例如 `python -X utf8 evals/prepare_actual_fixtures.py --run-root .superpowers/actual-rerun-2026-10-09 --archive-root evals/rerun-2026-10-09`。只建立Git來源；run或archive任一已存在（即使另一個不存在）會在任何寫入前拒絕。新clone已有已提交的 `evals/actual/`，不要以它作重跑archive，不改既有證據。再次重跑選新的兩個名稱。新commit SHA可能不同；由新archive的invocation重新取參數，不硬編碼已存SHA。
 2. 評估agent讀入口/review技能、references、assets，逐案將invocation的repo/cwd/base/target/diff/識別/日期/工作區決策作為任務輸入，完整讀指定revision與相關全樹。敏感來源在本地記憶體讀取後整值遮罩才輸出。
 3. 生成新四文件；unknown-base只記輸入請求且不寫文件。簽核案先依original-signoff建立原紀錄，保留原bytes另建_v2；空占位案在原資料夾更新。按review-defects第1輪表注入缺陷，先review拒絕再修正／重新review；stale案保存旧snapshot，再改02與docs/migration.sql，先宣告失效再review。
 4. 另一步重讀原始來源與四成品，記語意理由/輪次，不以hash決定狀態。先更04，final source identity與已審snapshot一致才寫05；完成後重算驗證05不使識別變動。匯出安全來源/參數/各輪證據/五輸出與未測界線。

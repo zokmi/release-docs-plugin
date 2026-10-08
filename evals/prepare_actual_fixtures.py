@@ -1,15 +1,14 @@
 """Prepare new Git inputs only. Outputs/review judgments are authored by the evaluating agent.
-Usage: python -X utf8 evals/prepare_actual_fixtures.py
-Existing run directories are refused. No database or model is invoked.
+Usage: python -X utf8 evals/prepare_actual_fixtures.py --run-root NEW_RUN --archive-root NEW_ARCHIVE
+Both destinations must be absent before any writes. No database or model is invoked.
 """
+import argparse
 import hashlib
 import json
 from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-RUN = ROOT / '.superpowers/sdd/2026-10-08-release-docs-plugin/actual-run'
-ARCHIVE = ROOT / 'evals/actual'
 
 
 def git(repo, *args):
@@ -34,11 +33,19 @@ def masked(value):
 
 
 def main():
-    if RUN.exists():
-        raise SystemExit('Run already exists; preserve evidence and choose a new run directory')
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--run-root', required=True, type=Path, help='New Git fixture root (must not exist)')
+    parser.add_argument('--archive-root', required=True, type=Path, help='New evidence archive root (must not exist)')
+    args = parser.parse_args()
+    # Check BOTH roots before Git initialization, directory creation, or evidence writes.
+    for label, destination in [('Run', args.run_root), ('Archive', args.archive_root)]:
+        if destination.exists() or destination.is_symlink():
+            parser.exit(1, f'{label} destination already exists; preserve evidence and choose a new destination\n')
+    run_root = args.run_root.resolve()
+    archive_root = args.archive_root.resolve()
     scenarios = json.loads((ROOT / 'evals/scenarios.json').read_text(encoding='utf-8'))['scenarios']
     for case in scenarios:
-        repo = RUN / ('中文 空白 ' + case['id'])
+        repo = run_root / ('中文 空白 ' + case['id'])
         repo.mkdir(parents=True)
         git(repo, 'init', '-q', '-b', 'main')
         git(repo, 'config', 'user.email', 'fixture@example.invalid')
@@ -72,7 +79,7 @@ def main():
             write(repo, 'new.sql', case['sources']['untracked:new.sql'])
         nested = repo / 'nested/deeper'
         nested.mkdir(parents=True)
-        archive = ARCHIVE / case['id']
+        archive = archive_root / case['id']
         archive.mkdir(parents=True)
         evidence = subprocess.check_output([
             'git', '-C', str(nested), 'rev-parse', '--show-toplevel']).decode('utf-8').strip()
