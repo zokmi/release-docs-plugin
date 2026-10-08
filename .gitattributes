@@ -1,2 +1,2 @@
 # Evaluation snapshots identify raw bytes; preserve them across Windows/Linux checkouts.
-evals/actual/** -text
+evals/actual/** -text whitespace=cr-at-eol
