@@ -80,3 +80,9 @@
 
 完成設計審閱後撰寫實作計畫，再建立插件、範本與必要的驗證。TSV／Google Sheet 整合與自動產生部署 SQL 留待明確需求另行擴充。
 
+
+## 使用者確認補充：獨立專案與 Release
+
+已依使用者要求先建立 GitHub `zokmi/release-docs-plugin`（初始 private），再於獨立 clone 的根目錄開發。覆蓋前述「不建立遠端」限制；原 Redmine repo 僅保留先前設計資料，不放產品實作。
+
+提供與既有插件相同的 release tag 機制：`vMAJOR.MINOR.PATCH`，三份 manifest 版本一致、資源完整、測試通過、tag commit 位於 main，才能由 GitHub Actions 建立 Release。支援 push tag 及手動重跑既有 tag，不覆寫 tag；本次不實際發布版本。

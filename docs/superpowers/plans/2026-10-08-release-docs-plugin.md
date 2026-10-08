@@ -82,3 +82,11 @@
 
 建議本對話直接執行，四個 task 的來源與範本共用介面較多，集中實作可減少反覆交接。選擇 subagent 執行時，按 task 逐個實作及審查，不平行修改共用檔案。實作前閱讀 skill-creator、writing-skills、verification-before-completion 與所選執行技能；決定隔離方式時保留現有 README 修改。
 
+
+## 已確認的專案與 Release 補充
+
+- 使用者要求先建立 zokmi 獨立專案再開發；已建立 https://github.com/zokmi/release-docs-plugin，初始為 private，實作改在獨立 clone 的 repo 根目錄。
+- Task 4 另建立 `.github/workflows/ci.yml`、`.github/workflows/release.yml`、`scripts/check_plugin_release.py`、`tests/test_release.py`。
+- tag 格式 `vMAJOR.MINOR.PATCH`；版本與三份 manifest 一致，完整資源檢查與測試通過，tag 所在 commit 屬於 main 才建立 GitHub Release。
+- 支援 push tag 與手動重跑既有 tag；手動輸入先驗證再 checkout。只有 release job 具 contents: write 權限。
+- 本次建立機制，尚不推送 release tag、不發布實際 Release、不安裝使用者插件。
