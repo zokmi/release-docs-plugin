@@ -72,4 +72,4 @@ writing-skills建議的無技能／有技能獨立agent壓力對照未做：本t
 
 ## Commit
 
-本報告與Task2產品／eval檔案在同一commit提交；SHA見實作者回覆與 `git log -- .superpowers/sdd/2026-10-08-release-docs-plugin/task-2-report.md`。
+產品／eval／本報告首次提交為 `ac0486a`。後續小修將fixture來源寫入暫存Git時明確正規化LF，避免Git checkout的CRLF影響可重建SHA；只重跑受影響的fixture檢查，結果保持相同SHA與全部PASS。後續SHA見實作者回覆與 `git log -- .superpowers/sdd/2026-10-08-release-docs-plugin/task-2-report.md`。
