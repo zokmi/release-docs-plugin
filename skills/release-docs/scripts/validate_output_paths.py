@@ -9,6 +9,7 @@ REQUIRED_DOCUMENTS = ('00_上線指引.md', '01_結構SQL.sql')
 OPTIONAL_DOCUMENTS = ('02_資料SQL.sql', '03_例外排除.json', '04_參數異動.md')
 DOCUMENTS = REQUIRED_DOCUMENTS + OPTIONAL_DOCUMENTS
 REPORT = '05_版更審查報告.md'
+ALLOWED_DOCUMENTS = frozenset((*DOCUMENTS, REPORT))
 
 
 def validate_output_paths(repo, documents):
@@ -32,6 +33,10 @@ def validate_output_paths(repo, documents):
             info = path.stat()
             if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
                 raise ValueError('Named output must be a regular file with no hard-link aliases')
+    if docs.exists():
+        for entry in docs.iterdir():
+            if entry.name not in ALLOWED_DOCUMENTS:
+                raise ValueError('Unexpected release output: ' + entry.name)
     return repo, docs
 
 

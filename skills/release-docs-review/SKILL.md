@@ -20,6 +20,7 @@ description: Use when release-docs 已產出必要版更文件，需要必要語
 來源／execution artifact、exclusion manifest、文件任一變更立即失效；重新 fingerprint 及複審。外部／ignored artifact 額外比對實際 hash inventory，不宣稱現有 Git fingerprint 已涵蓋外部檔案。對 release/20261012-no-5005 的使用者提供情境採 reference 案例判定：01 人工包裝及 DATA-003 無正式 repair source 均未通過，排除須完整 manifest，部署驗證待確認；未取得 repo 原檔時標示此為提供事實的適用判定。
 
 每輪語意審查前後都執行 `scripts/validate_release_artifacts.py --documents <release目錄>`。工具只驗證必要／選用文件、artifact class、03 JSON schema、04 設定欄位與結構交叉條件；工具通過不代表 SQL 語意或資料庫部署通過，工具失敗時不得宣稱文件結構完整。
+審查只接受規範定義的 00 至 05 文件；release 目錄出現差異摘要、暫存檔、log、額外 JSON、工具原始輸出或其他未定義資料時，先判文件結構未通過並停止審查。
 
 部署驗證是選用項目，只有使用者或專案流程要求時才逐階段核對「舊版本 DB＋測試資料 → 結構 SQL → 資料 SQL → 最終結果查核」的實際證據，詳見 [SQL 判讀規則](../../references/sql-review-rules.md)。要求實測時，確認基準對應此次 base、資料先載入且涵蓋受影響與應保留資料、兩階段在同一隔離 DB 依序執行、失敗停止及最終結果符合 target；空白 DB 或已升級 DB 測試不能代替。未要求或未執行時記「未執行」，不否決 SQL 內容；實測失敗僅在直接證明 SQL 語法、交易或資料邏輯錯誤時影響內容判定。無資料異動須有不適用依據，混合單位不得拆開或重複執行，來源相依衝突須明列。
 

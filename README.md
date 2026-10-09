@@ -1,6 +1,6 @@
 # release-docs
 
-依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.15`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
+依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.16`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
 
 ## 插件安裝
 
@@ -133,11 +133,13 @@ python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --docu
 
 ## 維護與 Release
 
-目前版本：`0.1.15`。本版加入 artifact class、選用文件結構驗證與例外／參數文件交叉規則；隔離資料庫實測仍是選用部署驗證，未執行時明確標示未執行。
+目前版本：`0.1.16`。本版加入封閉 release 目錄規則，禁止產生未定義文件；隔離資料庫實測仍是選用部署驗證，未執行時明確標示未執行。
 
 `00_上線指引.md` 是入口導覽，只說明後續檔案用途；`03_例外排除.json` 是非必要且唯一的例外排除來源，`04_參數異動.md` 是非必要的參數操作文件。分支、PR、回合併、tag、清理與人工簽核由專案部署流程處理，不放入 00、03 或 04。
 
 文件產出後可執行 `skills/release-docs/scripts/validate_release_artifacts.py --documents <release目錄>`，驗證必要／選用檔案、artifact class、例外排除 JSON schema 與參數文件結構；這項檢查不取代 SQL 語意審查或資料庫部署驗證。
+
+release 目錄是封閉輸出目錄，只允許 `00` 至 `05` 規範定義的文件；差異摘要、暫存檔、log、額外 JSON、工具原始輸出與其他資料必須保存於 artifact metadata 或 release 目錄之外。preflight 遇到未定義項目會拒絕寫入與審查。
 
 需要 Python 3.11–3.13 與 Git；腳本僅用標準函式庫。CI 在 Linux／Windows 執行：
 
@@ -153,8 +155,8 @@ claude plugin validate .claude-plugin/marketplace.json --json --strict
 git switch main
 git pull --ff-only
 python -X utf8 -m unittest discover -s tests -v
-git tag -a v0.1.15 -m "release-docs 0.1.15"
-git push origin v0.1.15
+git tag -a v0.1.16 -m "release-docs 0.1.16"
+git push origin v0.1.16
 ```
 
 以上是維護者發布流程；一般使用者僅需插件管理器安裝，不需建立 tag。不要 force 覆寫 tag；版本錯誤使用新版本。Release workflow 支援推送 `v*` tag 與 workflow_dispatch 重跑既有 tag，先驗證嚴格 `vMAJOR.MINOR.PATCH`（禁止前導零與 prerelease），再 checkout。檢查三份版本、必備資源、tag commit 位於 `origin/main` 且 checkout 一致，Linux／Windows 測試通過才建立 GitHub Release。預設 contents:read，僅 release job contents:write。已有 Release 不修改；建立使用 `--verify-tag --generate-notes`。workflow 本身需在預設分支才可手動觸發；此專案已公開；GitHub Release 不等於上架到官方插件目錄，安裝來源仍是上述 Git marketplace。

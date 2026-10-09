@@ -7,6 +7,8 @@ from pathlib import Path
 
 REQUIRED = ("00_上線指引.md", "01_結構SQL.sql")
 OPTIONAL = ("02_資料SQL.sql", "03_例外排除.json", "04_參數異動.md")
+REPORT = "05_版更審查報告.md"
+ALLOWED = frozenset((*REQUIRED, *OPTIONAL, REPORT))
 ARTIFACT_CLASSES = {
     "01_結構SQL.sql": "schema-deployment",
     "02_資料SQL.sql": {"data-migration", "repair-migration", "mixed-ddl-dml"},
@@ -35,6 +37,10 @@ def artifact_class(text):
 def validate(documents):
     documents = Path(documents).resolve()
     findings = []
+    if documents.exists():
+        for entry in documents.iterdir():
+            if entry.name not in ALLOWED:
+                findings.append(finding("error", "UNEXPECTED_OUTPUT", "未定義的 release 輸出", entry.name))
     for name in REQUIRED:
         if not (documents / name).is_file():
             findings.append(finding("error", "REQUIRED_MISSING", "必要文件不存在", name))

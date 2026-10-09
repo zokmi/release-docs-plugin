@@ -71,7 +71,7 @@ class FingerprintTests(unittest.TestCase):
         self.source.write_text('unstaged')
         unstaged = self.snapshot()['fingerprint']
         self.assertNotEqual(staged, unstaged)
-        extra = self.repo / 'docs/migration.sql'
+        extra = self.repo / 'migration.sql'
         extra.write_text('INSERT INTO A VALUES(1);')
         untracked = self.snapshot()['fingerprint']
         self.assertNotEqual(unstaged, untracked)
@@ -101,6 +101,10 @@ class FingerprintTests(unittest.TestCase):
         (self.docs / NAMES[2]).unlink()
         result = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unexpected_release_document_is_rejected(self):
+        (self.docs / '差異摘要.md').write_text('summary', encoding='utf-8')
+        self.assertNotEqual(self.run_cli().returncode, 0)
 
     def test_document_symlink_escape_fails(self):
         target = self.repo.parent / 'outside.md'
