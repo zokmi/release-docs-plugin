@@ -28,7 +28,7 @@ migration 按原工具單位執行，不將 Up/Down 變成手工部署 SQL。來
 
 ## 本機執行驗證
 
-每個產出的 SQL 檔只能在隔離的本機資料庫執行驗證，不得連線或執行正式資料庫。驗證環境需具備與正式機相容的資料庫引擎、主要版本、provider／driver、collation／相容性設定、schema 初始狀態與部署工具；不要求所有版本字串完全一致，需以語法、交易、schema、資料與 history 行為證明差異不影響結果。若正式機版本、provider／driver 或相容性依據不明，SQL 驗證／上線資格維持待確認，但可繼續文件來源審查。使用 EF migration bundle 或 Database Project 時，必須對具相容性證據的本機資料庫執行，而不是只產生 script。
+每個產出的 SQL 檔若執行隔離的本機資料庫，只作部署驗證，不得連線或執行正式資料庫。SQL 內容審核不要求主機、SQL Azure、版本、provider／driver、collation 或部署工具完全一致；這些屬部署環境待辦。若執行部署驗證，應記錄環境與結果；使用 EF migration bundle 或 Database Project 時，仍應對可用的隔離資料庫執行，而不是把只產生 script 當成已驗證。只有當環境錯誤直接證明 SQL 語法、交易或異常機制有缺陷時，才回到 SQL 內容審核。
 
 驗證流程必須是「建立或還原本機基準 → 執行完整 SQL／migration → 驗證執行結果」：記錄正式機版本依據、本機版本、工具版本、連線目標識別、執行命令、開始／結束時間、exit code、錯誤輸出，以及執行後 schema、索引／約束、資料筆數／值與 migration history 結果。敏感連線資訊不得寫入紀錄。只做 parser、lint、`--dry-run` 或產生 script 不算執行成功。
 
