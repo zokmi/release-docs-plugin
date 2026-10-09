@@ -1,6 +1,6 @@
 # release-docs
 
-依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.8`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
+依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.9`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
 
 ## 插件安裝
 
@@ -107,7 +107,7 @@ base v1.2.0、target v1.3.0、direct，工作區不納入。
 
 SQL 必須具備異常中斷容錯及多次重複執行能力，包含結構與表／欄位描述自行補完：缺少補建、描述不符更新、正確跳過，不相容或可能損失資料則停止報錯。資料不得重複新增或累加。本機驗證包含首次成功後至少兩次重跑及提交邊界中斷後重跑；正式與本機主要版本、provider、collation、相容性層級及部署工具若有會影響結果的差異，或資訊未確認，狀態維持待確認。缺機制列來源修正待辦並阻擋，不能只寫重跑限制就判通過，也不能私改來源 SQL。
 
-輸出預設為 Git 根目錄 `docs/release-doc/<release分支日期YYYY-MM-DD>/01_結構SQL.sql`、（有資料異動時才產生）`02_資料SQL.sql`、`03_appsettings異動.md`、`04_上線指引.md`。SQL 檔的說明使用 SQL 註解，部署內容完整保留來源語句、批次與交易，可交給指定資料庫工具執行；缺來源腳本時列為阻擋，不產生佔位 SQL。沒有資料異動時不產生 `02_資料SQL.sql`；結構 SQL 仍產出並記錄完整盤點範圍。 結構內容須以 EF migration/model 差異、資料庫專案 schema compare／部署腳本或等價 schema artifact 驗證；只有 ORM 類別或 migration 名稱不足以產出可執行 SQL。 產檔後只能在與正式機資料庫引擎、主要版本及 provider 完全一致的隔離本機資料庫實際執行，依序建立／還原基準、執行完整 SQL、驗證 schema／資料／history，記錄版本差異、exit code 與結果；不得連正式資料庫；若正式機版本不明，必須先請使用者提供版本，沒有本機引擎或執行失敗時不得判定通過。缺基準／識別先詢問；未提交內容分列，不冒充指定 revision。已有執行或簽核記錄另建 `_v2` 等版本。混合 SQL 保持完整執行單位且只執行一次。
+輸出預設為 Git 根目錄 `docs/release-doc/<release分支日期YYYY-MM-DD>/01_結構SQL.sql`、（有資料異動時才產生）`02_資料SQL.sql`、`03_appsettings異動.md`、`04_上線指引.md`。SQL 檔的說明使用 SQL 註解，部署內容完整保留來源語句、批次與交易，可交給指定資料庫工具執行；缺來源腳本時列為阻擋，不產生佔位 SQL。沒有資料異動時不產生 `02_資料SQL.sql`；結構 SQL 仍產出並記錄完整盤點範圍。結構內容須以 EF migration/model 差異、資料庫專案 schema compare／部署腳本或等價 schema artifact 驗證；只有 ORM 類別或 migration 名稱不足以產出可執行 SQL。產檔後只能在具備相容性證據的隔離本機資料庫實際執行，核對引擎、主要版本、provider／driver、collation、相容性層級與工具對語法、交易、schema、資料及 history 的影響；不要求所有版本字串完全一致。文件審查與 SQL 驗證／上線資格分開；provider／driver 或 SQL Azure 實測未確認時，文件可完成審查，但 SQL 驗證維持待確認且不得上線。缺基準／識別先詢問；未提交內容分列，不冒充指定 revision。已有執行或簽核記錄另建 `_v2` 等版本。混合 SQL 保持完整執行單位且只執行一次。
 
 必要審查僅「通過」「待確認」「未通過」，最多三輪。hash 只驗證證據未變，不替代語意審查；任何文件或來源異動令舊審查失效。敏感值整值遮罩，正式值與部署來源缺漏不可宣稱可上線。
 
@@ -133,7 +133,7 @@ python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --docu
 
 ## 維護與 Release
 
-目前版本：`0.1.8`。本版將四份文件精簡為上板操作契約，將完整來源追溯、工具輸出與驗證日誌保留於 artifact metadata／審查輸入；設定異動仍須逐參數提供用途、預期格式與實際修改位置，並直接附可解析的 JSON 範例。
+目前版本：`0.1.9`。本版將文件審查與 SQL 驗證／上線資格分開，允許以相容性證據取代環境字串完全一致；provider／driver 或 SQL Azure 實測未完成時仍禁止上線，但不否決已完成的文件語意審查。
 
 `04_上線指引.md` 必須包含更新後分支處理流程：正式驗證與部署SHA確認、release／hotfix回合併至正式及開發分支、衝突處理與測試、PR審核、tag核對、分支保留／清理條件及處理紀錄。依目標專案慣例填寫並附來源；分支名稱或策略未知列待確認，不自行猜測。插件只提供流程指引，未執行作業保持未執行狀態；必要審查同步核對這些內容。
 
@@ -151,8 +151,8 @@ claude plugin validate .claude-plugin/marketplace.json --json --strict
 git switch main
 git pull --ff-only
 python -X utf8 -m unittest discover -s tests -v
-git tag -a v0.1.8 -m "release-docs 0.1.8"
-git push origin v0.1.8
+git tag -a v0.1.9 -m "release-docs 0.1.9"
+git push origin v0.1.9
 ```
 
 以上是維護者發布流程；一般使用者僅需插件管理器安裝，不需建立 tag。不要 force 覆寫 tag；版本錯誤使用新版本。Release workflow 支援推送 `v*` tag 與 workflow_dispatch 重跑既有 tag，先驗證嚴格 `vMAJOR.MINOR.PATCH`（禁止前導零與 prerelease），再 checkout。檢查三份版本、必備資源、tag commit 位於 `origin/main` 且 checkout 一致，Linux／Windows 測試通過才建立 GitHub Release。預設 contents:read，僅 release job contents:write。已有 Release 不修改；建立使用 `--verify-tag --generate-notes`。workflow 本身需在預設分支才可手動觸發；此專案已公開；GitHub Release 不等於上架到官方插件目錄，安裝來源仍是上述 Git marketplace。
