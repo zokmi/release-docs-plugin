@@ -190,6 +190,31 @@ def test_unrelated_provider_call_does_not_establish_configuration(tmp_path):
     assert result.blocking is True
 
 
+def test_raw_string_and_comment_provider_examples_do_not_count(tmp_path):
+    repo, revision = fixture_repo(tmp_path, {
+        "App.csproj": '<Project><PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.7" /></Project>',
+        "Data.cs": 'class AppContext : DbContext {}\nstring sample = """\n"prefix services.AddDbContext<AppContext>(o => o.UseSqlServer(config.GetConnectionString("MainDb")));\n""";\n// services.AddDbContext<AppContext>(o => o.UseNpgsql("example"));',
+    })
+    result = detect_entity_framework(repo, scope(repo, revision))
+    assert result.provider is None
+    assert result.blocking is True
+    assert any("provider is unknown" in finding.lower() for finding in result.findings)
+
+
+def test_unrelated_package_suffixes_do_not_establish_provider(tmp_path):
+    repo, revision = fixture_repo(tmp_path, {
+        "App.csproj": '<Project><PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.7" /><PackageReference Include="Acme.Tools.SqlServer" Version="1.0.0" /><PackageReference Include="Other.Sqlite" Version="2.0.0" /></Project>',
+        "Data.cs": 'class AppContext : DbContext {}',
+    })
+    result = detect_entity_framework(repo, scope(repo, revision))
+    assert result.provider is None
+    assert result.framework == "EF Core"
+    assert result.version == "8.0.7"
+    assert result.blocking is True
+    assert any("provider is unknown" in finding.lower() for finding in result.findings)
+    assert not any("conflicting ef provider" in finding.lower() for finding in result.findings)
+
+
 def test_collector_exposes_pinned_ef_evidence_without_secrets(tmp_path):
     repo, revision = fixture_repo(tmp_path, {
         "App.csproj": '<Project><PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.7" /></Project>',

@@ -42,7 +42,25 @@ def _candidate(path):
     )
 
 
-_CS_TOKENS = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|@"(?:""|[^"])*"|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.M)
+_CS_TOKENS = re.compile(
+    r'\$*(?P<raw_quote>"{3,})[\s\S]*?(?P=raw_quote)(?!")'
+    r'|//[^\n]*|/\*[\s\S]*?\*/|@"(?:""|[^"])*"'
+    r'|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.M,
+)
+
+
+_PROVIDER_PACKAGES = {
+    "entityframework.sqlserver": "SQL Server",
+    "microsoft.entityframeworkcore.sqlserver": "SQL Server",
+    "microsoft.entityframeworkcore.sqlite": "SQLite",
+    "microsoft.entityframeworkcore.sqlite.core": "SQLite",
+    "microsoft.entityframeworkcore.cosmos": "Cosmos",
+    "microsoft.entityframeworkcore.inmemory": "InMemory",
+    "npgsql.entityframeworkcore.postgresql": "PostgreSQL",
+    "pomelo.entityframeworkcore.mysql": "MySQL",
+    "mysql.entityframeworkcore": "MySQL",
+    "oracle.entityframeworkcore": "Oracle",
+}
 
 
 def _cs_code(content, mask_strings):
@@ -170,10 +188,9 @@ def detect_entity_framework(repo: Path, source_scope: dict) -> EFDetection:
                 if re.fullmatch(r"\d+(?:\.\d+)+(?:[-+][A-Za-z0-9.]+)?", version):
                     versions.add(version)
                 recognized = True
-            if package.lower().endswith(".sqlserver") or package.lower() == "entityframework.sqlserver":
-                providers.add("SQL Server")
-            elif package.lower().endswith((".sqlite", ".npgsql", ".mysql", ".oracle")):
-                providers.add(package.rsplit(".", 1)[-1])
+            provider = _PROVIDER_PACKAGES.get(package.lower())
+            if provider:
+                providers.add(provider)
         if (path.lower().endswith((".csproj", ".props")) and _has_ef6_sqlserver_reference(content)) or (configuration_code and re.search(r'\bUseSqlServer\s*\(', code)):
             providers.add("SQL Server")
             recognized = True
