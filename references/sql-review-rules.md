@@ -16,6 +16,61 @@ migration 按原工具單位執行，不將 Up/Down 變成手工部署 SQL。來
 
 ## 結構內容驗證來源
 
+DB-first repo 若存在 Database.sqlproj，結構來源優先使用 Database Project；dbo/Tables/*.sql 的 CREATE TABLE、索引、約束及 extended properties 是宣告式 schema source，不是可直接上板的增量腳本。EF Sql/*.sql 另依資料／migration／混合單位盤點，不得與 schema source 重複部署。
+
+## 來源與執行 artifact 契約
+
+來源 artifact 原檔逐位元保存，執行 artifact 另存；兩者不要求 byte-for-byte 相同。工具轉換必須由專案鎖定的 SSDT Database Project publish/deployment、EF 官方 script/bundle 或正式 schema compare 工具產出。完整證據具備後才進入語意等價審核，工具成功或可重跑本身不代表內容通過。
+
+artifact metadata 必須包含：base／target SHA 與 schema artifact hash、來源 revision／路徑／定位、provider（Database Project 包含 DSP）、工具版本、遮罩後完整命令、exit code、輸出 dacpac／deployment script／execution artifact hash、來源與執行單位一對一對照、轉換規則及逐單位差異解釋。不同物件可同屬一個完整工具交易／批次，以子項定位作一對一追溯，不能為湊對照拆交易；無法定位即待確認。保存原始工具輸出與最終執行檔，確認沒有範圍外異動、重複單位或無法解釋的差異。
+
+| 差異類型 | 內容判定 |
+| --- | --- |
+| 鎖定工具產出且完整證據 | 可進入語意等價審核；仍須核對 target schema／資料行為 |
+| 格式、註解、GO 或批次分隔 | 記錄轉換規則並證明語意未變；GO 可能影響編譯、變數作用域、交易及工具停止行為，不自動視為無害 |
+| 納入單位新增 guard、交易、欄位補建、資料修復或錯誤處理 | 語意轉換；須由正式來源、產製工具或可追溯 repair source 支持，不能只靠人工說明通過 |
+| 已證實未經來源管理的人工改寫 | SQL 內容未通過；不得標記完整来源複製 |
+| 完整單位受控排除 | 可衍生 execution artifact，須完整 exclusion manifest；不能改寫其他納入單位 |
+| 來源本身缺安全重跑機制 | 列來源修正待辦，先修正式來源／工具模式或建立正式 repair migration；不得在 release 文件私補 |
+
+exclusion manifest 每项保存排除 ID、來源 revision／路徑／定位、完整物件或執行單位、來源 artifact hash、execution artifact hash、理由、相依影響、負責人、核准及追蹤依據、逐單位差異核對。若待排除物件與納入物件共用不可分割交易／批次，不能直接刪語句；應在受控 schema／產製設定中表達排除並重新由工具生成，保存完整轉換證據。排除通過不等於整體 SQL 通過。
+
+## Database Project 標準產製流程
+
+1. 取得此次 base 與 target revision 的完整 schema source（含 sqlproj、引用與產製設定），在隔離工作副本使用專案鎖定工具分別建置 schema artifact／dacpac。
+2. 以 base schema 作比較基準、target schema 作目標，產出 deployment script 或 dacpac publish script；採離線模式，需連線比較時只可使用已確認隔離本機基準，禁止連正式資料庫。
+3. 保存兩端 SHA、schema artifact hash、dacpac／deployment script hash、DSP/provider、工具版本、遮罩後命令及 exit code。不得將整個 target CREATE TABLE 清單人工包裝成增量部署 SQL。
+4. 套用完整受控排除清單及相依分析，建立 exclusion manifest；重新核對工具輸出及來源／執行單位對照，不混入未選 commit 或排除物件，也不能誤刪未排除物件。
+5. 將已核對 execution artifact 交付至 01_結構SQL.sql，來源 artifact 及原始工具輸出另存，完整追溯放 artifact metadata／審查輸入。
+
+工具不可用或 schema／產製證據不足時標記「待確認（缺少 Database Project 工具／schema artifact／產出證據）」，停止受影響單位交付，不自行把 CREATE TABLE 或 ORM model 改寫成部署 SQL。
+
+## 資料與混合單位的 repair source
+
+EF SQL、migration、混合 DDL/DML 不得在 01／02 追加未受來源管理的 REPAIR。來源缺安全重跑機制時，優先修正式來源或建立獨立、可追溯且納入此次 Git scope 的 repair migration；本插件只列來源修正待辦，不擅自新增範圍外 migration。
+
+repair source 必須有唯一 ID、source revision、完整執行單位、相依順序、交易與錯誤處理、來源及 execution artifact hash；若要求部署實測，再保存首次執行、正常重跑至少兩次與新還原基準中斷後重跑的證據。未要求實測不影響內容審核，但必須核對 repair 的靜態冪等設計與來源追溯；已證實 repair 沒有正式來源則內容未通過，來源是否存在尚不能確認則待確認。修正正式來源後重新確認 Git scope、產出並複審，不能私補後宣稱通過。
+
+## 三層審核與狀態
+
+1. **來源完整性**：此次 Git scope 全覆蓋、來源單位唯一且完整，沒有漏列、重複、範圍外異動；排除證據完整。
+2. **語意等價性**：結構逐項核對表、欄位、型別、NULL、default、index、PK、UQ、FK、CHECK 及描述；資料／migration 核對條件、WHERE、seed、回填、刪除及資料保留。工具差異可追溯；人工 guard／repair／交易／資料邏輯有正式來源。比較目標是 manifest 說明的受控排除後 target schema，仍保存原 target 與差異，不能偽稱完全等於未排除 target。
+3. **執行安全性**：靜態核對交易、错误回拋與停止機制；實測必須完成舊版 DB＋測試資料 → 結構 SQL → 資料 SQL → 最終查核、首次成功、至少兩次正常重跑及新還原基準注入 SQL 錯誤／連線中止後重跑，核對部分提交、資料保留、索引／約束／描述與 history。
+
+SQL 內容審核与部署驗證各自只用「通過／待確認／未通過」。已證實來源 artifact 缺失、未管理人工改寫、工具產製不符或 repair 無正式來源，內容未通過；來源存在性或工具證據不足而未能確定違規，內容待確認。正式主機、部署 provider／driver、DB 版本或隔離 DB 未提供只影響部署驗證，不單獨否決內容；產製工具 DSP/provider 與 schema 證據缺失仍屬內容追溯缺口。缺實際 DB 證據，部署驗證待確認，不能宣稱通過。
+
+來源／執行 artifact、exclusion manifest 或文件任一變更，舊審查立即失效；重新 fingerprint 與語意複審。證據檔保存在 repo 內可由 fingerprint 識別的位置；外部或 ignored artifact 另保存本輪實際 hash inventory，開始／完成／交付逐項重算比對，不得只用 Git fingerprint 假定外部證據未變。
+
+## 案例：release/20261012-no-5005
+
+以下依使用者提供事實判定，非本插件已讀取該專案檔案或完成 DB 實測。範圍 master → release/20261012-no-5005、two-dot；日期 20261012 解析為 2026-10-12，目錄 docs/release-doc/2026-10-12。SQL-001／SQL-002 是交付檔 ID，STRUCT-001～054／DATA-003 是內部單位 ID，不能因檔案合併失去追溯。
+
+- 目前 01_結構SQL.sql：SQL 內容未通過，STRUCT-001～054 人工包裝／改寫，缺 Database Project 工具產出證據。先由 Project/backend/Database/Database.sqlproj 的兩端 schema 重新產製 SQL-001。
+- 目前 02_資料SQL.sql：SQL 內容未通過，DATA-003 的 REPAIR 未成正式可追溯來源。先修 Project/backend/EventPlatform.EF/Sql/*.sql 的正式來源或建立正式 repair source，再產出 SQL-002。
+- #5005：dbo.tblAdminRoles、dbo.tblFunction、dbo.tblFunctionOnRole、dbo.tblAdminAccounts.cRoleId、FK_tblAdminAccounts_Role、cRoleId 描述。理由是 PM 尚未完成測試、雲端更版文件未列本次 release；這些理由不是核准證據。只有完整 exclusion manifest 才算排除證據通過，不能推論 SQL 整體通過。
+- 部署驗證待確認：尚未完成完整舊版 DB 順序驗證與中斷後重跑。
+- 修正順序：Database Project／SSDT 重產 SQL-001 → 修 DATA-003 正式來源／repair source → 重產 SQL-002 → 重做來源完整性及語意等價性審核 → 隔離 DB 部署驗證。
+
 範圍確認後先完成 diff 分析、執行單位分類、重複／替代核對與相依排序，再產出文件及驗證審核。缺既有 SQL artifact 時，依入口技能「專案工具產生 SQL」使用已確認的 EF／Database Project／schema compare 工具在隔離副本補產，保存來源 SHA、起訖基準、provider、工具版本、命令、artifact 內容識別及結果，核對後作為完整來源使用。只有 ORM 或工具失敗時保留缺口，不手寫推測 SQL。正式版本未知只暫停依賴該版本的步驟，繼續其他分析、產出與來源審查；產生 artifact 不算資料庫執行驗證。
 
 結構 SQL 的內容優先以可重現的 schema 差異來源驗證，依序採用：
@@ -28,16 +83,16 @@ migration 按原工具單位執行，不將 Up/Down 變成手工部署 SQL。來
 
 ## 本機執行驗證
 
-### 必要的舊版升級驗證順序
+### 可選的舊版升級部署驗證順序
 
-部署驗證必須依「舊版本 DB＋測試資料 → 結構 SQL → 資料 SQL → 最終結果查核」完成，不能以空白 DB 或已升級的目標版本 DB 取代。
+只有使用者或專案流程要求部署實測時，才依「舊版本 DB＋測試資料 → 結構 SQL → 資料 SQL → 最終結果查核」完成；這是部署信心檢查，不是 SQL 內容審核的必要條件。要求實測時不能以空白 DB 或已升級的目標版本 DB 取代。
 
 1. 在隔離本機建立或還原此次 base 對應的舊版本 DB，核對 schema 與 migration history；先載入符合舊版結構的測試資料並確認成功。資料須涵蓋此次受影響的既有資料、回填／遷移／修正條件及應保留不變的資料，依來源納入 NULL、預設值、唯一鍵與外鍵等適用邊界。保存基準與測試資料來源、版本／內容識別、載入命令及執行前筆數／關鍵值。
 2. 在同一 DB 執行本次完整結構 SQL，成功後核對表、欄位、索引、約束、描述與 history，並確認既有測試資料符合預期；失敗即停止，不得繼續資料 SQL。
 3. 接著在同一 DB 執行本次完整資料 SQL，核對 seed、回填、遷移、修正或刪除的預期筆數／值、未對應列及應保留資料。無資料異動時附盤點證據並記此階段不適用，不建立假資料 SQL。
-4. 比對最終 schema、描述、資料及 history 與此次 target 預期，再完成下節的正常重跑與中斷後重跑。每個獨立情境重新還原「舊版本 DB＋測試資料」，不得沿用其他情境已升級的 DB 當作首次執行基準。
+4. 比對最終 schema、描述、資料及 history 與此次 target 預期；若本次要求重跑／中斷測試，再從新基準執行下節測試。每個獨立情境重新還原「舊版本 DB＋測試資料」，不得沿用其他情境已升級的 DB 當作首次執行基準。
 
-各階段保存 artifact 內容識別、命令、時間、exit code、錯誤輸出及前後查核結果。缺舊版基準、測試資料或任一適用階段的實際執行／結果證據，部署驗證維持待確認並列缺口，不影響獨立的 SQL 內容審核結論。只做 parser、lint、dry-run、產生 script 或空白 DB 建置不算完成此驗證。
+要求實測時，各階段保存 artifact 內容識別、命令、時間、exit code、錯誤輸出及前後查核結果；未要求或未執行時標「未執行」，不影響獨立的 SQL 內容審核結論。只做 parser、lint、dry-run、產生 script 或空白 DB 建置不能標為部署實測完成，但可作為內容審核的輔助證據。
 
 保持完整 SQL／migration 執行單位、交易及來源相依。混合 DDL/DML 單位只執行一次，不為分階段驗證拆開或重複執行，記錄對應階段與前後檢查。來源相依要求交錯執行而無法遵循上述順序時，明列衝突與來源依據，部署驗證維持待確認，不得私改順序或宣稱符合流程。
 
@@ -62,18 +117,18 @@ migration 按原工具單位執行，不將 Up/Down 變成手工部署 SQL。來
 
 逐單位回答失败位置、已提交部分、停止后续依赖、能否直接重跑及前置条件、需留證的日志、数据库备份恢复與程式版本相容性；未知即禁止直接重跑並待確認。Down／DROP／DELETE 可能失去資料，不能等同回復。SQL Server filtered index／computed column 的工作階段選項与專案型别／時間函式等代码问题记录开发者待办与阻擋证据，不能在文件里悄悄修 SQL。
 
-## 異常中斷與重複執行的必要條件
+## 異常中斷與重複執行的內容要求及選用實測
 
-每個可執行單位在正常完成後多次重跑、異常中斷後重跑，都必須收斂到同一預期結構、描述及資料狀態。
+每個可執行單位的設計必須定義正常重跑與異常中斷後重跑應收斂的結構、描述及資料狀態；實際執行這些情境屬選用部署驗證。
 
 - 表、欄位、索引與約束分別核對存在性及完整定義；表已存在不能跳過後續未完成步驟。已正確者跳過、缺少者補建；有來源依據且可證安全的差異才自動修正，不相容或可能損失資料時停止並報錯。
 - 表／欄位描述獨立於建表／加欄位執行，檢查存在性及內容；缺少新增、不符更新、相同無動作。描述新增或更新中斷後也須能重跑補完。
 - 資料依穩定鍵與預期狀態檢查，避免重複 INSERT、累加或覆寫應保留值；不相容資料不得靜默略過。migration history 不得在完整單位成功前標記完成，也不能代替單位內狀態檢查。
 - 依來源引擎及部署工具核對交易、錯誤回拋、停止後續相依、非交易 DDL 與跨批次部分提交。TRY/CATCH、XACT_ABORT 或 IF NOT EXISTS 單獨不足以證明容錯；禁止吞錯續跑。
 
-在具備相容性證據的隔離本機引擎／版本／provider／driver／工具與基準，先首次執行成功，再至少重跑兩次，核對結構、描述、資料及 history 不重複、不累加。相容性以語法、交易、索引／約束、資料結果與 history 行為判斷，不要求所有版本字串完全一致；provider／driver 不明時 SQL 驗證維持待確認。另從新還原基準依實際提交邊界注入中斷，涵蓋建表後、欄位／索引／約束部分完成、描述新增或更新途中、資料部分完成與提交前後；不存在的步驟注明不適用。包含 SQL 錯誤及工具／連線中止情境，核對整體回滾與部分提交。記錄中斷位置、已提交狀態、停止結果、同一 artifact 重跑命令及最終比對；不能改 SQL 製造假通過，正常只跑一次不足以證明。
+內容審核以 guard、狀態檢查、交易、錯誤回拋、停止後續相依、資料冪等性及可恢復限制的靜態設計判斷，不因尚未在 DB 執行而自動不通過。若使用者或專案要求部署實測，才在相容性證據足夠的隔離本機引擎／版本／provider／driver／工具與基準先首次執行成功，再至少重跑兩次，核對結構、描述、資料及 history 不重複、不累加，並從新還原基準依提交邊界注入中斷。記錄中斷位置、已提交狀態、停止結果、同一 artifact 重跑命令及最終比對；不能改 SQL 製造假通過。實測失敗若直接證明 SQL 內容或異常機制缺陷，內容未通過；單純環境不相容列部署待辦。
 
-缺機制或來源不安全列來源修正待辦並判文件未通過；缺環境／provider／driver／SQL Azure 實測證據判 SQL 驗證／上線資格待確認且禁止部署。先嘗試專案工具可追溯的可重跑輸出，不能解決時不得私改來源交付；修正來源或工具 artifact 後重新核對範圍並複測。無異動纯註解檔為無動作，重跑測試不適用並附盤點證據。
+缺機制或來源不安全列來源修正待辦並判文件未通過；未要求或未執行 DB 實測記「部署驗證未執行」，不改變內容審核結論。要求實測但缺環境／provider／driver 證據判部署驗證待確認；先嘗試專案工具可追溯的可重跑輸出，不能解決時不得私改來源交付。修正來源或工具 artifact 後重新核對範圍並複審。無異動純註解檔為無動作，重跑測試不適用並附盤點證據。
 
 ## 「無」的證據
 
