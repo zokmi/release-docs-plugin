@@ -109,14 +109,25 @@ EXEC sys.sp_set_session_context
 
 ## LocalDB 與正式執行證據
 
-LocalDB 驗證是隔離的部署信心檢查，不取代正式 provider、版本、權限與維護窗口確認。若有 disposable runner，必須從 fresh baseline 執行四輪：
+LocalDB 驗證是隔離的部署信心檢查，不取代正式 provider、版本、權限與維護窗口確認。ValidateOnly、commit 與 injected failure 輪次都必須從 fresh baseline 建立 disposable database，並載入與本次異動相關的測試資料；不可只用空 schema，也不可直接沿用上一輪 rollback 後的資料庫。rerun 輪次則使用 commit 輪次已提交的資料庫，但必須建立新的 connection／session，不能把上一輪 connection 接續使用。若本次包含資料異動 SQL，沒有足以覆蓋其條件分支、既有值、重複鍵、NULL／非 NULL、邊界值與預期保留資料的 fixture 時，部署驗證只能標示為 `待確認`，不得宣稱通過。
+
+Fixture 必須保存來源、hash、資料用途與預期結果，至少涵蓋：
+
+- 會被回填、轉換、搬移或刪除的既有資料。
+- 不應被異動的保留資料，用來檢查範圍是否過大。
+- 會觸發 unique、FK、NOT NULL、CHECK 或其他 constraint 的資料形狀。
+- 空集合、單筆、多筆、重複候選與邊界值等會影響 idempotence 的案例。
+
+每輪查核都必須同時驗證 schema、資料內容、資料筆數／摘要、保留資料、排除範圍與 unit 結果。資料異動 unit 必須提供執行前後可比較的查核條件；無法安全定義預期結果時阻擋 SQL 內容審核，不能只把它歸類為測試缺失。
+
+若有 disposable runner，必須依下列輪次契約執行四輪：
 
 1. ValidateOnly 完整執行後 rollback。
 2. Fresh baseline 以 ValidateOnly=0 執行並 commit。
 3. 在已 commit 的資料庫以新 session 重跑，確認結果收斂。
 4. 注入可預期 unit failure，確認 rollback、`THROW` 與後續 unit 未執行。
 
-每輪保存 server、database、provider／tool version、baseline、fixture、command、exit code、checks、error summary 與 artifact hash。沒有必要 runner、baseline、fixture 或版本證據時狀態只能是 `未執行` 或 `待確認`。
+每輪保存 server、database、provider／tool version、baseline、fixture、fixture hash、fixture 使用方式、預期保留資料摘要、command、exit code、checks、error summary 與 artifact hash。沒有必要 runner、baseline、fixture 或版本證據時狀態只能是 `未執行` 或 `待確認`。
 
 正式環境執行證據由上板人員提供，至少包含實際 artifact hash、server/database、執行模式、session、開始／結束時間、結果查核、錯誤輸出與停止原因。插件不把人工回報直接視為已驗證；證據不完整時維持 `待確認`。
 
@@ -153,9 +164,10 @@ fingerprint 至少涵蓋 `00_上線指引.md`、`01_部署SQL.sql`、適用的 `
 4. SQL 能在新 SSMS session 以 ValidateOnly=1 執行後 rollback，明確設定 0 才 commit。
 5. 已 commit 後重跑不產生重複欄位、index、constraint 或資料。
 6. 注入錯誤時能 rollback、`THROW`、停止後續 unit，並輸出可定位的錯誤 context。
-7. LocalDB 證據與 SQL 內容審核分開保存；沒有 runner 或證據時不宣稱通過。
-8. lifecycle manifest、source metadata、artifact hash、review record 與永久 execution evidence 可重建且不可靜默覆寫。
-9. 交付目錄只包含定義的 `00`、`01` 與適用的 `02`。
+7. 含資料異動 SQL 時，LocalDB fixture 能覆蓋異動條件、保留資料與 constraint 邊界，並驗證資料前後結果。
+8. LocalDB 證據與 SQL 內容審核分開保存；沒有 runner 或證據時不宣稱通過。
+9. lifecycle manifest、source metadata、artifact hash、review record 與永久 execution evidence 可重建且不可靜默覆寫。
+10. 交付目錄只包含定義的 `00`、`01` 與適用的 `02`。
 
 ## 不在本次範圍
 
