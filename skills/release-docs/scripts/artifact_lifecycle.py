@@ -65,7 +65,11 @@ def owned(repo, run):
                     or getattr(info, 'st_file_attributes', 0) & 0x400):
                 raise ValueError('Unsafe runtime root')
     candidate = Path(run).absolute()
-    if candidate.parent != base or not re.fullmatch(r'[0-9a-f]{32}', candidate.name):
+    try:
+        relative = candidate.resolve(strict=False).relative_to(base.resolve(strict=False))
+    except ValueError:
+        raise ValueError('Not a direct owned run directory')
+    if len(relative.parts) != 1 or not re.fullmatch(r'[0-9a-f]{32}', candidate.name):
         raise ValueError('Not a direct owned run directory')
     safe_tree(candidate)
     candidate.resolve(strict=True).relative_to(base.resolve(strict=True))

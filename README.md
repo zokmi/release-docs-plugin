@@ -133,7 +133,7 @@ python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --docu
 
 ## 維護與 Release
 
-目前版本：`0.1.20`。本版要求 SQL 可直接由 SSMS 等工具執行，交易驗證在同一 connection/session 內以 `ValidateOnly=1` 回滾或 `ValidateOnly=0` 提交，並支援中斷後續跑與安全重複執行；索引名稱或環境定義不確定時可產生獨立 `01_索引調整.sql`；隔離資料庫實測仍是選用部署驗證。
+目前版本：`0.1.21`。本版要求 SQL 可直接由 SSMS 等工具執行，交易驗證在同一 connection/session 內以 `ValidateOnly=1` 回滾或 `ValidateOnly=0` 提交，並支援中斷後續跑與安全重複執行；索引名稱或環境定義不確定時可產生獨立 `01_索引調整.sql`；隔離資料庫實測仍是選用部署驗證。
 
 `00_上線指引.md` 是入口導覽，只說明後續檔案用途；`03_例外排除.json` 是非必要且唯一的例外排除來源，`04_參數異動.md` 是非必要的參數操作文件。分支、PR、回合併、tag、清理與人工簽核由專案部署流程處理，不放入 00、03 或 04。
 
