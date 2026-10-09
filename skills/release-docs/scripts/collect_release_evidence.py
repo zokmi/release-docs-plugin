@@ -1,9 +1,12 @@
 """Collect path/revision metadata only; never emit file contents."""
 import argparse
+from dataclasses import asdict
 import json
 from pathlib import Path
 import subprocess
 import sys
+
+from detect_entity_framework import detect_entity_framework
 
 
 def git(repo, *args):
@@ -52,8 +55,14 @@ def collect(repo, base, target, diff_mode):
     untracked = [{'status': '?', 'old_path': None, 'path': path.decode('utf-8', errors='surrogateescape'),
                   'source_revision': 'working-tree'}
                  for path in git(root, 'ls-files', '--others', '--exclude-standard', '-z').split(b'\0') if path]
+    source_paths = git(root, 'ls-tree', '-r', '--name-only', '-z', target_sha).decode(
+        'utf-8', errors='surrogateescape').split('\0')
+    source_scope = {'revision': target_sha, 'paths': [path for path in source_paths if path]}
+    ef_detection = detect_entity_framework(root, source_scope)
     return {'schema_version': 1, 'repo_root': str(root), 'base_sha': base_sha,
             'target_sha': target_sha, 'diff_mode': diff_mode,
+            'source_scope': source_scope,
+            'entity_framework': asdict(ef_detection),
             'committed_changes': changes(root, [base_sha, target_sha], base_sha, target_sha),
             'working_tree_changes': {
                 'staged': changes(root, ['--cached', head], head, 'index'),
