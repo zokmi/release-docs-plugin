@@ -1,6 +1,6 @@
 # release-docs
 
-依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.9`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
+依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.10`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
 
 ## 插件安裝
 
@@ -133,7 +133,7 @@ python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --docu
 
 ## 維護與 Release
 
-目前版本：`0.1.9`。本版將 SQL 內容審核與部署環境驗證分開；審核聚焦來源忠實性、執行單位與異常／重跑機制，主機、SQL Azure、版本與 provider／driver 屬部署待辦，不作為 SQL 內容否決條件。
+目前版本：`0.1.10`。本版加入受控排除清單；特定功能可不上線，但必須保留完整原始 artifact、列明排除物件與相依影響，且納入物件仍逐物件檢查 guard。SQL 內容審核與部署環境驗證維持分開。
 
 `04_上線指引.md` 必須包含更新後分支處理流程：正式驗證與部署SHA確認、release／hotfix回合併至正式及開發分支、衝突處理與測試、PR審核、tag核對、分支保留／清理條件及處理紀錄。依目標專案慣例填寫並附來源；分支名稱或策略未知列待確認，不自行猜測。插件只提供流程指引，未執行作業保持未執行狀態；必要審查同步核對這些內容。
 
@@ -151,8 +151,8 @@ claude plugin validate .claude-plugin/marketplace.json --json --strict
 git switch main
 git pull --ff-only
 python -X utf8 -m unittest discover -s tests -v
-git tag -a v0.1.9 -m "release-docs 0.1.9"
-git push origin v0.1.9
+git tag -a v0.1.10 -m "release-docs 0.1.10"
+git push origin v0.1.10
 ```
 
 以上是維護者發布流程；一般使用者僅需插件管理器安裝，不需建立 tag。不要 force 覆寫 tag；版本錯誤使用新版本。Release workflow 支援推送 `v*` tag 與 workflow_dispatch 重跑既有 tag，先驗證嚴格 `vMAJOR.MINOR.PATCH`（禁止前導零與 prerelease），再 checkout。檢查三份版本、必備資源、tag commit 位於 `origin/main` 且 checkout 一致，Linux／Windows 測試通過才建立 GitHub Release。預設 contents:read，僅 release job contents:write。已有 Release 不修改；建立使用 `--verify-tag --generate-notes`。workflow 本身需在預設分支才可手動觸發；此專案已公開；GitHub Release 不等於上架到官方插件目錄，安裝來源仍是上述 Git marketplace。
