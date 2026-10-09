@@ -17,7 +17,7 @@ description: Use when 使用者要先確認 Git 差異範圍，再自動產出�
 
 ## 專案工具產生 SQL
 
-完整 SQL 已存在時先核對是否適用此次範圍；缺 artifact 時先檢查專案既有 EF migration、model snapshot、Database Project 與指定 schema compare 工具，使用專案鎖定版本、provider、設定與部署慣例，自動產生可追溯腳本。EF 使用此次 base／target 對應的 migration 起訖；Database Project 使用兩端 revision 的 schema artifact。清單模式逐對產生並核對相依，不能包含未選 commit 的異動。不能把整個歷史腳本當作本次差異，不能自創 migration 或直接把 ORM／Up／Down 翻寫為 SQL。若本次刻意不上線某項功能，保留完整未改寫的原始 artifact，另以受控排除清單指定不執行的 migration／執行單位／物件；不得用人工 wrapper、刪段或改寫原始 artifact 代替排除清單。
+完整 SQL 已存在時先核對是否適用此次範圍；缺 artifact 時先檢查專案既有 EF migration、model snapshot、Database Project 與指定 schema compare 工具，使用專案鎖定版本、provider、設定與部署慣例，自動產生可追溯腳本。EF 使用此次 base／target 對應的 migration 起訖；Database Project 使用兩端 revision 的 schema artifact。清單模式逐對產生並核對相依，不能包含未選 commit 的異動。不能把整個歷史腳本當作本次差異，不能自創 migration 或直接把 ORM／Up／Down 翻寫為 SQL。若本次刻意不上線某項功能，分開保存「來源 artifact」與「本次執行 artifact」：來源檔逐位元保留，本次執行檔可人工移除完整的受控排除單位，但不得改寫、包裝或調整任何納入單位的 SQL、交易或 guard。
 
 工具產生在隔離暫存工作副本進行，保留原工作區與既有 artifact；先確認啟動／設計階段不會連正式資料庫，採不連線正式環境的 script／build 模式。記錄來源 SHA、migration 起訖或 schema 基準、provider、工具版本、遮罩後命令、輸出 artifact 定位與內容識別、exit code 及錯誤摘要；重新核對工具輸出完整內容，將生成證據納入文件及審查。需資料庫連線的 compare 僅可對已確認的隔離本機基準進行。工具缺失、來源不足或執行失敗時明列嘗試結果與缺口，繼續其他單位；禁止以推測 SQL 或佔位語句補足。產生腳本成功不等於資料庫執行驗證成功。
 
@@ -53,7 +53,7 @@ description: Use when 使用者要先確認 Git 差異範圍，再自動產出�
 
 可執行 SQL 必須具備異常中斷容錯及可多次重複執行的機制，涵蓋結構、資料及表／欄位描述。依實際狀態自行補完：已正確者跳過、缺少者補建、描述不存在新增或不符時更新。不能因表已存在或 history 已標記而跳過未完成的欄位、索引、約束及描述。有來源依據且可證安全的結構差異才自動修正；不相容或可能損失資料時停止並報錯，不吞錯。資料不得重複新增、累加或覆寫應保留值。逐單位依 SQL 判讀規則核對交易、錯誤回拋、部分提交與重跑證據。
 
-來源缺上述機制時，先嘗試專案工具支援的可重跑產出模式並核對完整 artifact；不能解決時列來源修正待辦及阻擋，不在文件中私自包裝或改寫來源 SQL。若是刻意排除不上線，必須列出排除 ID、來源 revision／路徑／行號、完整物件或執行單位、排除理由、相依影響、負責人與核准／追蹤依據；排除只限制本次執行，不得刪除或改寫原始 artifact。已證實缺機制判未通過，缺必要證據判待確認；可交付阻擋說明，不能宣稱可上線或安全重跑。
+來源缺上述機制時，先嘗試專案工具支援的可重跑產出模式並核對完整 artifact；不能解決時列來源修正待辦及阻擋。受控排除可使用人工產生的本次執行 artifact，但必須同時保存來源 artifact hash、執行 artifact hash、排除 ID、來源 revision／路徑／行號、完整物件或執行單位、排除理由、相依影響、負責人、核准／追蹤依據及逐單位差異核對；不得改寫納入單位。缺任一證據、刪除範圍跨越執行單位、或人工處理改變納入 SQL 的語意，判未通過；缺必要證據判待確認。
 
 SQL 檔若執行隔離本機資料庫或 disposable container，只把結果作為部署驗證證據；不得連線或執行正式資料庫。provider／driver、SQL Azure、主機版本、collation、相容性層級與部署工具不納入 SQL 內容審核，不因環境尚未提供而判 SQL 未通過。若執行部署驗證，記錄環境、命令、exit code、錯誤輸出與 schema／資料結果；lint、parser、dry-run 或只產生 script 不得宣稱完成部署驗證。部署驗證失敗只回報環境或部署待辦，除非錯誤直接證明 SQL 內容或異常機制有缺陷。
 
