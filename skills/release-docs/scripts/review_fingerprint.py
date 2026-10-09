@@ -24,7 +24,7 @@ def snapshot(repo, documents, base=None, target=None, diff_mode=None, commit_sco
     document_hashes = {}
     for name in (*DOCUMENTS, REPORT):
         path = docs / name
-        if name in DOCUMENTS:
+        if name in DOCUMENTS and path.exists():
             document_hashes[name] = digest(path.read_bytes())
         excluded.append(path.relative_to(repo).as_posix())
     paths = ['--', '.', *[':(exclude,literal)' + p for p in excluded]]

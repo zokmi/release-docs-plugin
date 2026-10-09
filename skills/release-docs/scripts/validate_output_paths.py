@@ -1,11 +1,13 @@
-"""Read-only preflight for the five exact release-document destinations."""
+"""Read-only preflight for release-document destinations."""
 import argparse
 import json
 import stat
 import subprocess
 from pathlib import Path
 
-DOCUMENTS = ('01_結構SQL.md', '02_資料SQL.md', '03_appsettings異動.md', '04_上線指引.md')
+REQUIRED_DOCUMENTS = ('01_結構SQL.sql', '03_appsettings異動.md', '04_上線指引.md')
+OPTIONAL_DOCUMENTS = ('02_資料SQL.sql',)
+DOCUMENTS = REQUIRED_DOCUMENTS + OPTIONAL_DOCUMENTS
 REPORT = '05_版更審查報告.md'
 
 
@@ -21,7 +23,7 @@ def validate_output_paths(repo, documents):
     for directory in (docs_root, docs, *docs.parents):
         if directory.exists() and not directory.is_dir():
             raise ValueError('Output directory must be a directory')
-    for name in (*DOCUMENTS, REPORT):
+    for name in (*REQUIRED_DOCUMENTS, *OPTIONAL_DOCUMENTS, REPORT):
         path = docs / name
         if path.is_symlink():
             raise ValueError('Named output must not be a symlink')

@@ -1,6 +1,6 @@
 # release-docs
 
-依目標 Git 專案的實際證據產出四份版更文件及必要審查報告。名稱 `release-docs`，版本 `0.1.0`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
+依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.0`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
 
 ## 插件安裝
 
@@ -91,35 +91,35 @@ Claude Code 可用 `/release-docs:release-docs`、`/release-docs:release-docs-re
 ```text
 請使用 release-docs，目標 repo C:/work/my-app，base v1.2.0，target v1.3.0，direct 比較，
 識別 v1.3.0，日期 2026-10-08／Asia/Taipei；工作區內容不納入。
-依完整來源產出四份文件，並使用 release-docs-review 重新比對來源與成品。
+依完整來源產出必要文件，並使用 release-docs-review 重新比對來源與成品，結果於對話收尾回報。
 不要執行資料庫 SQL。
 ```
 
 ```text
-請使用 release-docs-review 重新審查 C:/work/my-app/docs/2026-10-08_v1.3.0，
+請使用 release-docs-review 重新審查 C:/work/my-app/docs/release-doc/2026-10-08，
 base v1.2.0、target v1.3.0、direct，工作區不納入。
 舊通過報告需要重新驗證識別；缺必要來源保持待確認。
 ```
 
-輸出為 Git 根目錄 `docs/<當地日期>_<安全識別>/01_結構SQL.md`、`02_資料SQL.md`、`03_appsettings異動.md`、`04_上線指引.md`、`05_版更審查報告.md`。沒有類別異動也產文件並記錄盤點範圍。缺基準／識別先詢問；未提交內容分列，不冒充指定 revision。已有執行或簽核記錄另建 `_v2` 等版本。混合 SQL 保持完整執行單位且只執行一次。
+輸出預設為 Git 根目錄 `docs/release-doc/<當地YYYY-MM-DD>/01_結構SQL.sql`、（有資料異動時才產生）`02_資料SQL.sql`、`03_appsettings異動.md`、`04_上線指引.md`。SQL 檔的說明使用 SQL 註解，部署內容完整保留來源語句、批次與交易，可交給指定資料庫工具執行；缺來源腳本時列為阻擋，不產生佔位 SQL。沒有資料異動時不產生 `02_資料SQL.sql`；結構 SQL 仍產出並記錄完整盤點範圍。 結構內容須以 EF migration/model 差異、資料庫專案 schema compare／部署腳本或等價 schema artifact 驗證；只有 ORM 類別或 migration 名稱不足以產出可執行 SQL。 產檔後還必須在隔離本機資料庫或等價工具實際執行，記錄 exit code 與執行後驗證；沒有本機引擎或執行失敗時不得判定通過。缺基準／識別先詢問；未提交內容分列，不冒充指定 revision。已有執行或簽核記錄另建 `_v2` 等版本。混合 SQL 保持完整執行單位且只執行一次。
 
 必要審查僅「通過」「待確認」「未通過」，最多三輪。hash 只驗證證據未變，不替代語意審查；任何文件或來源異動令舊審查失效。敏感值整值遮罩，正式值與部署來源缺漏不可宣稱可上線。
 
 明確非連續 commit 清單保留選定順序及每個 direct parent，merge 必須明確選 parent、root 的 parent 為 null。生成與必要審查共用 JSON 有序清單，例如 `[{"commit":"<A>","parent":"<A-parent>"},{"commit":"<C>","parent":"<C-parent>"}]`，不把 A、C 擴為包含 B 的 range；中間相依不足列待確認。collector 仍只接受 range；清單逐對蒐集完整證據。fingerprint 解析每對 SHA、識別 source trees 及選定差異，不在清單 snapshot 虛構 range 欄位：
 
 ```text
-python skills/release-docs/scripts/review_fingerprint.py --repo <repo> --documents <repo/docs/日期_識別> --commit-scope <JSON檔>
+python skills/release-docs/scripts/review_fingerprint.py --repo <repo> --documents <repo/docs/release-doc/日期> --commit-scope <JSON檔>
 ```
 
 `--commit-scope` 與 `--base`／`--target`／`--diff-mode` 互斥；既有 range 介面保持相容。開始審查、最終保存及再次使用報告時保留同一範圍；比較來源識別時包含完整有序 `commit_scope`，任何 pair、順序、樹、差異或工作區變動都需重審。hash 相符仍不能替代語意審查。
 
-每次首次建立或立即更新／fallback 寫入前（含第五報告），先選定保留既有簽核的最終版本目錄，再執行唯讀 guard：
+每次首次建立或立即更新／fallback 寫入前，先選定保留既有簽核的最終版本目錄，再執行唯讀 guard：
 
 ```text
-python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --documents <repo/docs/日期_識別>
+python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --documents <repo/docs/release-doc/日期>
 ```
 
-拒絕越界目錄、五個具名成品的 symlink、非一般檔案及 hard-link 別名。失敗只在對話報告，不嘗試寫 blocked 文件或報告。preflight 不建立目錄，安全的新目錄可在通過後建立；fingerprint 使用同一 guard。
+拒絕越界目錄、必備成品或已存在資料 SQL 的 symlink、非一般檔案及 hard-link 別名。失敗只在對話報告，不嘗試寫 blocked 文件或報告。preflight 不建立目錄，安全的新目錄可在通過後建立；fingerprint 使用同一 guard。
 
 ## 維護與 Release
 

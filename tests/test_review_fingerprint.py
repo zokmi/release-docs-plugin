@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'skills/release-docs/scripts/review_fingerprint.py'
-NAMES = ['01_結構SQL.md', '02_資料SQL.md', '03_appsettings異動.md', '04_上線指引.md']
+NAMES = ['01_結構SQL.sql', '02_資料SQL.sql', '03_appsettings異動.md', '04_上線指引.md']
 
 
 class FingerprintTests(unittest.TestCase):

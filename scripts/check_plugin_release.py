@@ -8,7 +8,7 @@ import subprocess
 MANIFESTS = ['plugin.json', '.claude-plugin/plugin.json', '.codex-plugin/plugin.json']
 RESOURCES = [
     'skills/release-docs/SKILL.md', 'skills/release-docs-review/SKILL.md',
-    'assets/01_結構SQL.md', 'assets/02_資料SQL.md', 'assets/03_appsettings異動.md',
+    'assets/01_結構SQL.sql', 'assets/02_資料SQL.sql', 'assets/03_appsettings異動.md',
     'assets/04_上線指引.md', 'assets/05_版更審查報告.md',
     'references/sql-review-rules.md', 'references/config-rules.md',
     'skills/release-docs/scripts/collect_release_evidence.py',

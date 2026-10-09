@@ -10,9 +10,25 @@
 | 資料 | seed 值及可證筆數、UPDATE/DELETE/回填/遷移條件、既有資料受影響與不受影響範圍 |
 | migration | ID、工具與版本、Up/Down 行為、history／目前版本、既有 artifact 與指令來源 |
 
-每支腳本或 migration 一個執行 ID（例如 SQL-001），记录来源 revision 與完整路徑。混合腳本在 01、02 同 ID 說明；04 執行表只一列。保持完整交易、`GO`、delimiter、工作階段與相依，不剪出 DDL/DML 重跑，也不另存可執行 SQL。字串、註解、動態 SQL 與 stored procedure 內語句須辨別真正執行時機：`N'DELETE FROM Users'` 是值；動態執行與 procedure 修改則讀调用處確認。
+每支腳本或 migration 一個執行 ID（例如 SQL-001），记录来源 revision 與完整路徑。混合腳本在 01、02 同 ID 說明；04 執行表只一列。保持完整交易、`GO`、delimiter、工作階段與相依，不剪出 DDL/DML 重跑，將已核對來源完整保存為可執行 .sql；說明使用 SQL 註解，混合內容僅保存一次。字串、註解、動態 SQL 與 stored procedure 內語句須辨別真正執行時機：`N'DELETE FROM Users'` 是值；動態執行與 procedure 修改則讀调用處確認。
 
 migration 按原工具單位執行，不將 Up/Down 變成手工部署 SQL。來源只有 UAT 命令而正式用 bundle 时，不能把 UAT 命令當成正式命令；缺正式 artifact、provider 或版本則待確認。ORM 新實體／欄位／DbSet 若缺 migration／腳本或已有 schema 證據，列部署缺口并停止相关部署，不能寫「無資料庫異動」。
+
+## 結構內容驗證來源
+
+結構 SQL 的內容優先以可重現的 schema 差異來源驗證，依序採用：
+
+1. EF Core／EF migration 的 model snapshot 與 migration 差異，以及該專案產出的正式 migration script 或 bundle。
+2. Database project（例如 SQL Database Project／SSDT）專案 schema 與產出的 publish／deployment script 或 schema compare 結果。
+3. 專案明確指定的其他 schema compare 工具與其輸出 artifact。
+
+上述來源必須能對應到此次 Git 範圍與目標資料庫 provider／版本，並保存來源路徑、revision、工具版本與產出模式。人工閱讀 ORM 類別、migration 名稱或 commit 訊息只能定位，不能單獨證明欄位、索引、約束或 DROP／ALTER 內容正確。沒有 EF 差異、資料庫專案差異或其他可核對 schema artifact 時，不能自行推導或改寫可執行結構 SQL；應在 SQL 註解、04 與對話審查回報列為待確認／阻擋。
+
+## 本機執行驗證
+
+每個產出的 SQL 檔必須在本機使用相同方言與相容版本的資料庫引擎、EF migration bundle，或資料庫專案部署／驗證工具執行一次。驗證環境必須是隔離的本機資料庫或 disposable container，記錄工具版本、連線目標識別、執行命令、開始／結束時間、exit code、錯誤輸出及執行後 schema／資料驗證結果；敏感連線資訊不得寫入紀錄。只做 parser、lint、`--dry-run` 或產生 script 不算已執行成功，除非該工具明確保證完整編譯與部署語意且規範接受它作為等價驗證。
+
+驗證失敗、只完成部分交易、目標引擎／provider 不一致，或本機沒有可用資料庫／部署工具時，狀態必須為待確認或未通過，並停止宣稱 SQL 可上線。不得為了通過驗證修改來源 SQL、跳過錯誤、改用不同方言或連線正式資料庫。
 
 ## 順序與檢查
 
