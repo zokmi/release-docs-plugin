@@ -1,6 +1,6 @@
 # release-docs
 
-依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.6`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
+依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.7`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
 
 ## 插件安裝
 
@@ -92,7 +92,7 @@ Claude Code 可用 `/release-docs:release-docs`、`/release-docs:release-docs-re
 
 ```text
 請使用 release-docs，目標 repo C:/work/my-app，base v1.2.0，target v1.3.0，direct 比較，
-識別 v1.3.0，日期 2026-10-08／Asia/Taipei；工作區內容不納入。
+release 分支 release/2026-10-08，識別 v1.3.0，產出日期 2026-10-09／Asia/Taipei；工作區內容不納入。
 依完整來源產出必要文件，並使用 release-docs-review 重新比對來源與成品，結果於對話收尾回報。
 不要執行資料庫 SQL。
 ```
@@ -103,7 +103,11 @@ base v1.2.0、target v1.3.0、direct，工作區不納入。
 舊通過報告需要重新驗證識別；缺必要來源保持待確認。
 ```
 
-輸出預設為 Git 根目錄 `docs/release-doc/<當地YYYY-MM-DD>/01_結構SQL.sql`、（有資料異動時才產生）`02_資料SQL.sql`、`03_appsettings異動.md`、`04_上線指引.md`。SQL 檔的說明使用 SQL 註解，部署內容完整保留來源語句、批次與交易，可交給指定資料庫工具執行；缺來源腳本時列為阻擋，不產生佔位 SQL。沒有資料異動時不產生 `02_資料SQL.sql`；結構 SQL 仍產出並記錄完整盤點範圍。 結構內容須以 EF migration/model 差異、資料庫專案 schema compare／部署腳本或等價 schema artifact 驗證；只有 ORM 類別或 migration 名稱不足以產出可執行 SQL。 產檔後只能在與正式機資料庫引擎、主要版本及 provider 完全一致的隔離本機資料庫實際執行，依序建立／還原基準、執行完整 SQL、驗證 schema／資料／history，記錄版本差異、exit code 與結果；不得連正式資料庫；若正式機版本不明，必須先請使用者提供版本，沒有本機引擎或執行失敗時不得判定通過。缺基準／識別先詢問；未提交內容分列，不冒充指定 revision。已有執行或簽核記錄另建 `_v2` 等版本。混合 SQL 保持完整執行單位且只執行一次。
+日期目錄取已確認 release 分支名稱中的有效日期，例如 `release/2026-10-08` 在 2026-10-09 產出仍使用 `2026-10-08`；四份文件另記產出日期／時區與日期來源。分支或日期不明先確認，不改用當天或 commit 日期。
+
+SQL 必須具備異常中斷容錯及多次重複執行能力，包含結構與表／欄位描述自行補完：缺少補建、描述不符更新、正確跳過，不相容或可能損失資料則停止報錯。資料不得重複新增或累加。本機驗證包含首次成功後至少兩次重跑及提交邊界中斷後重跑；缺機制列來源修正待辦並阻擋，不能只寫重跑限制就判通過，也不能私改來源 SQL。
+
+輸出預設為 Git 根目錄 `docs/release-doc/<release分支日期YYYY-MM-DD>/01_結構SQL.sql`、（有資料異動時才產生）`02_資料SQL.sql`、`03_appsettings異動.md`、`04_上線指引.md`。SQL 檔的說明使用 SQL 註解，部署內容完整保留來源語句、批次與交易，可交給指定資料庫工具執行；缺來源腳本時列為阻擋，不產生佔位 SQL。沒有資料異動時不產生 `02_資料SQL.sql`；結構 SQL 仍產出並記錄完整盤點範圍。 結構內容須以 EF migration/model 差異、資料庫專案 schema compare／部署腳本或等價 schema artifact 驗證；只有 ORM 類別或 migration 名稱不足以產出可執行 SQL。 產檔後只能在與正式機資料庫引擎、主要版本及 provider 完全一致的隔離本機資料庫實際執行，依序建立／還原基準、執行完整 SQL、驗證 schema／資料／history，記錄版本差異、exit code 與結果；不得連正式資料庫；若正式機版本不明，必須先請使用者提供版本，沒有本機引擎或執行失敗時不得判定通過。缺基準／識別先詢問；未提交內容分列，不冒充指定 revision。已有執行或簽核記錄另建 `_v2` 等版本。混合 SQL 保持完整執行單位且只執行一次。
 
 必要審查僅「通過」「待確認」「未通過」，最多三輪。hash 只驗證證據未變，不替代語意審查；任何文件或來源異動令舊審查失效。敏感值整值遮罩，正式值與部署來源缺漏不可宣稱可上線。
 
@@ -129,7 +133,7 @@ python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --docu
 
 ## 維護與 Release
 
-目前版本：`0.1.6`。本版要求設定異動逐參數提供用途、預期格式與實際修改位置，並直接附可解析的 JSON 範例；示例與正式值分列，生成與審核規則同步更新。
+目前版本：`0.1.7`。本版新增 release 分支日期目錄規則，以及 SQL 異常中斷後可重跑、自行補完結構／欄位／描述與資料冪等性要求；設定異動仍須逐參數提供用途、預期格式與實際修改位置，並直接附可解析的 JSON 範例。
 
 `04_上線指引.md` 必須包含更新後分支處理流程：正式驗證與部署SHA確認、release／hotfix回合併至正式及開發分支、衝突處理與測試、PR審核、tag核對、分支保留／清理條件及處理紀錄。依目標專案慣例填寫並附來源；分支名稱或策略未知列待確認，不自行猜測。插件只提供流程指引，未執行作業保持未執行狀態；必要審查同步核對這些內容。
 
@@ -147,8 +151,8 @@ claude plugin validate .claude-plugin/marketplace.json --json --strict
 git switch main
 git pull --ff-only
 python -X utf8 -m unittest discover -s tests -v
-git tag -a v0.1.6 -m "release-docs 0.1.6"
-git push origin v0.1.6
+git tag -a v0.1.7 -m "release-docs 0.1.7"
+git push origin v0.1.7
 ```
 
 以上是維護者發布流程；一般使用者僅需插件管理器安裝，不需建立 tag。不要 force 覆寫 tag；版本錯誤使用新版本。Release workflow 支援推送 `v*` tag 與 workflow_dispatch 重跑既有 tag，先驗證嚴格 `vMAJOR.MINOR.PATCH`（禁止前導零與 prerelease），再 checkout。檢查三份版本、必備資源、tag commit 位於 `origin/main` 且 checkout 一致，Linux／Windows 測試通過才建立 GitHub Release。預設 contents:read，僅 release job contents:write。已有 Release 不修改；建立使用 `--verify-tag --generate-notes`。workflow 本身需在預設分支才可手動觸發；此專案已公開；GitHub Release 不等於上架到官方插件目錄，安裝來源仍是上述 Git marketplace。
