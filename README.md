@@ -1,6 +1,6 @@
 # release-docs
 
-依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.17`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
+依目標 Git 專案的實際證據產出必要版更文件、精簡審查摘要及對話回報。名稱 `release-docs`，版本 `0.1.18`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
 
 ## 插件安裝
 
@@ -133,7 +133,7 @@ python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --docu
 
 ## 維護與 Release
 
-目前版本：`0.1.17`。本版要求 SQL 可直接由 SSMS 等工具執行，支援中斷後續跑與安全重複執行；隔離資料庫實測仍是選用部署驗證。
+目前版本：`0.1.20`。本版要求 SQL 可直接由 SSMS 等工具執行，交易驗證在同一 connection/session 內以 `ValidateOnly=1` 回滾或 `ValidateOnly=0` 提交，並支援中斷後續跑與安全重複執行；索引名稱或環境定義不確定時可產生獨立 `01_索引調整.sql`；隔離資料庫實測仍是選用部署驗證。
 
 `00_上線指引.md` 是入口導覽，只說明後續檔案用途；`03_例外排除.json` 是非必要且唯一的例外排除來源，`04_參數異動.md` 是非必要的參數操作文件。分支、PR、回合併、tag、清理與人工簽核由專案部署流程處理，不放入 00、03 或 04。
 
@@ -155,8 +155,8 @@ claude plugin validate .claude-plugin/marketplace.json --json --strict
 git switch main
 git pull --ff-only
 python -X utf8 -m unittest discover -s tests -v
-git tag -a v0.1.17 -m "release-docs 0.1.17"
-git push origin v0.1.17
+git tag -a v0.1.18 -m "release-docs 0.1.18"
+git push origin v0.1.18
 ```
 
 以上是維護者發布流程；一般使用者僅需插件管理器安裝，不需建立 tag。不要 force 覆寫 tag；版本錯誤使用新版本。Release workflow 支援推送 `v*` tag 與 workflow_dispatch 重跑既有 tag，先驗證嚴格 `vMAJOR.MINOR.PATCH`（禁止前導零與 prerelease），再 checkout。檢查三份版本、必備資源、tag commit 位於 `origin/main` 且 checkout 一致，Linux／Windows 測試通過才建立 GitHub Release。預設 contents:read，僅 release job contents:write。已有 Release 不修改；建立使用 `--verify-tag --generate-notes`。workflow 本身需在預設分支才可手動觸發；此專案已公開；GitHub Release 不等於上架到官方插件目錄，安裝來源仍是上述 Git marketplace。
@@ -166,3 +166,7 @@ git push origin v0.1.17
 [實際情境結果](evals/results.md) 區分真實來源／技能執行／必要審查與未測項；`evals/task2/` 是既有手寫契約範例，不代替實際評估。沒有執行 SQL 或正式環境驗證。
 
 重現來源fixture需明確給定兩個尚不存在的目的地：`python -X utf8 evals/prepare_actual_fixtures.py --run-root .superpowers/actual-rerun-2026-10-09 --archive-root evals/rerun-2026-10-09`。run或archive任一存在就先拒絕、完全不寫入；新clone的 `evals/actual/` 是保留的原評估證據，不能覆用。腳本只準備來源，後續仍須agent實際生成／審查，見上述情境結果的重現步驟。
+
+## 暫存產物管理（0.1.18）
+
+詳見 [產物生命週期](references/artifact-lifecycle.md)。暫存統一放在目標 repo 的 `.release-docs/runs/<run-id>/`，先確認 `/.release-docs/` 與 `/docs/release-artifacts/` 被 Git ignore 且沒有 tracked/staged 產物，才允許產製。成品保留在 docs/release-doc；05 保存精簡來源、工具、單位對照與 hash 摘要。必要審查通過及最後核對完成後，agent 必須呼叫 artifact_lifecycle.py finish 清除本次 run。失敗／中斷保留七天，下次啟動清除到期、無鎖且有 ownership manifest 的 run。既有 release-artifacts 不自動刪除，需先核對歸屬與引用。這是技能調用工具的流程，不是背景服務或 Git 伺服器端防護。

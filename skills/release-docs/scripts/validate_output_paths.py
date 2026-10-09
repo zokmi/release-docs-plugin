@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 REQUIRED_DOCUMENTS = ('00_上線指引.md', '01_結構SQL.sql')
-OPTIONAL_DOCUMENTS = ('02_資料SQL.sql', '03_例外排除.json', '04_參數異動.md')
+OPTIONAL_DOCUMENTS = ('01_索引調整.sql', '02_資料SQL.sql', '03_例外排除.json', '04_參數異動.md')
 DOCUMENTS = REQUIRED_DOCUMENTS + OPTIONAL_DOCUMENTS
 REPORT = '05_版更審查報告.md'
 ALLOWED_DOCUMENTS = frozenset((*DOCUMENTS, REPORT))

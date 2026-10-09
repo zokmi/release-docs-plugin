@@ -47,6 +47,24 @@ class PackagingTests(unittest.TestCase):
         for name in ['LICENSE', 'README.md', 'skills/release-docs/scripts/collect_release_evidence.py']:
             self.assertTrue((ROOT / name).is_file(), name)
 
+    def test_transaction_validation_contract_is_documented(self):
+        rules = (ROOT / 'references/sql-review-rules.md').read_text(encoding='utf-8')
+        skill = (ROOT / 'skills/release-docs/SKILL.md').read_text(encoding='utf-8')
+        for text in (rules, skill):
+            self.assertIn('ValidateOnly=1', text)
+            self.assertIn('ValidateOnly=0', text)
+            self.assertIn('同一 connection/session', text)
+            self.assertIn('禁止第一次', text)
+
+    def test_index_adjustment_is_optional_and_guarded(self):
+        guide = (ROOT / 'assets/00_上線指引.md').read_text(encoding='utf-8')
+        index_sql = (ROOT / 'assets/01_索引調整.sql').read_text(encoding='utf-8')
+        validator = (ROOT / 'skills/release-docs/scripts/validate_release_artifacts.py').read_text(encoding='utf-8')
+        self.assertIn('01_索引調整.sql', guide)
+        self.assertIn('sys.indexes', index_sql)
+        self.assertIn('找不到或多個符合者停止', index_sql)
+        self.assertIn('index-adjustment', validator)
+
 
 if __name__ == '__main__':
     unittest.main()

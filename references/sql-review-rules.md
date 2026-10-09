@@ -12,7 +12,7 @@
 
 每支腳本或 migration 一個執行 ID（例如 SQL-001），记录来源 revision 與完整路徑。混合腳本在 01、02 同 ID 說明；保持完整交易、`GO`、delimiter、工作階段與相依，不剪出 DDL/DML 重跑，將已核對來源完整保存為可執行 .sql；說明使用 SQL 註解，混合內容僅保存一次。字串、註解、動態 SQL 與 stored procedure 內語句須辨別真正執行時機：`N'DELETE FROM Users'` 是值；動態執行與 procedure 修改則讀调用處確認。
 
-交付的 01／02 必須是可直接交給 SSMS、sqlcmd 或專案指定 SQL 工具執行的完整 deployment artifact；不能要求上板人員先啟動 ORM runtime、手動補 SQL 或依賴未交付的隱含步驟。每個執行單位必須定義「正常首次執行、已提交後中斷再執行、正常重複執行」三種狀態收斂規則：已完成項目無動作，未完成項目自動補完，資料不重複／累加／覆寫，不相容狀態停止並回報。這是靜態內容要求；實際 DB 測試仍屬選用部署驗證。
+交付的 01／02 必須是可直接交給 SSMS、sqlcmd 或專案指定 SQL 工具執行的完整 deployment artifact；不能要求上板人員先啟動 ORM runtime、手動補 SQL 或依賴未交付的隱含步驟。交易驗證採同一 connection/session 內的兩種模式：`ValidateOnly=1` 執行完整 SQL 與前後查核後 `ROLLBACK`，`ValidateOnly=0` 執行相同 SQL 與查核後 `COMMIT`。禁止第一次執行保留未提交交易、關閉 connection 後第二次執行再接續 commit；兩次獨立執行只能是第一次回滾驗證、第二次以乾淨 connection 正式提交。每個執行單位仍必須定義已提交後中斷再執行、正常重複執行的收斂規則：已完成項目無動作，未完成項目自動補完，資料不重複／累加／覆寫，不相容狀態停止並回報。這是靜態內容要求；實際 DB 測試仍屬選用部署驗證。
 
 migration 按原工具單位執行，不將 Up/Down 變成手工部署 SQL。來源只有 UAT 命令而正式用 bundle 时，不能把 UAT 命令當成正式命令；缺正式 artifact、provider 或版本則待確認。ORM 新實體／欄位／DbSet 若缺 migration／腳本或已有 schema 證據，列部署缺口并停止相关部署，不能寫「無資料庫異動」。
 
@@ -65,7 +65,7 @@ repair source 必須有唯一 ID、source revision、完整執行單位、相依
 
 SQL 內容審核与部署驗證各自只用「通過／待確認／未通過」。已證實來源 artifact 缺失、未管理人工改寫、工具產製不符或 repair 無正式來源，內容未通過；來源存在性或工具證據不足而未能確定違規，內容待確認。正式主機、部署 provider／driver、DB 版本或隔離 DB 未提供只影響部署驗證，不單獨否決內容；產製工具 DSP/provider 與 schema 證據缺失仍屬內容追溯缺口。缺實際 DB 證據，部署驗證待確認，不能宣稱通過。
 
-來源／執行 artifact、exclusion manifest 或文件任一變更，舊審查立即失效；重新 fingerprint 與語意複審。證據檔保存在 repo 內可由 fingerprint 識別的位置；外部或 ignored artifact 另保存本輪實際 hash inventory，開始／完成／交付逐項重算比對，不得只用 Git fingerprint 假定外部證據未變。
+來源／執行 artifact、exclusion manifest 或文件任一變更，舊審查立即失效；重新 fingerprint 與語意複審。證據檔保存在 ignored 的 `.release-docs/runs/<run-id>/`，由獨立 hash inventory 識別，不能依賴 Git fingerprint；外部或 ignored artifact 另保存本輪實際 hash inventory，開始／完成／交付逐項重算比對，不得只用 Git fingerprint 假定外部證據未變。
 
 ## 案例：release/20261012-no-5005
 
@@ -92,6 +92,33 @@ SQL 內容審核与部署驗證各自只用「通過／待確認／未通過」�
 ## 本機執行驗證
 
 ### 可選的舊版升級部署驗證順序
+
+部署驗證若要求交易驗證，必須在同一 connection/session 執行下列任一模式；不能以兩次獨立執行接續同一個未提交 transaction：
+
+```sql
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    -- 完整結構與資料異動，以及前後查核
+
+    IF EXISTS (SELECT 1 FROM dbo.ValidationErrors)
+        THROW 50001, N'驗證失敗', 1;
+
+    IF @ValidateOnly = 1
+        ROLLBACK TRANSACTION;
+    ELSE
+        COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF XACT_STATE() <> 0
+        ROLLBACK TRANSACTION;
+    THROW;
+END CATCH;
+```
+
+`@ValidateOnly=1` 只代表本次 session 內完成異動與驗證後回滾，不代表第二次可以接續 transaction；`@ValidateOnly=0` 才代表本次 session 正式提交。若 SQL 含不可交易 DDL、外部副作用、跨資料庫操作或工具會拆批／自動提交，必須逐項記錄其限制，不能宣稱 rollback 覆蓋全部異動。
 
 只有使用者或專案流程要求部署實測時，才依「舊版本 DB＋測試資料 → 結構 SQL → 資料 SQL → 最終結果查核」完成；這是部署信心檢查，不是 SQL 內容審核的必要條件。要求實測時不能以空白 DB 或已升級的目標版本 DB 取代。
 
@@ -141,3 +168,7 @@ SQL 內容審核与部署驗證各自只用「通過／待確認／未通過」�
 ## 「無」的證據
 
 只有指定範圍、工作區決策及相關 SQL／migration／ORM／內嵌 SQL／部署來源已盤點才寫無；未讀、权限不足或没有脚本但 ORM 有变化时寫待確認。文件審查核對執行紀錄；符合條件的隔離本機 SQL 執行由產出後的驗證階段完成，UAT與正式驗證欄保持未执行直到取得真实紀錄。
+
+## 證據保存期限
+
+依 [產物生命週期](artifact-lifecycle.md) 保存原始 artifact 至最後語意審查與 hash 核對完成，05 永久保存遮罩後的來源、工具、單位對照與 hash 摘要；成功後自動清除本次暫存，失敗保留七天。後續複審重新產製證據，不將歷史 hash 當作仍可讀的來源。

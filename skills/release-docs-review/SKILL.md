@@ -7,7 +7,7 @@ description: Use when release-docs 已產出必要版更文件，需要必要語
 
 接收目標 repo、range 的 base／target／diff 模式，或完整有序 commit_scope JSON（每個 commit／選定 direct parent；root 的 parent 為 null），以及未提交內容納入決策與文件資料夾。清單模式逐對重讀選定差異與完整來源，不轉為含未選中間 commit 的 range；merge 必須明確選 direct parent。讀專案 AGENTS.md、CLAUDE.md 與部署慣例。重新讀 Git 實際範圍、完整 SQL／migration、ORM、設定差異與消費程式，以及必要成品；不得只沿用產出摘要或相信舊通過報告。指定 target 的內容用 `git show <解析後 SHA>:<path>`；index／working tree／untracked 分列，不冒充 target。
 
-使用該範本的欄位作為對話審查紀錄，不寫入 05 檔案。每項記錄來源路徑、revision／工作區識別、行號或定位、成品定位、具體缺口與修正。缺少來源是待確認，不能記為「無」。不可將 hash、腳本 exit 0、Markdown 欄位存在當成正確性證明。
+使用該範本的欄位作為審查紀錄，在 05 保存精簡的永久摘要與 lifecycle receipt；完整原始證據只留在本次 run 至清理完成。每項記錄來源路徑、revision／工作區識別、行號或定位、成品定位、具體缺口與修正。缺少來源是待確認，不能記為「無」。不可將 hash、腳本 exit 0、Markdown 欄位存在當成正確性證明。
 
 ## 必檢項
 
@@ -20,21 +20,21 @@ description: Use when release-docs 已產出必要版更文件，需要必要語
 來源／execution artifact、exclusion manifest、文件任一變更立即失效；重新 fingerprint 及複審。外部／ignored artifact 額外比對實際 hash inventory，不宣稱現有 Git fingerprint 已涵蓋外部檔案。對 release/20261012-no-5005 的使用者提供情境採 reference 案例判定：01 人工包裝及 DATA-003 無正式 repair source 均未通過，排除須完整 manifest，部署驗證待確認；未取得 repo 原檔時標示此為提供事實的適用判定。
 
 每輪語意審查前後都執行 `scripts/validate_release_artifacts.py --documents <release目錄>`。工具只驗證必要／選用文件、artifact class、03 JSON schema、04 設定欄位與結構交叉條件；工具通過不代表 SQL 語意或資料庫部署通過，工具失敗時不得宣稱文件結構完整。
-審查只接受規範定義的 00 至 05 文件；release 目錄出現差異摘要、暫存檔、log、額外 JSON、工具原始輸出或其他未定義資料時，先判文件結構未通過並停止審查。
+審查只接受規範定義的 00 至 05 文件，包含條件式 `01_索引調整.sql`；release 目錄出現差異摘要、暫存檔、log、額外 JSON、工具原始輸出或其他未定義資料時，先判文件結構未通過並停止審查。
 
 部署驗證是選用項目，只有使用者或專案流程要求時才逐階段核對「舊版本 DB＋測試資料 → 結構 SQL → 資料 SQL → 最終結果查核」的實際證據，詳見 [SQL 判讀規則](../../references/sql-review-rules.md)。要求實測時，確認基準對應此次 base、資料先載入且涵蓋受影響與應保留資料、兩階段在同一隔離 DB 依序執行、失敗停止及最終結果符合 target；空白 DB 或已升級 DB 測試不能代替。未要求或未執行時記「未執行」，不否決 SQL 內容；實測失敗僅在直接證明 SQL 語法、交易或資料邏輯錯誤時影響內容判定。無資料異動須有不適用依據，混合單位不得拆開或重複執行，來源相依衝突須明列。
 
 先確認入口流程已完成範圍核對與文件產出，再做驗證與本輪審核。專案工具新產生或使用者已提供的 SQL／schema／repair artifact 都是必要來源：重讀其完整 artifact，核對來源 revision、base／target schema、provider、工具版本、遮罩命令、exit code、內容 hash 及輸出範圍，確認未混入範圍外異動或與既有 SQL 重複執行。外部 artifact 必須先加入 inventory 再審查，不因檔案不在 repo 就視為不存在；缺 inventory 欄位標待確認，缺 execution artifact 則依來源類型判定阻擋。Database Project schema compare 無 CREATE／ALTER／DROP 時，核對工具成功與 hash 後記錄 schema 無差異，不要求人工補 DDL。正式 repair migration 應標記為 `repair-migration` 類別的獨立來源單位，核對其 ID、source revision、相依、交易、錯誤與重跑設計，02 不得重複內嵌。缺 artifact 時先依入口技能嘗試工具產生，可確認的文件問題先修正再複審。正式資料庫版本、provider／driver、主機或本機基準屬部署驗證資料，不是 SQL 內容審核門檻；仍完成來源與成品審查，收尾分別回報 SQL 內容審核與部署驗證狀態。
 
 1. 完整性：從完整 Git 範圍反查結構、資料、設定每项是否列入；ORM 是否有部署腳本；未提交內容是否有納入決策。
-2. 正確性：確認 01／02 為 .sql，說明皆為 SQL 註解，無未填模板、Markdown 圍欄、遮罩佔位語句；完整部署內容須與來源方言及指定工具契約相容，無異動僅含註解，缺 SQL artifact 必須阻擋。結構內容必須回溯 EF model／migration 差異、資料庫專案 schema compare／部署腳本，或專案指定的等價 schema artifact；核對來源 provider、工具版本、revision 與輸出模式。只有 ORM 類別、migration 名稱或人工推導時判為待確認／未通過。刻意不上線的功能可使用受控排除清單；保留未改寫的來源 artifact，並可人工建立本次執行 artifact，但需記錄來源／執行 hash、排除 ID、來源定位、完整執行單位／物件、理由、相依影響、負責人、核准依據與逐單位差異核對。人工處理不得改動納入單位的 SQL、交易或 guard；跨單位刪除、任意 wrapper 或缺證據判未通過。逐項對原始來源核對 SQL 方言、WHERE、完整設定鍵（含陣列索引）、值、程式使用處與實際來源優先順序；遮罩秘密。正式主機、SQL Azure、實際 driver、版本與 collation 不屬內容審核；若另行執行部署驗證，僅記錄結果，不以環境缺口否決 SQL 內容。
+2. 正確性：確認 01／01_索引調整／02 為 .sql，說明皆為 SQL 註解，無未填模板、Markdown 圍欄、遮罩佔位語句；完整部署內容須與來源方言及指定工具契約相容，無異動僅含註解，缺 SQL artifact 必須阻擋。索引調整檔只接受 metadata 驗證後唯一匹配的 rename／create／drop-create；找不到、多個符合或定義不一致時必須停止，不猜名稱、不任意 DROP。完整結構內容必須回溯 EF model／migration 差異、資料庫專案 schema compare／部署腳本，或專案指定的等價 schema artifact；核對來源 provider、工具版本、revision 與輸出模式。只有 ORM 類別、migration 名稱或人工推導時判為待確認／未通過。刻意不上線的功能可使用受控排除清單；保留未改寫的來源 artifact，並可人工建立本次執行 artifact，但需記錄來源／執行 hash、排除 ID、來源定位、完整執行單位／物件、理由、相依影響、負責人、核准依據與逐單位差異核對。人工處理不得改動納入單位的 SQL、交易或 guard；跨單位刪除、任意 wrapper 或缺證據判未通過。逐項對原始來源核對 SQL 方言、WHERE、完整設定鍵（含陣列索引）、值、程式使用處與實際來源優先順序；遮罩秘密。正式主機、SQL Azure、實際 driver、版本與 collation 不屬內容審核；若另行執行部署驗證，僅記錄結果，不以環境缺口否決 SQL 內容。
 3. 相依與執行：根據實際相依核對 SQL／設定／程式的交錯順序；混合 DDL/DML 必須是同一完整執行單位且只執行一次，保留 GO、交易與 migration 工具。
 4. 可驗證與可恢復：每步驗證有可查證預期條件；核對停止位置、部分成功、重跑限制、備份與回復條件。Down／交易不是安全回滾證明，不猜測資料量或執行時間。
 5. 文件安全與一致性：所有秘密遮罩、文件連結實際可解析、共同範圍及執行 ID 一致；保留已有人工簽名／執行紀錄。只有空白人名、時間、簽核欄與「未執行」的範本列是占位，不算已執行。已有實際紀錄時另建 `_v2`／下一空閒版本並記取代理由。
 
 另必檢 release 日期與容錯：預設目錄日期（包含_v2等版本的日期部分）須對應已確認 release 分支名稱中的有效日期；使用者明確指定其他目錄時核對其指示及路径安全，所有已產出文件標頭一致記錄分支、日期來源與另列產出日期；不得以當天或 commit 日期代替。缺分支／日期依據判待確認，不猜測。
 
-逐完整 SQL 單位依 SQL 判讀規則核對可直接在 SSMS／sqlcmd 執行、異常中斷容錯及多次重跑設計：表、欄位、索引、約束與表／欄位描述獨立檢查狀態，缺少補建、描述不符更新、正確跳過，不相容或可能損失資料則停止報錯。中斷後重新執行必須自動辨識已提交與未完成項目並補完；不能因表存在而跳過未完成項目；資料不得重複新增、累加或破壞應保留值。若物件在受控排除清單中，核對其完整來源定位、排除理由與相依影響，不要求本次執行；未列入排除清單的物件仍須逐物件 guard。內容審核以來源、工具產出、語意等價、交易／錯誤回拋、相依順序與前後只讀查核為必要證據；首次執行、兩次重跑及中斷注入只有在要求部署驗證時才執行。已證實來源缺機制或實測失敗且直接證明內容缺陷，判未通過；缺內容證據判待確認；缺實測只記部署驗證未執行。不得私改 SQL，阻擋未解不得通過。無異動純註解檔附盤點證據可記不適用。
+逐完整 SQL 單位依 SQL 判讀規則核對可直接在 SSMS／sqlcmd 執行、異常中斷容錯及多次重跑設計：表、欄位、索引、約束與表／欄位描述獨立檢查狀態，缺少補建、描述不符更新、正確跳過，不相容或可能損失資料則停止報錯。若提供交易驗證，必須確認 `ValidateOnly=1` 與 `ValidateOnly=0` 在同一 connection/session 內各自完成完整 SQL、查核與 rollback／commit；禁止以第一次保留未提交 transaction、第二次獨立執行接續 commit。中斷後重新執行必須自動辨識已提交與未完成項目並補完；不能因表存在而跳過未完成項目；資料不得重複新增、累加或破壞應保留值。若物件在受控排除清單中，核對其完整來源定位、排除理由與相依影響，不要求本次執行；未列入排除清單的物件仍須逐物件 guard。內容審核以來源、工具產出、語意等價、交易／錯誤回拋、相依順序與前後只讀查核為必要證據；首次執行、兩次重跑及中斷注入只有在要求部署驗證時才執行。已證實來源缺機制或實測失敗且直接證明內容缺陷，判未通過；缺內容證據判待確認；缺實測只記部署驗證未執行。不得私改 SQL，阻擋未解不得通過。無異動純註解檔附盤點證據可記不適用。
 
 每次建立或更新文件（含修正或 fallback）之前，必須先遵循簽核保留規則選定最終版本目錄，再立即執行共用唯讀 guard：
 
@@ -73,3 +73,7 @@ JSON 檔是非空有序清單，例如 `[{"commit":"<A>","parent":"<A的direct p
 審查完成先再次執行並比較開始 snapshot：若來源識別（range: base、target、diff_mode；清單: commit_scope 的每一對 SHA 與順序；兩者皆比較 committed、working_tree）改變，丟棄本輪結論重新讀來源；成品更改則重新核對更改內容。保存完成語意審查時的 snapshot 作為「已審查 snapshot」。計算最終 snapshot；寫入或接受 05 前，必須再次將最終 snapshot 與已審查 snapshot 的來源識別逐項對比：range 的 base、target、diff_mode，或清單的完整有序 commit_scope；以及 committed、working_tree。任何來源識別不符都丟棄該輪結論並重新審查，不能將新來源 snapshot 直接存成通過證據。這段期間成品只允許已核對的文件內容更新；其他成品變動需重新語意審查。確認一致後才把最終 snapshot 原封不動存入 05。報告本身被排除，寫 05 不會循環失效；必備成品及已存在的資料 SQL 不得是 symlink，包括指向 repo 內其他檔案的報告別名。
 
 交付對話審查結果時，重算同參數 snapshot，比較 `fingerprint`；不符代表舊報告失效，重新語意審查。相符只表示證據內容未變，仍需確認對話回報包含各項審查證據及無未解決事項。摘要同步狀態與阻擋事項。
+
+## 必要產物生命週期
+
+生成、獨立審查及複審都必須讀取並執行 [產物生命週期](../../references/artifact-lifecycle.md)：先設定精準 Git ignore、執行 init／check；最後在 05 保存永久摘要與 receipt，成功執行 finish 自動清除；失敗或中斷保留七天並於下次啟動清理到期 run。禁止新建 docs/release-artifacts、禁止暫存納入版控及成品依賴暫存路徑。清除後再次審查須重建證據，不能僅憑舊 snapshot 續認通過。

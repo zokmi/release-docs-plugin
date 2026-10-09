@@ -6,11 +6,12 @@ from pathlib import Path
 
 
 REQUIRED = ("00_上線指引.md", "01_結構SQL.sql")
-OPTIONAL = ("02_資料SQL.sql", "03_例外排除.json", "04_參數異動.md")
+OPTIONAL = ("01_索引調整.sql", "02_資料SQL.sql", "03_例外排除.json", "04_參數異動.md")
 REPORT = "05_版更審查報告.md"
 ALLOWED = frozenset((*REQUIRED, *OPTIONAL, REPORT))
 ARTIFACT_CLASSES = {
     "01_結構SQL.sql": "schema-deployment",
+    "01_索引調整.sql": "index-adjustment",
     "02_資料SQL.sql": {"data-migration", "repair-migration", "mixed-ddl-dml"},
     "03_例外排除.json": "exclusion-manifest",
     "04_參數異動.md": "config-change",
@@ -86,6 +87,8 @@ def validate(documents):
                     findings.append(finding("error", "OPERATOR_ACTION", "operator_action 必須為 skip 或明確受控前置條件", prefix))
         else:
             text = path.read_text(encoding="utf-8")
+            if name == "00_上線指引.md":
+                continue  # Guide has no SQL/config artifact class.
             expected = ARTIFACT_CLASSES[name]
             actual = artifact_class(text)
             allowed = expected if isinstance(expected, set) else {expected}
@@ -93,6 +96,10 @@ def validate(documents):
                 findings.append(finding("error", "ARTIFACT_CLASS", f"artifact class 必須是 {sorted(allowed)}", name))
             if name.endswith(".sql") and "{{" in text:
                 findings.append(finding("error", "UNFILLED_TEMPLATE", "SQL 仍含未填模板欄位", name))
+            if name == "01_索引調整.sql":
+                for marker in ("sys.indexes", "ValidateOnly", "XACT_ABORT"):
+                    if marker not in text:
+                        findings.append(finding("error", "INDEX_CONTRACT", f"索引調整 SQL 缺少 {marker}", name))
             if name == "04_參數異動.md" and "設定 ID" not in text:
                 findings.append(finding("error", "CONFIG_SCHEMA", "缺少設定 ID 欄位", name))
 

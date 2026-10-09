@@ -7,8 +7,12 @@ import subprocess
 
 MANIFESTS = ['plugin.json', '.claude-plugin/plugin.json', '.codex-plugin/plugin.json']
 RESOURCES = [
+    'references/artifact-lifecycle.md',
+    'skills/release-docs/scripts/artifact_lifecycle.py',
+    'skills/release-docs/scripts/validate_output_paths.py',
     'skills/release-docs/SKILL.md', 'skills/release-docs-review/SKILL.md',
     'assets/00_上線指引.md', 'assets/01_結構SQL.sql', 'assets/02_資料SQL.sql',
+    'assets/01_索引調整.sql',
     'assets/03_例外排除.json', 'assets/04_參數異動.md', 'assets/05_版更審查報告.md',
     'references/sql-review-rules.md', 'references/config-rules.md',
     'skills/release-docs/scripts/collect_release_evidence.py',
