@@ -5,7 +5,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from validate_output_paths import DOCUMENTS, REPORT, validate_output_paths
+from validate_output_paths import DOCUMENTS, REQUIRED_DOCUMENTS, REPORT, validate_output_paths
 
 
 
@@ -20,6 +20,9 @@ def snapshot(repo, documents, base=None, target=None, diff_mode=None, commit_sco
     if commit_scope is not None and any(v is not None for v in (base, target, diff_mode)):
         raise ValueError('Commit scope and range are mutually exclusive')
     repo, docs = validate_output_paths(repo, documents)
+    for name in REQUIRED_DOCUMENTS:
+        if not (docs / name).is_file():
+            raise ValueError('Required review document is missing: ' + name)
     excluded = []
     document_hashes = {}
     for name in (*DOCUMENTS, REPORT):

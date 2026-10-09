@@ -89,8 +89,18 @@ class FingerprintTests(unittest.TestCase):
     def test_missing_document_and_outside_docs_fail(self):
         self.assertNotEqual(self.run_cli(documents=self.repo).returncode, 0)
         self.assertNotEqual(self.run_cli(documents=self.repo.parent).returncode, 0)
-        (self.docs / NAMES[0]).unlink()
-        self.assertNotEqual(self.run_cli().returncode, 0)
+        for name in (NAMES[0], NAMES[2], NAMES[3]):
+            with self.subTest(missing=name):
+                path = self.docs / name
+                content = path.read_bytes()
+                path.unlink()
+                self.assertNotEqual(self.run_cli().returncode, 0)
+                path.write_bytes(content)
+
+    def test_data_sql_is_optional_for_review(self):
+        (self.docs / NAMES[1]).unlink()
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_document_symlink_escape_fails(self):
         target = self.repo.parent / 'outside.md'

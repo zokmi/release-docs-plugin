@@ -16,6 +16,8 @@ migration 按原工具單位執行，不將 Up/Down 變成手工部署 SQL。來
 
 ## 結構內容驗證來源
 
+範圍確認後先完成 diff 分析、執行單位分類、重複／替代核對與相依排序，再產出文件及驗證審核。缺既有 SQL artifact 時，依入口技能「專案工具產生 SQL」使用已確認的 EF／Database Project／schema compare 工具在隔離副本補產，保存來源 SHA、起訖基準、provider、工具版本、命令、artifact 內容識別及結果，核對後作為完整來源使用。只有 ORM 或工具失敗時保留缺口，不手寫推測 SQL。正式版本未知只暫停依賴該版本的步驟，繼續其他分析、產出與來源審查；產生 artifact 不算資料庫執行驗證。
+
 結構 SQL 的內容優先以可重現的 schema 差異來源驗證，依序採用：
 
 1. EF Core／EF migration 的 model snapshot 與 migration 差異，以及該專案產出的正式 migration script 或 bundle。
@@ -49,4 +51,4 @@ migration 按原工具單位執行，不將 Up/Down 變成手工部署 SQL。來
 
 ## 「無」的證據
 
-只有指定範圍、工作區決策及相關 SQL／migration／ORM／內嵌 SQL／部署來源已盤點才寫無；未讀、权限不足或没有脚本但 ORM 有变化时寫待確認。文件審查不執行 SQL，UAT與正式驗證欄保持未执行直到取得真实紀錄。
+只有指定範圍、工作區決策及相關 SQL／migration／ORM／內嵌 SQL／部署來源已盤點才寫無；未讀、权限不足或没有脚本但 ORM 有变化时寫待確認。文件審查核對執行紀錄；符合條件的隔離本機 SQL 執行由產出後的驗證階段完成，UAT與正式驗證欄保持未执行直到取得真实紀錄。

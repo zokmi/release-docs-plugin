@@ -1,6 +1,6 @@
 # release-docs
 
-依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.4`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
+依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.5`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
 
 ## 插件安裝
 
@@ -86,6 +86,8 @@ Codex marketplace 與桌面插件目錄方式依 [OpenAI 官方封裝文件](htt
 
 ## 使用
 
+預期流程：**先確認差異範圍 → 自動產生規範文件 → 驗證與審核 → 修正複審**。範圍已明確時直接解析 SHA 與核對工作區決策；大量 diff 分批分析，完成 SQL 分類、重複／替代核對與相依排序，不以異動量大停止。缺 SQL artifact 時，使用專案既有且版本／provider 已確認的 EF 或資料庫專案工具，在隔離副本產生此次範圍的腳本並保留生成證據，不手寫推測 SQL。缺正式版本、基準或安全設定來源時，只暫停受影響步驟，繼續其他文件產出與来源審查；收尾分別回報產出、來源審查、本機執行驗證及最終審核狀態。
+
 Claude Code 可用 `/release-docs:release-docs`、`/release-docs:release-docs-review`；Codex 在對話選取對應技能，或明確指定插件技能名稱 `release-docs`／`release-docs-review`。
 
 ```text
@@ -123,7 +125,7 @@ python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --docu
 
 ## 維護與 Release
 
-目前版本：`0.1.4`。本版新增本機資料庫版本一致性與實際執行驗證規則。
+目前版本：`0.1.5`。本版修正「確認範圍 → 自動產出 → 驗證審核」流程，新增專案工具補產 SQL、局部阻擋時持續完成獨立工作，並修正審查指紋漏檢必備文件。
 
 `04_上線指引.md` 必須包含更新後分支處理流程：正式驗證與部署SHA確認、release／hotfix回合併至正式及開發分支、衝突處理與測試、PR審核、tag核對、分支保留／清理條件及處理紀錄。依目標專案慣例填寫並附來源；分支名稱或策略未知列待確認，不自行猜測。插件只提供流程指引，未執行作業保持未執行狀態；必要審查同步核對這些內容。
 
@@ -141,8 +143,8 @@ claude plugin validate .claude-plugin/marketplace.json --json --strict
 git switch main
 git pull --ff-only
 python -X utf8 -m unittest discover -s tests -v
-git tag -a v0.1.4 -m "release-docs 0.1.4"
-git push origin v0.1.4
+git tag -a v0.1.5 -m "release-docs 0.1.5"
+git push origin v0.1.5
 ```
 
 以上是維護者發布流程；一般使用者僅需插件管理器安裝，不需建立 tag。不要 force 覆寫 tag；版本錯誤使用新版本。Release workflow 支援推送 `v*` tag 與 workflow_dispatch 重跑既有 tag，先驗證嚴格 `vMAJOR.MINOR.PATCH`（禁止前導零與 prerelease），再 checkout。檢查三份版本、必備資源、tag commit 位於 `origin/main` 且 checkout 一致，Linux／Windows 測試通過才建立 GitHub Release。預設 contents:read，僅 release job contents:write。已有 Release 不修改；建立使用 `--verify-tag --generate-notes`。workflow 本身需在預設分支才可手動觸發；此專案已公開；GitHub Release 不等於上架到官方插件目錄，安裝來源仍是上述 Git marketplace。
