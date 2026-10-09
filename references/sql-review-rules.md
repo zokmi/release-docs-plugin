@@ -12,6 +12,8 @@
 
 每支腳本或 migration 一個執行 ID（例如 SQL-001），记录来源 revision 與完整路徑。混合腳本在 01、02 同 ID 說明；保持完整交易、`GO`、delimiter、工作階段與相依，不剪出 DDL/DML 重跑，將已核對來源完整保存為可執行 .sql；說明使用 SQL 註解，混合內容僅保存一次。字串、註解、動態 SQL 與 stored procedure 內語句須辨別真正執行時機：`N'DELETE FROM Users'` 是值；動態執行與 procedure 修改則讀调用處確認。
 
+交付的 01／02 必須是可直接交給 SSMS、sqlcmd 或專案指定 SQL 工具執行的完整 deployment artifact；不能要求上板人員先啟動 ORM runtime、手動補 SQL 或依賴未交付的隱含步驟。每個執行單位必須定義「正常首次執行、已提交後中斷再執行、正常重複執行」三種狀態收斂規則：已完成項目無動作，未完成項目自動補完，資料不重複／累加／覆寫，不相容狀態停止並回報。這是靜態內容要求；實際 DB 測試仍屬選用部署驗證。
+
 migration 按原工具單位執行，不將 Up/Down 變成手工部署 SQL。來源只有 UAT 命令而正式用 bundle 时，不能把 UAT 命令當成正式命令；缺正式 artifact、provider 或版本則待確認。ORM 新實體／欄位／DbSet 若缺 migration／腳本或已有 schema 證據，列部署缺口并停止相关部署，不能寫「無資料庫異動」。
 
 ## 結構內容驗證來源

@@ -1,6 +1,6 @@
 # release-docs
 
-依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.16`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
+依目標 Git 專案的實際證據產出必要版更文件及對話審查回報。名稱 `release-docs`，版本 `0.1.17`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
 
 ## 插件安裝
 
@@ -105,7 +105,7 @@ base v1.2.0、target v1.3.0、direct，工作區不納入。
 
 日期目錄取已確認 release 分支名稱中的有效日期，例如 `release/2026-10-08` 在 2026-10-09 產出仍使用 `2026-10-08`；輸出文件另記產出日期／時區與日期來源。分支或日期不明先確認，不改用當天或 commit 日期。
 
-SQL 必須具備可核對的異常中斷、重跑、交易、錯誤回拋與資料保護設計；實際資料庫首次執行、重跑及中斷測試改為選用部署驗證，不是內容審核必要條件。缺機制列來源修正待辦並阻擋，不能私改來源 SQL。
+SQL 必須是可直接交給 SSMS、sqlcmd 或專案指定 SQL 工具執行的完整 deployment artifact，具備可核對的異常中斷後自動補完、重複執行不重複異動、交易、錯誤回拋與資料保護設計；實際資料庫首次執行、重跑及中斷測試改為選用部署驗證，不是內容審核必要條件。缺機制列來源修正待辦並阻擋，不能私改來源 SQL。
 
 輸出預設為 Git 根目錄 `docs/release-doc/<release分支日期YYYY-MM-DD>/00_上線指引.md`、`01_結構SQL.sql`；有資料異動時才產生非必要的 `02_資料SQL.sql`，有受控排除時才產生非必要的 `03_例外排除.json`，有參數異動時才產生非必要的 `04_參數異動.md`。SQL 檔的說明使用 SQL 註解，部署內容完整保留來源語句、批次與交易，可交給指定資料庫工具執行；缺來源腳本時列為阻擋，不產生佔位 SQL。Database Project／SqlPackage、正式 repair migration 與外部產出 artifact 可作為入口輸入，先核對來源、工具、命令、exit code、hash 與 scope 再產出文件。00 只提供檔案用途；03 是排除唯一結構化來源。混合 SQL 保持完整執行單位且只執行一次。
 
@@ -133,7 +133,7 @@ python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --docu
 
 ## 維護與 Release
 
-目前版本：`0.1.16`。本版加入封閉 release 目錄規則，禁止產生未定義文件；隔離資料庫實測仍是選用部署驗證，未執行時明確標示未執行。
+目前版本：`0.1.17`。本版要求 SQL 可直接由 SSMS 等工具執行，支援中斷後續跑與安全重複執行；隔離資料庫實測仍是選用部署驗證。
 
 `00_上線指引.md` 是入口導覽，只說明後續檔案用途；`03_例外排除.json` 是非必要且唯一的例外排除來源，`04_參數異動.md` 是非必要的參數操作文件。分支、PR、回合併、tag、清理與人工簽核由專案部署流程處理，不放入 00、03 或 04。
 
@@ -155,8 +155,8 @@ claude plugin validate .claude-plugin/marketplace.json --json --strict
 git switch main
 git pull --ff-only
 python -X utf8 -m unittest discover -s tests -v
-git tag -a v0.1.16 -m "release-docs 0.1.16"
-git push origin v0.1.16
+git tag -a v0.1.17 -m "release-docs 0.1.17"
+git push origin v0.1.17
 ```
 
 以上是維護者發布流程；一般使用者僅需插件管理器安裝，不需建立 tag。不要 force 覆寫 tag；版本錯誤使用新版本。Release workflow 支援推送 `v*` tag 與 workflow_dispatch 重跑既有 tag，先驗證嚴格 `vMAJOR.MINOR.PATCH`（禁止前導零與 prerelease），再 checkout。檢查三份版本、必備資源、tag commit 位於 `origin/main` 且 checkout 一致，Linux／Windows 測試通過才建立 GitHub Release。預設 contents:read，僅 release job contents:write。已有 Release 不修改；建立使用 `--verify-tag --generate-notes`。workflow 本身需在預設分支才可手動觸發；此專案已公開；GitHub Release 不等於上架到官方插件目錄，安裝來源仍是上述 Git marketplace。

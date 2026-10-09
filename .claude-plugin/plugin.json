@@ -1,6 +1,6 @@
 {
   "name": "release-docs",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "依 Git 證據產出版更文件與必要審查報告。",
   "author": {"name": "Kenny Zheng"},
   "license": "MIT",
