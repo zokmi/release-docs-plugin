@@ -10,7 +10,7 @@
 | 資料 | seed 值及可證筆數、UPDATE/DELETE/回填/遷移條件、既有資料受影響與不受影響範圍 |
 | migration | ID、工具與版本、Up/Down 行為、history／目前版本、既有 artifact 與指令來源 |
 
-每支腳本或 migration 一個執行 ID（例如 SQL-001），记录来源 revision 與完整路徑。混合腳本在 01、02 同 ID 說明；04 執行表只一列。保持完整交易、`GO`、delimiter、工作階段與相依，不剪出 DDL/DML 重跑，將已核對來源完整保存為可執行 .sql；說明使用 SQL 註解，混合內容僅保存一次。字串、註解、動態 SQL 與 stored procedure 內語句須辨別真正執行時機：`N'DELETE FROM Users'` 是值；動態執行與 procedure 修改則讀调用處確認。
+每支腳本或 migration 一個執行 ID（例如 SQL-001），记录来源 revision 與完整路徑。混合腳本在 01、02 同 ID 說明；保持完整交易、`GO`、delimiter、工作階段與相依，不剪出 DDL/DML 重跑，將已核對來源完整保存為可執行 .sql；說明使用 SQL 註解，混合內容僅保存一次。字串、註解、動態 SQL 與 stored procedure 內語句須辨別真正執行時機：`N'DELETE FROM Users'` 是值；動態執行與 procedure 修改則讀调用處確認。
 
 migration 按原工具單位執行，不將 Up/Down 變成手工部署 SQL。來源只有 UAT 命令而正式用 bundle 时，不能把 UAT 命令當成正式命令；缺正式 artifact、provider 或版本則待確認。ORM 新實體／欄位／DbSet 若缺 migration／腳本或已有 schema 證據，列部署缺口并停止相关部署，不能寫「無資料庫異動」。
 
@@ -35,6 +35,8 @@ artifact metadata 必須包含：base／target SHA 與 schema artifact hash、�
 
 exclusion manifest 每项保存排除 ID、來源 revision／路徑／定位、完整物件或執行單位、來源 artifact hash、execution artifact hash、理由、相依影響、負責人、核准及追蹤依據、逐單位差異核對。若待排除物件與納入物件共用不可分割交易／批次，不能直接刪語句；應在受控 schema／產製設定中表達排除並重新由工具生成，保存完整轉換證據。排除通過不等於整體 SQL 通過。
 
+03_例外排除若產出，只保存受控排除的結構化證據，不改寫納入 SQL；04_參數異動若產出，只保存參數套用與驗證資訊。兩者均不取代來源 artifact 或審查 metadata。
+
 ## Database Project 標準產製流程
 
 1. 取得此次 base 與 target revision 的完整 schema source（含 sqlproj、引用與產製設定），在隔離工作副本使用專案鎖定工具分別建置 schema artifact／dacpac。
@@ -46,6 +48,8 @@ exclusion manifest 每项保存排除 ID、來源 revision／路徑／定位、�
 工具不可用或 schema／產製證據不足時標記「待確認（缺少 Database Project 工具／schema artifact／產出證據）」，停止受影響單位交付，不自行把 CREATE TABLE 或 ORM model 改寫成部署 SQL。
 
 ## 資料與混合單位的 repair source
+
+每個資料來源單位必須標記一個 `artifact class`：`data-migration`（一般資料 migration／seed／回填）、`repair-migration`（為修復既有資料庫物件或資料狀態而建立的正式 migration）或 `mixed-ddl-dml`（同一完整單位同時含 DDL 與 DML）。自定義檔案如 `2026_10_12_ScheduleDrawRepair.sql` 應使用 `repair-migration`，並在檔頭或 artifact metadata 提供唯一 ID、source revision、完整執行單位與相依順序；檔名本身不能作為分類證據。
 
 EF SQL、migration、混合 DDL/DML 不得在 01／02 追加未受來源管理的 REPAIR。來源缺安全重跑機制時，優先修正式來源或建立獨立、可追溯且納入此次 Git scope 的 repair migration；本插件只列來源修正待辦，不擅自新增範圍外 migration。
 
@@ -70,6 +74,8 @@ SQL 內容審核与部署驗證各自只用「通過／待確認／未通過」�
 - #5005：dbo.tblAdminRoles、dbo.tblFunction、dbo.tblFunctionOnRole、dbo.tblAdminAccounts.cRoleId、FK_tblAdminAccounts_Role、cRoleId 描述。理由是 PM 尚未完成測試、雲端更版文件未列本次 release；這些理由不是核准證據。只有完整 exclusion manifest 才算排除證據通過，不能推論 SQL 整體通過。
 - 部署驗證待確認：尚未完成完整舊版 DB 順序驗證與中斷後重跑。
 - 修正順序：Database Project／SSDT 重產 SQL-001 → 修 DATA-003 正式來源／repair source → 重產 SQL-002 → 重做來源完整性及語意等價性審核 → 隔離 DB 部署驗證。
+
+若後續已取得完整修正證據，入口應改走「外部產物輸入」分支：Visual Studio／SSDT 建置成功且 SqlPackage schema compare script hash 已保存時，SQL-001 以該 execution artifact 為來源；產物只有訊息或交易包裝、沒有 CREATE／ALTER／DROP 時，結論為「schema 無差異」，不得人工補 DDL。DATA-003 改由正式 repair migration 提供來源時，SQL-002 只引用該 migration，核對唯一 ID、source revision、交易、錯誤與重跑設計，不得再保留內嵌 REPAIR。#5005 的完整 manifest 應輸入非必要 `03_例外排除.json`，由 review 以 ID、完整單位、artifact hash、相依、核准與追蹤欄位驗證；00／03／04 不複製排除內容。完成這些來源與 artifact 審查後，01／02 可進入內容審核；隔離 DB 實測仍維持選用部署驗證。
 
 範圍確認後先完成 diff 分析、執行單位分類、重複／替代核對與相依排序，再產出文件及驗證審核。缺既有 SQL artifact 時，依入口技能「專案工具產生 SQL」使用已確認的 EF／Database Project／schema compare 工具在隔離副本補產，保存來源 SHA、起訖基準、provider、工具版本、命令、artifact 內容識別及結果，核對後作為完整來源使用。只有 ORM 或工具失敗時保留缺口，不手寫推測 SQL。正式版本未知只暫停依賴該版本的步驟，繼續其他分析、產出與來源審查；產生 artifact 不算資料庫執行驗證。
 

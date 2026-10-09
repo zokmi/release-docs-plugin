@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "document_type": "controlled-exclusions",
+  "artifact_class": "exclusion-manifest",
+  "purpose": "供產製、審查與自動驗證使用；無排除時不建立本檔。",
+  "release": {"identifier": null, "branch": null, "base": null, "target": null, "diff_mode": null},
+  "exclusions": [
+    {
+      "id": "EX-001",
+      "type": "測試未完成",
+      "units": [{"kind": "完整執行單位／物件", "name": null, "source": null}],
+      "operator_action": "skip",
+      "reason": null,
+      "dependency_impact": {"blocked_units": [], "allowed_units": [], "notes": null},
+      "reinstatement_conditions": [],
+      "evidence": {
+        "source_artifact": {"path": null, "revision": null, "sha256": null},
+        "execution_artifact": {"path": null, "sha256": null},
+        "transformation_rule": null
+      },
+      "approval": {"owner": null, "approver": null, "tracking_reference": null},
+      "review": {"status": "待確認", "findings": []}
+    }
+  ]
+}

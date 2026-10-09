@@ -5,8 +5,8 @@ import stat
 import subprocess
 from pathlib import Path
 
-REQUIRED_DOCUMENTS = ('01_結構SQL.sql', '03_appsettings異動.md', '04_上線指引.md')
-OPTIONAL_DOCUMENTS = ('02_資料SQL.sql',)
+REQUIRED_DOCUMENTS = ('00_上線指引.md', '01_結構SQL.sql')
+OPTIONAL_DOCUMENTS = ('02_資料SQL.sql', '03_例外排除.json', '04_參數異動.md')
 DOCUMENTS = REQUIRED_DOCUMENTS + OPTIONAL_DOCUMENTS
 REPORT = '05_版更審查報告.md'
 

@@ -8,11 +8,12 @@ import subprocess
 MANIFESTS = ['plugin.json', '.claude-plugin/plugin.json', '.codex-plugin/plugin.json']
 RESOURCES = [
     'skills/release-docs/SKILL.md', 'skills/release-docs-review/SKILL.md',
-    'assets/01_結構SQL.sql', 'assets/02_資料SQL.sql', 'assets/03_appsettings異動.md',
-    'assets/04_上線指引.md', 'assets/05_版更審查報告.md',
+    'assets/00_上線指引.md', 'assets/01_結構SQL.sql', 'assets/02_資料SQL.sql',
+    'assets/03_例外排除.json', 'assets/04_參數異動.md', 'assets/05_版更審查報告.md',
     'references/sql-review-rules.md', 'references/config-rules.md',
     'skills/release-docs/scripts/collect_release_evidence.py',
     'skills/release-docs/scripts/review_fingerprint.py',
+    'skills/release-docs/scripts/validate_release_artifacts.py',
     '.claude-plugin/marketplace.json', '.agents/plugins/marketplace.json', 'LICENSE', 'README.md',
 ]
 

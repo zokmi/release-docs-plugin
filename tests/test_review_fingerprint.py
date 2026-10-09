@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'skills/release-docs/scripts/review_fingerprint.py'
-NAMES = ['01_結構SQL.sql', '02_資料SQL.sql', '03_appsettings異動.md', '04_上線指引.md']
+NAMES = ['00_上線指引.md', '01_結構SQL.sql', '02_資料SQL.sql', '03_例外排除.json', '04_參數異動.md']
 
 
 class FingerprintTests(unittest.TestCase):
@@ -89,7 +89,7 @@ class FingerprintTests(unittest.TestCase):
     def test_missing_document_and_outside_docs_fail(self):
         self.assertNotEqual(self.run_cli(documents=self.repo).returncode, 0)
         self.assertNotEqual(self.run_cli(documents=self.repo.parent).returncode, 0)
-        for name in (NAMES[0], NAMES[2], NAMES[3]):
+        for name in (NAMES[0], NAMES[1]):
             with self.subTest(missing=name):
                 path = self.docs / name
                 content = path.read_bytes()
@@ -98,7 +98,7 @@ class FingerprintTests(unittest.TestCase):
                 path.write_bytes(content)
 
     def test_data_sql_is_optional_for_review(self):
-        (self.docs / NAMES[1]).unlink()
+        (self.docs / NAMES[2]).unlink()
         result = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr)
 
