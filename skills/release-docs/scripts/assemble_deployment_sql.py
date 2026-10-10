@@ -182,6 +182,25 @@ def _hazards(sql, is_unit=False):
     return findings
 
 
+def _minimal_sql_hazards(sql):
+    """Reject session/configuration SET statements in database-tool mode.
+
+    The database tool owns the connection, transaction and execution options.
+    A source unit therefore carries only deployable T-SQL.  IDENTITY_INSERT is
+    the sole supported exception because it changes how an INSERT is executed,
+    rather than configuring the session; callers still need a reviewed unit
+    that turns it off before the unit ends.
+    """
+    code, _ = _lex(sql, keep_identifiers=True)
+    findings = []
+    for match in re.finditer(r"(?:^|;)\s*SET\b(.*?)(?:;|$)", code, re.S):
+        statement = match.group(0).lstrip(";").strip().rstrip(";").strip()
+        if re.fullmatch(r"SET\s+IDENTITY_INSERT\s+\S+\s+(?:ON|OFF)", statement, re.I):
+            continue
+        findings.append(_finding("nonessential_set_statement"))
+    return findings
+
+
 def _generated_units(sql):
     """Parse the exact generated execution region and recheck decoded source."""
     findings = []
@@ -258,12 +277,21 @@ def _generated_units(sql):
     return parsed, findings
 
 
-def validate_sql_contract(sql_text) -> list[Finding]:
+def validate_sql_contract(sql_text, profile="framework") -> list[Finding]:
     """Validate conservative lexical invariants of one release-level wrapper.
 
     Findings are blocking. Passing means the static contract is present, not that
     the SQL was parsed, executed, provider-validated or proven safe to rerun.
     """
+    if profile == "database_tool_minimal":
+        code, _ = _lex(sql_text)
+        findings = _hazards(sql_text)
+        findings.extend(_minimal_sql_hazards(sql_text))
+        if re.search(r"^\s*(?:GO|:SETVAR|:R)\b", sql_text, re.I | re.M):
+            findings.append(_finding("batch_separator"))
+        return findings
+    if profile != "framework":
+        raise ValueError("Unknown SQL profile")
     code, _ = _lex(sql_text)
     parsed, generated_findings = _generated_units(sql_text)
     findings = generated_findings + _hazards(sql_text)
@@ -330,16 +358,20 @@ def validate_sql_contract(sql_text) -> list[Finding]:
 
 def _mode(transaction_mode, units):
     release = None
+    profile = "framework"
     if transaction_mode is not None:
-        if not isinstance(transaction_mode, dict) or set(transaction_mode) - {"release_id"}:
-            raise ValueError("transaction_mode only accepts an optional release_id")
+        if not isinstance(transaction_mode, dict) or set(transaction_mode) - {"release_id", "profile"}:
+            raise ValueError("transaction_mode accepts release_id and profile")
         release = transaction_mode.get("release_id")
+        profile = transaction_mode.get("profile", profile)
+        if profile not in {"framework", "database_tool_minimal"}:
+            raise ValueError("Invalid SQL profile")
     if release is None:
         provenance = [{k: u[k] for k in ("unit_id", "source_path", "source_revision", "source_hash", "sql_hash")} for u in units]
         release = "release-" + hashlib.sha256(json.dumps(provenance, sort_keys=True).encode()).hexdigest()[:24]
     if not isinstance(release, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", release):
         raise ValueError("Invalid release identifier")
-    return release
+    return release, profile
 
 
 def _validate_units(units):
@@ -383,14 +415,50 @@ def _literal(text):
 def assemble_deployment_sql(units, output_path, transaction_mode=None) -> ArtifactRecord:
     """Write the fixed operator SQL filename after all contract checks pass.
 
-    transaction_mode is None or {release_id: safe identifier}; the runtime
-    session context selects ValidateOnly without changing artifact bytes.
-    Ordered descriptors are consumed exactly as provided; unsafe source must be
-    repaired upstream. Mapping records precise original and artifact line ranges.
+    The default ``framework`` profile preserves the legacy wrapper contract.
+    ``{"profile": "database_tool_minimal"}`` emits source T-SQL with comments
+    and mappings only; a database tool owns transaction/session controls. In
+    either profile ordered descriptors are consumed exactly as provided and
+    unsafe source must be repaired upstream. Mapping records precise original
+    and artifact line ranges.
     """
     units = list(units)
     _validate_units(units)
-    release = _mode(transaction_mode, units)
+    release, profile = _mode(transaction_mode, units)
+    if profile == "database_tool_minimal":
+        findings = []
+        for unit in units:
+            findings.extend({**finding, "unit_id": unit["unit_id"], "source_path": unit["source_path"],
+                             "source_line": unit["source_line"]}
+                            for finding in _minimal_sql_hazards(unit["sql"]))
+        if findings:
+            raise SQLContractError(findings)
+        output = Path(output_path)
+        if output.name != "01_部署SQL.sql":
+            raise ValueError("Output must be named 01_部署SQL.sql")
+        body = "-- Unified deployment: database tool owns transaction and session settings.\n"
+        mappings = []
+        for phase in PHASES:
+            body += "\n-- PHASE: " + phase + "\n"
+            for unit in (u for u in units if u["phase"] == phase):
+                source_lines = len(unit["sql"].splitlines())
+                mapping = {key: unit[key] for key in ("unit_id", "phase", "source_path", "source_revision", "source_hash", "sql_hash", "source_line", "depends_on")}
+                mapping["source_end_line"] = unit["source_line"] + source_lines - 1
+                body += "-- UNIT: " + json.dumps(mapping, ensure_ascii=True, sort_keys=True) + "\n"
+                mapping["artifact_start_line"] = len(body.splitlines()) + 1
+                body += unit["sql"]
+                if not body.endswith("\n"):
+                    body += "\n"
+                mapping["artifact_end_line"] = len(body.splitlines())
+                body += "-- END UNIT: " + unit["unit_id"] + "\n"
+                mappings.append(mapping)
+        findings = validate_sql_contract(body, profile=profile)
+        if findings:
+            raise SQLContractError(findings)
+        data = body.encode("utf-8")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(data)
+        return ArtifactRecord(output, hashlib.sha256(data).hexdigest(), release, profile, mappings)
     output = Path(output_path)
     if output.name != "01_部署SQL.sql":
         raise ValueError("Output must be named 01_部署SQL.sql")

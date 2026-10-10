@@ -44,6 +44,7 @@ python SCRIPT_DIR/collect_release_evidence.py --repo PATH --base REV --target RE
 缺 execution artifact、unit 清單／相依或 DATA 預期時，先依已確認的 pinned base／target 分析來源；不得把可從 codebase 取得的資訊整份要求使用者提供。diff 是入口，還須讀兩端完整定義、未變動但被引用的來源、建置設定與實際消費路徑。來源推導、工具產製與資料庫實測分開記錄；分析完成不等於 execution artifact 已存在或部署通過。
 
 1. **DB artifact：**盤點 `.sqlproj`、專案引用、pre/post deployment、SQLCMD variables、dacpac、migration、既有 repair SQL 與建置／發布設定；核對 base 與 target 的結構和 provider。已有可用工具與受控 baseline 時，在隔離／離線路徑建置並產製 baseline SQL 與 base→target deployment script，保存來源 revision、輸入 hash、工具版本、命令、設定及輸出 hash；禁止連線正式 DB。完整讀取工具輸出，檢查資料損失、環境變數、不可交易操作與相依，再轉為可追溯 units。target 建庫 script 不等於 base→target deployment script，Git base 也不自動代表實際舊版 DB。缺工具時先找可追溯既有產物，繼續完成來源分析；只詢問缺少的工具能力／baseline／環境設定。需要 repair 時先從來源提出具定位的修復需求，不能捏造「正式 repair migration」或擅自修改原始專案；來源異動須另獲授權並使用新 pinned revision。
+既有可由 SSMS／sqlcmd 直接執行的 migration 若含 `GO`、unit 內交易、dynamic `EXEC`、metadata procedure 或 `RAISERROR`，視為 execution model 不相容 finding；LocalDB 通過與最高權限都不能消除 mapping、transaction owner 或錯誤契約缺口。保留原始 source of truth，僅可由已核對 provider 產生帶 provenance 的 `derived_artifact` execution body；不能用 regex 刪語法、忽略 opaque operation 或直接包 transaction。
 2. **unit 與相依：**以單號（例如 #5005）追查相關 commits、需求證據與實際 diff，再以完整來源解析 SCHEMA／REPAIR／DATA／VALIDATION units。不能用 commit 標題作唯一歸屬證據。沿 FK、view/procedure/function 引用、資料讀寫、migration 順序、pre/post deployment 及 application 消費追查直接與遞移相依，包含 diff 外的既有物件。每個 unit 記錄穩定 ID、來源 revision/hash、檔案與行號、物件、單號歸屬依據、前置條件；每條相依附來源與順序理由，區分需本次執行的 unit 與 baseline 已滿足的前置物件。列出 included/excluded 影響、未知引用與循環；相依不代表自動納入授權。未解析引用不得宣稱清單完整，未知單號歸屬只詢問該歧義。
 3. **DATA 預期：**讀取完整 SQL／migration 的 predicate、join、轉換、預設值、唯一性、NULL／邊界處理，以及 app 的讀寫和保留規則；據此設計最小可區分案例的 fixture，先推導 expected_assertions，再執行。每項預期附來源 revision、檔案／行號、規則及 fixture 推導依據，存於 run 的來源分析紀錄；既有 metadata schema 不任意加欄位。來源未定義的業務規則標為未知，只詢問具體規則；不能以實測結果反填預期或以 app 行為替代 authoritative SQL。可推導案例繼續完成，剩餘未知依現有門檻阻擋產製／內容通過。
 
@@ -55,7 +56,9 @@ python SCRIPT_DIR/collect_release_evidence.py --repo PATH --base REV --target RE
 
 上板檔案固定為 `00_上線指引.md`、唯一人工 SQL `01_部署SQL.sql`，以及有參數異動時的 `02_參數異動.md`。source、工具輸出、完整 mapping 與排除真相 `lifecycle_exclusion_manifest.json` 保存在 `.release-docs/runs/<run-id>/`，不得交給上板人員操作、不得放入 release 目錄或版控，也不得寫入 `docs/release-artifacts`。`00` 的排除摘要由 lifecycle 真相投影，不反向改寫排除範圍。
 
-單一 release-level transaction 必須完整執行與驗證後，在 ValidateOnly=1 rollback，在 ValidateOnly=0 從 fresh baseline／fresh session 重新執行後 commit；rerun 使用已 commit 的資料庫，以 fresh session 驗證收斂，不重置 baseline。任何錯誤 rollback、THROW 並停止；不可交易 DDL 需受控分類，不能宣稱外層 transaction 可回復。不得直接連線或修改正式資料庫。
+正式產物預設使用 `database_tool_minimal` SQL profile：`01_部署SQL.sql` 只含可追溯的基礎 T-SQL 與 unit mapping；資料庫工具負責 connection、最高權限、transaction、commit／rollback、timeout、錯誤攔截與 execution evidence。source unit 不得自行寫 `SET` session option、`USE`、`GO`、SQLCMD directive、權限或 transaction；只有有證據且成對的 `SET IDENTITY_INSERT` 可例外。舊 framework wrapper 僅作明確記錄原因的相容 fallback，不能當成新 SQL 的預設寫法。
+
+單一 release-level transaction 必須由受控資料庫工具建立，完整執行與驗證後，在 validate-only 輪次 rollback，在 commit 輪次從 fresh baseline／fresh session 重新執行後 commit；rerun 使用已 commit 的資料庫，以 fresh session 驗證收斂，不重置 baseline。任何錯誤由工具 rollback、停止並保存逐 unit 證據；不可交易 DDL 需受控分類，不能宣稱 transaction 可回復。不得直接連線或修改正式資料庫。若工具只支援舊 wrapper，才使用 framework fallback 並保存 fallback 原因。
 
 分開回報 SQL 內容審核與部署驗證狀態。證據不足用「待確認」，不得以文件存在或 Git 收集成功代替 SQL／部署驗證。
 
@@ -78,7 +81,7 @@ analysis.parameters_applicable = confirmed_parameters_applicable  # bool；None 
 result = produce_release(repo, evidence, analysis, release_id=release_id,
     run_root=run_root, output_dir=output_dir, baseline_source=baseline_schema,
     fixture_source=fixture_sql, fixture_manifest=fixture_manifest,
-    validation_options=validation_options)  # 無 adapter 時使用 {}，不補寫實測值
+    validation_options={**(validation_options or {}), "sql_profile": "database_tool_minimal"})  # 工具控制 transaction；無 adapter 時使用 {}，不補寫實測值
 ```
 
 `ProductionResult` 提供 inventory、artifact、fingerprint、stage_statuses 與 delivery_eligible；產製完成時 delivery_eligible 固定 false，須再完成獨立審查。`ProductionError.stage` 與 code 提供安全的失敗位置。baseline_source 目前需已物化的 `.sql`，dacpac 應先用已確認工具轉為可追溯 SQL。工作區若要納入，先建立獲授權的 pinned source revision；不得直接改成 included 並忽略檢查。
@@ -122,7 +125,7 @@ renderer 寫入前檢查全部輸入與輸出，拒絕 traversal、symlink、jun
 
 S 與 T(S) 必須展開為現有 assertion schema 可比對的具體值；上述符號不可寫入 expected_by_round 代替預期。保留資料案例 commit 前後亦相同。若 rerun 會重複新增／累加，記錄 SQL 缺陷並回到可追溯來源修正，不把第二次異動改寫成「收斂通過」。DATA 預期是來源分析產物，actual data_checks 與 preserved_data_summary 只能來自 runner 實測。
 
-SQL Server 2016 以上支援此契約。assembler 的 transaction_mode 只接受可選 release_id，產物 runtime_mode 為 session_context。每次在同一 connection/session 一次執行整份 SQL；預設 ValidateOnly=1 完整 rollback。正式執行前由人員在同一新 session 設定 `EXEC sys.sp_set_session_context @key=N'ReleaseDocs.ValidateOnly', @value=0;` 才允許 ValidateOnly=0 commit。禁止第一次留下未提交交易，再由第二次獨立 connection 接續 commit；不得將執行模式寫死在產製參數。不可交易 DDL 直接阻擋。
+SQL Server 2016 以上支援此契約。assembler 的 `database_tool_minimal` profile 不在 artifact 寫入 session context 或執行選項；工具 API 必須明確傳入 validate-only／commit policy，不接受由 SQL 內容偷偷改變模式。每次在同一 connection/session 一次執行整份 SQL；禁止第一次留下未提交交易，再由第二次獨立 connection 接續 commit；不得將執行模式寫死在 SQL。不可交易 DDL 直接阻擋。framework fallback 才沿用 `SESSION_CONTEXT` 契約，並在報告標明相容原因。
 
 DATA units 的 expected_assertions 必須在保存 lifecycle 前由已核對來源與 fixture 補齊：每項有唯一 id、case、seed_row_id，以及 validate_only／commit／rerun／injected_failure 的 expected_by_round.before／after。fixture manifest 保存 usage、seed_rows 的 unit_id／row_id／purpose、expected_preserved_data_summary；assertions 可由 manifest 或 data_units 提供，避免重複。manifest 的 coverage 必須逐 DATA unit 評估 existing_value、preserved_data、duplicate_candidate、null_boundary、value_boundary、empty_set、row_count：適用時填 true 並提供同 case 的 seed row 與 assertion；不適用時填非空理由。缺項或適用案例未驗證不得標記 LocalDB 通過。無法安全定義預期值時阻擋內容審查。
 

@@ -133,15 +133,19 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
             if source is not None and (not _plain_path(source).is_file() or Path(source).suffix.lower() != suffix):
                 raise ValueError('Missing fixture input')
         options = dict(validation_options or {})
-        allowed = {'executor', 'command', 'provider_version', 'tool_version', 'adapter_provenance'}
+        allowed = {'executor', 'command', 'provider_version', 'tool_version', 'adapter_provenance', 'sql_profile'}
         if set(options) - allowed:
             raise ValueError('Unsupported validation options')
+        sql_profile = options.get('sql_profile', 'database_tool_minimal')
+        if sql_profile not in ('framework', 'database_tool_minimal'):
+            raise ValueError('Unsupported SQL profile')
         if options.get('executor') is not None and (run / 'lifecycle_metadata.json').exists():
             raise ValueError('New validation requires a new run')
         stage = 'assembly'
         # Assemble in owned scratch; an existing permanent artifact is never overwritten.
         scratch = _plain_path(run / 'temporary/assembly/01_部署SQL.sql')
-        artifact = assemble_deployment_sql(included, scratch, {'release_id': release_id})
+        artifact = assemble_deployment_sql(included, scratch,
+                                           {'release_id': release_id, 'profile': sql_profile})
         artifact.path = _immutable_copy(artifact.path, run / 'assembly/01_部署SQL.sql')
         stage = 'permanent_inputs'
         baseline = _immutable_copy(baseline, run / 'baseline.sql')
@@ -154,7 +158,8 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
                     fixture_manifest=manifest, data_units=[u for u in included if u['phase'] == 'DATA'], **options)
         stage = 'lifecycle'
         lifecycle = write_lifecycle_run(run, clean, localdb_validation=localdb,
-                    execution_artifact={'path': 'assembly/01_部署SQL.sql', 'sha256': artifact.sha256},
+                    execution_artifact={'path': 'assembly/01_部署SQL.sql', 'sha256': artifact.sha256,
+                                        'sql_profile': artifact.transaction_mode},
                     operator_contract={'parameters_applicable': clean.parameters_applicable},
                     parent_run_id=parent_run_id)
         stage = 'render'

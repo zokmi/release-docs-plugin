@@ -105,9 +105,9 @@ base v1.2.0、target v1.3.0、direct，工作區不納入。
 
 日期目錄取已確認 release 分支名稱中的有效日期，例如 `release/2026-10-08` 在 2026-10-09 產出仍使用 `2026-10-08`；輸出文件另記產出日期／時區與日期來源。分支或日期不明先確認，不改用當天或 commit 日期。
 
-SQL Server 最低支援 2016。交付目錄只包含 `00_上線指引.md`、唯一人工執行的 `01_部署SQL.sql`，以及有參數異動時的 `02_參數異動.md`。SQL 依序包含 SCHEMA、REPAIR、DATA、VALIDATION，在新 SSMS connection/session 一次執行，不依賴 GO 或 sqlcmd 指令。
+SQL Server 最低支援 2016。交付目錄只包含 `00_上線指引.md`、唯一人工執行的 `01_部署SQL.sql`，以及有參數異動時的 `02_參數異動.md`。新版 `database_tool_minimal` profile 的 SQL 只保留依序排列的 SCHEMA、REPAIR、DATA、VALIDATION 基礎 T-SQL；資料庫工具負責 connection、最高權限、transaction、commit／rollback、錯誤與執行證據，不依賴 GO、sqlcmd 或 SQL 內的 session SET。`SET IDENTITY_INSERT` 僅在有來源證據時例外允許；舊 framework wrapper 只作相容 fallback。
 
-未設定 `SESSION_CONTEXT(N'ReleaseDocs.ValidateOnly')` 時預設 ValidateOnly=1，完整執行並驗證後 rollback。上板人員先確認唯讀 preflight、備份與維護窗口，再在同一新 session 設定以下值並執行整份 SQL，才可 commit：
+framework fallback 未設定 `SESSION_CONTEXT(N'ReleaseDocs.ValidateOnly')` 時預設 ValidateOnly=1，完整執行並驗證後 rollback。minimal profile 由資料庫工具 API 傳入 validate-only／commit policy，不要求上板人員在 SQL 前手動設定 session context。上板人員先確認唯讀 preflight、備份與維護窗口，再依工具契約執行整份 SQL，才可 commit：
 
 ```sql
 EXEC sys.sp_set_session_context @key=N'ReleaseDocs.ValidateOnly', @value=0;

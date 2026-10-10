@@ -70,6 +70,7 @@ def run_local_validation(
     provider_version: str = "unknown",
     tool_version: str = "release-docs-localdb-runner/1",
     adapter_provenance: str = "",
+    sql_profile: str = "framework",
     executor: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run four isolated checks or return explicit ``not_run`` evidence.
@@ -87,6 +88,8 @@ def run_local_validation(
     if not isinstance(database, str) or not database.strip():
         raise ValueError("Disposable LocalDB database is required")
     digest = _digest(artifact)
+    if sql_profile not in ("framework", "database_tool_minimal"):
+        raise ValueError("Unknown SQL profile")
     baseline = _source_path(baseline_source, "baseline_source")
     fixture = _source_path(fixture_source, "fixture_source")
     manifest = _source_path(fixture_manifest, "fixture_manifest")
@@ -128,6 +131,7 @@ def run_local_validation(
         "artifact_sha256": digest, "server": server, "database": database,
         "provider_version": provider_version, "tool_version": tool_version,
         "adapter_provenance": adapter_provenance,
+        "sql_profile": sql_profile,
         "fixture_source": fixture_source, "fixture_sha256": fixture_sha256,
         "fixture_manifest": str(fixture_manifest or ""),
         "fixture_manifest_sha256": manifest_sha256,
@@ -226,6 +230,7 @@ def run_local_validation(
         try:
             raw = executor(
                 sql=sql, artifact_path=str(artifact), round_name=name,
+                sql_profile=sql_profile,
                 validate_only=(name == "validate_only"),
                 inject_failure=(name == "injected_failure"),
                 fresh_session=True, fresh_database=(name != "rerun"),

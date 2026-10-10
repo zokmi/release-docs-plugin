@@ -33,6 +33,20 @@ review fingerprint／lifecycle／semantic review 必須理解衍生来源，完�
 
 支援能力以已驗證的 provider／來源操作明列；未支援語法、opaque helper、未知業務規則或不可交易 DDL 不自動猜測。允許產製候選及完整診斷，但不能宣稱合格 SQL。對可自動修正的已支援操作，依 systematic-debugging 保存重現、根因與最小修正，以新 run 重跑；三次失敗檢討編排設計，不堆疊 guard。真正不能推導的資訊才提出具體問題，不能要求使用者重交整份產製輸入。
 
+## 已知來源不相容與處理決策
+
+既有 repository migration 可能是供 SSMS／sqlcmd 直接執行的完整腳本，含 `GO`、unit 內 `BEGIN/COMMIT/ROLLBACK`、動態 `EXEC`、欄位描述 procedure 或 `RAISERROR`。這些 finding 的根因是 execution model 與 plugin contract 不一致，不是 LocalDB、最高權限或單一 session option 故障。LocalDB 通過只能證明該腳本在該 provider 可執行，不能補上 unit mapping、來源 hash、交易邊界或四輪 DATA 預期。
+
+採用「原始來源 + 衍生執行來源」雙層模型：
+
+1. 原始 EF／SQL migration 永遠保留為 pinned source of truth；不因 release 需要而刪除 `GO`、改寫 `RAISERROR`、忽略 `EXEC`、拆除交易或直接修改 repository。
+2. provider／repair adapter 只在已核對工具與隔離模型中產生 execution body。每個 body 綁定 baseline hash、輸入 revision/path/hash、工具／版本／命令／參數、轉換 mapping、原始與輸出 hash，保存為 `derived_artifact`，並由 producer／review 重新驗證。
+3. `GO`、動態 DDL、metadata procedure、RAISERROR/THROW 與 unit 交易各自形成能力 finding。沒有可審查 provider 的 operation 保留 blocker；不能以補 descriptor 或包一層 transaction 消除 finding。
+4. execution artifact 採 `database_tool_minimal` 時，只含基礎 T-SQL、phase/unit 註解與 mapping；connection、最高權限、transaction、模式、錯誤攔截與逐 unit execution evidence 由資料庫工具負責。source unit 的非必要 `SET`、`USE`、SQLCMD directive、`GO`、權限與自有 transaction 在寫檔前阻擋；`SET IDENTITY_INSERT` 僅在有來源證據且成對出現時例外允許。
+5. 舊 wrapper 僅作 framework fallback，必須保存 fallback 原因；不能把 wrapper 內的 metadata `SET` 當成 source unit 可以任意使用 session option 的理由。
+
+下列 finding 對應的處置固定化：`unmapped_sql`／phase mapping 缺失先建立 execution descriptor；`opaque_execution` 先交給已驗證 provider 或維持 blocker；`batch_separator` 只能由 provider 產出無 batch 的 derived body；`unit_transaction_control` 需選定唯一 transaction owner；`raiserror_without_throw` 只能由保留錯誤碼／訊息的 repair mapping 處理；`missing_data_expectations` 必須自動產生 fixture、seed row 與四輪 before/after assertions。原始來源不具備這些條件時，lifecycle 維持 failed 或待確認，不因文件產出或單次實測轉為合格。
+
 ## 四輪与交付
 
 同一 immutable SQL：validate_only 完整執行後 rollback；commit 從 fresh baseline／fresh session 執行並提交；rerun 沿用 commit DB 但另開 session驗證收斂；injected_failure 使用 fresh baseline，在 mutation 後／commit 前注入錯誤，驗證 rollback與停止。runner 實際回報 session/database IDs、checks、data_checks 及 preservation；adapter 不可用則部署 not_run，不能捏造通過。

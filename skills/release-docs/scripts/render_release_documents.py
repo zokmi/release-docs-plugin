@@ -315,7 +315,12 @@ def render_release_documents(analysis, deployment_artifact, lifecycle_record, ou
         "SCOPE": scope_text, "STRUCTURE": _structure(analysis, excluded),
         "STRUCTURE_TABLE": structure_table, "DATA_TABLE": data_table,
         "EXCLUSIONS": _exclusion_summary(exclusions),
-        "MODE": ("ValidateOnly=1（未設定 SESSION_CONTEXT(N'ReleaseDocs.ValidateOnly') 時）；"
+        "MODE": ("database_tool_minimal（由受控資料庫工具傳入 validate-only／commit，SQL 不含 session SET）；"
+                 "framework fallback 才使用 ValidateOnly=1／ValidateOnly=0、SESSION_CONTEXT(N'ReleaseDocs.ValidateOnly') "
+                 "及 `sp_set_session_context`"
+                 if getattr(deployment_artifact, "transaction_mode", "framework") == "database_tool_minimal"
+                 else "framework fallback：ValidateOnly=1（未設定 SESSION_CONTEXT(N'ReleaseDocs.ValidateOnly') 時）；"
+                 "ValidateOnly=0 僅在同一新 session 明確設定後允許提交；"
                  "只有在同一新 session 執行 `EXEC sys.sp_set_session_context "
                  "@key = N'ReleaseDocs.ValidateOnly', @value = 0;` 才可提交"),
         "STATUS": _status(metadata, deployment_artifact,

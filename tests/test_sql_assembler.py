@@ -80,6 +80,49 @@ def test_runtime_mode_defaults_to_validate_only(tmp_path):
     assert "COALESCE(CONVERT(bit, TRY_CONVERT(tinyint, @RawValidateOnly)), 1)" in sql
 
 
+def test_database_tool_minimal_profile_emits_only_source_tsql(tmp_path):
+    module = api()
+    source = "CREATE TABLE dbo.Minimal (Id int NOT NULL);\n"
+    units = [unit("minimal", "SCHEMA", source)]
+    artifact = module.assemble_deployment_sql(
+        units, tmp_path / "01_部署SQL.sql", {"profile": "database_tool_minimal"})
+    text = artifact.path.read_text(encoding="utf-8")
+    assert artifact.transaction_mode == "database_tool_minimal"
+    assert "SET XACT_ABORT" not in text
+    assert "SESSION_CONTEXT" not in text
+    assert "sp_executesql" not in text
+    assert source in text
+    assert not module.validate_sql_contract(text, profile="database_tool_minimal")
+
+
+@pytest.mark.parametrize("source", [
+    "SET NOCOUNT ON;\nSELECT 1;",
+    "SET ANSI_NULLS ON;\nSELECT 1;",
+    "SET @x = 1;\nSELECT @x;",
+])
+def test_database_tool_minimal_profile_rejects_nonessential_set(tmp_path, source):
+    module = api()
+    with pytest.raises(module.SQLContractError) as error:
+        module.assemble_deployment_sql(
+            [unit("minimal", "DATA", source)],
+            tmp_path / "01_部署SQL.sql",
+            {"profile": "database_tool_minimal"})
+    assert "nonessential_set_statement" in codes(error.value.findings)
+    assert not (tmp_path / "01_部署SQL.sql").exists()
+
+
+def test_database_tool_minimal_profile_allows_reviewed_identity_insert(tmp_path):
+    module = api()
+    source = ("SET IDENTITY_INSERT dbo.Minimal ON;\n"
+              "INSERT INTO dbo.Minimal (Id) VALUES (1);\n"
+              "SET IDENTITY_INSERT dbo.Minimal OFF;\n")
+    artifact = module.assemble_deployment_sql(
+        [unit("minimal", "DATA", source)],
+        tmp_path / "01_部署SQL.sql",
+        {"profile": "database_tool_minimal"})
+    assert artifact.path.is_file()
+
+
 def test_runtime_mode_rejects_values_other_than_zero_or_one(tmp_path):
     module, _, sql = assembled(tmp_path)
     assert "SQL_VARIANT_PROPERTY(@RawValidateOnly, 'BaseType')" in sql

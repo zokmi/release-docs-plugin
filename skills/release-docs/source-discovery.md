@@ -34,6 +34,8 @@
 
 保存候選 descriptors、來源 mapping、推導依據與未解析清單後重新呼叫 analyzer。`missing_authoritative_sql`、units=0 不代表無 DB 異動；analyzer 在 blocked 時會清空 units，因此候選盤點另存，避免丟失已完成分析。缺 metadata 先自動補 metadata；來源 SQL 的 GO、獨立 COMMIT、opaque EXEC、RAISERROR 或非冪等轉換則是另類問題，不能補欄位掩蓋、刪字或直接包 transaction。
 
+來源分析完成後，產製器預設選用 `database_tool_minimal` SQL profile：工具探測結果需包含可建立 fresh connection／transaction、執行完整 artifact、取得逐 unit 結果與 rollback／commit evidence 的能力。若只能使用舊 framework wrapper，保存 `sql_profile=framework`、工具限制與 fallback 原因；不得因工具具最高權限而把 session `SET`、權限或 transaction 控制塞回 source unit。
+
 若已授權來源修正，依 systematic-debugging 保存重現、根因與最小修正，在可追溯 repair／source 修正後建立新 pinned evidence 與新 run，重跑受影響檢查及四輪；不得修改交付 SQL後沿用舊 hash。沒有來源修正授權時保留精確修復位置，但繼續完成其他 units／fixture／參數分析。不得用「首次成功、正式只跑一次」取代 rerun 門檻。三次修正仍失敗時停下檢討來源／編排設計，不繼續症狀式補 guard。
 
 資格滿足才呼叫 produce_release、獨立語意審查、真實 adapter 四輪與最終 fingerprint。每次回報區分已分析、已生成工具輸入、已產製 artifact、已執行與已審查。使用者要求「補齊」或「繼續」時應執行已授權且可安全完成的取得與補齊步驟，不以新增計畫文件作為完成；僅對不可推導的業務規則、未授權來源變更或實際能力缺口提出最小問題。
