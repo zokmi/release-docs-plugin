@@ -14,6 +14,7 @@ import re
 import argparse
 import sys
 from typing import Any, Callable, Sequence
+from path_safety import is_linked_path
 
 ROUNDS = ("validate_only", "commit", "rerun", "injected_failure")
 DATA_CASES = ("existing_value", "preserved_data", "duplicate_candidate",
@@ -29,7 +30,7 @@ def _source_path(value: str | os.PathLike[str] | None, label: str) -> Path | Non
     if not value:
         return None
     original = Path(value).absolute()
-    if any(part.is_symlink() or (part.exists() and part.is_junction())
+    if any(is_linked_path(part)
            for part in (original, *original.parents)):
         raise ValueError(f"{label} must be a regular, non-linked file")
     if original.is_file() and os.stat(original).st_nlink != 1:
@@ -336,7 +337,7 @@ def write_localdb_evidence(run_root: str | os.PathLike[str], evidence: dict[str,
     root = Path(run_root).absolute()
     if ".." in root.parts or root.parent.name != "runs" or root.parent.parent.name != ".release-docs":
         raise ValueError("LocalDB evidence must be inside lifecycle .release-docs/runs/<run-id>")
-    if any(p.is_symlink() or (p.exists() and p.is_junction()) for p in (root, *root.parents)):
+    if any(is_linked_path(p) for p in (root, *root.parents)):
         raise ValueError("Linked lifecycle paths are not permitted")
     if not isinstance(evidence, dict) or evidence.get("schema_version") != 1:
         raise ValueError("Invalid LocalDB evidence")

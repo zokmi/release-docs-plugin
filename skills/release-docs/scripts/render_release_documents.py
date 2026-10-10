@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import stat
+from parameter_metadata import sanitize_parameter_changes
 
 GUIDE = "00_上線指引.md"
 SQL = "01_部署SQL.sql"
@@ -96,13 +97,16 @@ def _structure(analysis, excluded):
     changes = getattr(analysis, "structure_changes", None)
     if changes is None:
         changes = []
-        for unit in included_units:
-            for change in unit.get("structure_changes", []):
-                if not isinstance(change, dict):
-                    raise ValueError("Invalid structure change descriptor")
-                changes.append({**change, "unit_id": unit["unit_id"]})
     if not isinstance(changes, list):
         raise ValueError("Structure changes must be explicit descriptors")
+    changes = list(changes)
+    for unit in included_units:
+        for change in unit.get("structure_changes", []):
+            if not isinstance(change, dict):
+                raise ValueError("Invalid structure change descriptor")
+            descriptor = {**change, "unit_id": unit["unit_id"]}
+            if descriptor not in changes:
+                changes.append(descriptor)
     grouped = {kind: [] for kind in KINDS}
     unproven_scope = False
     for change in changes:
@@ -223,28 +227,11 @@ def _parameters(changes):
         raise ValueError("Parameter changes must be explicit descriptors")
     rows = ["| 環境 | 服務 | 完整設定鍵 | 格式範例 | 套用方式 | 重新載入要求 | 驗證 |",
             "| --- | --- | --- | --- | --- | --- | --- |"]
-    secrets = set()
-    for change in changes:
-        if isinstance(change, dict) and (SENSITIVE.search(str(change.get("key", ""))) or change.get("sensitive") is True):
-            for key in ("value", "old_value", "new_value", "format_example"):
-                value = change.get(key)
-                if isinstance(value, str) and value:
-                    secrets.add(value)
-
-    def masked(value):
-        value = str(value)
-        for secret in sorted(secrets, key=len, reverse=True):
-            value = value.replace(secret, "[REDACTED]")
-        return _text(value)
-
-    for change in changes:
-        if not isinstance(change, dict) or any(not isinstance(change.get(k), str) or not change[k].strip()
-                                               for k in ("environment", "service", "key")):
-            raise ValueError("Parameter scope is incomplete")
-        example = "字串，例如 [REDACTED]（由機密儲存取得）" if SENSITIVE.search(change["key"]) or change.get("sensitive") is True else change.get("format_example", "待確認")
-        values = [change["environment"], change["service"], change["key"], example,
-                  change.get("apply", "待確認"), change.get("reload", "待確認"), change.get("validation", "待確認")]
-        rows.append("| " + " | ".join(masked(value) for value in values) + " |")
+    for change in sanitize_parameter_changes(changes):
+        values = [change['environment'], change['service'], change['key'],
+                  change.get('format_example', '待確認'), change.get('apply', '待確認'),
+                  change.get('reload', '待確認'), change.get('validation', '待確認')]
+        rows.append('| ' + ' | '.join(_text(value) for value in values) + ' |')
     return "\n".join(rows)
 
 

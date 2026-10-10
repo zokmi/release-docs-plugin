@@ -59,10 +59,14 @@ def _finding(code, blocking=True, domain="sql_content", status=None):
             "status": status or ("未通過" if blocking else "待確認")}
 
 
-def _summary(findings, deployment="待確認"):
+def _summary(findings, deployment="待確認", semantic_complete=False):
     sql = [f for f in findings if f["domain"] == "sql_content"]
     status = "未通過" if any(f["blocking"] for f in sql) else "待確認" if sql else "通過"
-    return findings + [_finding("sql_content_status", status == "未通過", status=status),
+    static_status = status
+    if status == "通過" and not semantic_complete:
+        status = "待確認"
+    return findings + [_finding("static_sql_status", static_status == "未通過", status=static_status),
+                       _finding("sql_content_status", status == "未通過", status=status),
                        _finding("deployment_validation_status", deployment == "未通過",
                                 domain="deployment_validation", status=deployment)]
 
@@ -433,7 +437,7 @@ def _units(sql, evidence, exclusions):
     return findings
 
 
-def validate_release_output(output_dir, run_root) -> list[Finding]:
+def validate_release_output(output_dir, run_root, *, repo=None) -> list[Finding]:
     findings = []
     try:
         output, run = plain_path(output_dir), lifecycle_root(run_root)
@@ -496,16 +500,19 @@ def validate_release_output(output_dir, run_root) -> list[Finding]:
         return _summary(findings + [_finding("invalid_lifecycle_exclusions")])
     contract = metadata.get("operator_contract", {})
     applicable = contract.get("parameters_applicable") if isinstance(contract, dict) else None
+    source_applicable = source.get('parameters_applicable')
+    if type(source_applicable) is bool and type(applicable) is bool and source_applicable != applicable:
+        findings.append(_finding('conflicting_parameter_applicability'))
     if type(applicable) is bool and isinstance(source.get("parameter_changes"), list) and applicable != bool(source["parameter_changes"]):
         findings.append(_finding("conflicting_parameter_applicability"))
-    if applicable is None and isinstance(source.get("parameter_changes"), list):
-        applicable = bool(source["parameter_changes"])
+    # Older metadata without this declaration remains unknown, even with an empty list.
+    applicable = source_applicable if type(source_applicable) is bool else None
     present = (output / OPERATOR_FILES[2]).is_file()
     if applicable is True and not present:
         findings.append(_finding("missing_parameter_document"))
     elif applicable is False and present:
         findings.append(_finding("unexpected_parameter_document"))
-    elif type(applicable) is not bool and present:
+    elif type(applicable) is not bool:
         findings.append(_finding("parameter_applicability_unknown", blocking=False))
     sql_path, guide_path = output / OPERATOR_FILES[1], output / OPERATOR_FILES[0]
     if not sql_path.is_file() or not guide_path.is_file():
@@ -547,7 +554,21 @@ def validate_release_output(output_dir, run_root) -> list[Finding]:
         findings.append(_finding("deployment_proved_sql_defect"))
     # Deduplicate codes while keeping stable order and separate status records.
     findings = list({(f["domain"], f["code"]): f for f in findings}.values())
-    return _summary(findings, deployment)
+    # Static success cannot substitute for pinned-source semantic review.
+    from semantic_review import validate_semantic_review
+    semantic_findings = [_finding("semantic_review_pending", blocking=False)]
+    if repo is not None:
+        try:
+            fingerprint = _fingerprint.review_fingerprint(repo, output, run, source["source_scope"])
+            record = read_json(run / "semantic_review_record.json")
+            semantic_findings = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
+        except (ValueError, OSError, KeyError):
+            pass
+    result = _summary(findings, deployment, semantic_complete=not semantic_findings)
+    # Retain the independent static summary before lowering the final status.
+    static = next(f for f in result if f["code"] == "static_sql_status")
+    result = _summary(findings + semantic_findings, deployment, semantic_complete=not semantic_findings)
+    return [static if f["code"] == "static_sql_status" else f for f in result]
 
 
 def _report_status(findings, domain, summary_code):
@@ -557,7 +578,7 @@ def _report_status(findings, domain, summary_code):
                  for f in findings if isinstance(f, dict) and f.get("code") == summary_code]
     status = max(summaries or ["待確認"], key=rank.get)
     for finding in findings:
-        if not isinstance(finding, dict) or finding.get("code") in ("sql_content_status", "deployment_validation_status"):
+        if not isinstance(finding, dict) or finding.get("code") in ("static_sql_status", "sql_content_status", "deployment_validation_status"):
             continue
         code = finding.get("code")
         finding_domain = "sql_content" if code in ("semantic_sql_defect", "semantic_review_pending") else finding.get("domain", "sql_content")
@@ -570,13 +591,29 @@ def _report_status(findings, domain, summary_code):
     return status
 
 
-def write_review_report(run_root, findings, fingerprint):
+def write_review_report(run_root, findings, fingerprint, *, repo=None, output_dir=None):
     """Write review evidence only in lifecycle; include codes, never source prose."""
     run = lifecycle_root(run_root)
+    from semantic_review import validate_semantic_review
+    try:
+        if repo is None or output_dir is None:
+            raise ValueError('Current evidence identity is required for a passing report')
+        source = read_json(run / 'source_unit_metadata.json')
+        current = _fingerprint.review_fingerprint(repo, output_dir, run, source['source_scope'])
+        if current.sha256 != fingerprint.sha256:
+            raise ValueError('Stale review fingerprint')
+        semantic_findings = validate_semantic_review(
+            read_json(run / 'semantic_review_record.json'), source,
+            read_json(run / 'lifecycle_exclusion_manifest.json')['exclusions'], current.sha256)
+    except (ValueError, OSError, KeyError):
+        semantic_findings = [_finding('semantic_review_pending', blocking=False)]
+    findings = list(findings) + semantic_findings
     report = plain_path(run / "05_版更審查報告.md")
     values = {"SQLSTATUS": _report_status(findings, "sql_content", "sql_content_status"),
               "DEPLOYSTATUS": _report_status(findings, "deployment_validation", "deployment_validation_status"),
               "FINGERPRINT": fingerprint.sha256, "FINDINGS": ""}
+    semantic_path = plain_path(run / "semantic_review_record.json")
+    values["SEMANTICHASH"] = file_hash(semantic_path) if semantic_path.is_file() else "missing"
     for key in ("SQLSTATUS", "DEPLOYSTATUS"):
         if values[key] not in STATUSES:
             values[key] = "待確認"
@@ -585,7 +622,7 @@ def write_review_report(run_root, findings, fingerprint):
     lines = []
     for finding in findings:
         code = finding.get("code") if isinstance(finding, dict) else None
-        if code not in ("sql_content_status", "deployment_validation_status"):
+        if code not in ("static_sql_status", "sql_content_status", "deployment_validation_status"):
             safe = code if isinstance(code, str) and code in REPORT_CODES else "invalid_finding"
             lines.append("- " + safe)
     values["FINDINGS"] = "\n".join(lines) or "無靜態阻擋項目；部署驗證依獨立證據判定。"
@@ -598,7 +635,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--run-root", required=True)
+    parser.add_argument("--repo")
     args = parser.parse_args()
-    result = validate_release_output(args.output_dir, args.run_root)
+    result = validate_release_output(args.output_dir, args.run_root, repo=args.repo)
     print(json.dumps(result, ensure_ascii=True, sort_keys=True))
     raise SystemExit(1 if any(f["blocking"] for f in result) else 0)

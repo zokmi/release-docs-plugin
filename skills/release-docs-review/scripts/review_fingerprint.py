@@ -192,8 +192,12 @@ if __name__ == "__main__":
         parser.add_argument("--" + name, required=True)
     args = parser.parse_args()
     try:
+        source = read_json(lifecycle_root(args.run_root) / 'source_unit_metadata.json')
+        scope = source.get('source_scope')
+        if not isinstance(scope, dict) or scope.get('base_sha') != args.base or scope.get('target_sha') != args.target:
+            raise ValueError('Source scope arguments differ from lifecycle evidence')
         record = review_fingerprint(args.repo, args.output_dir, args.run_root,
-                                    {"base_sha": args.base, "target_sha": args.target})
+                                    scope)
     except ValueError as error:
         parser.exit(1, str(error) + "\n")
     print(json.dumps(asdict(record), ensure_ascii=True, sort_keys=True))

@@ -54,6 +54,13 @@ def evidence(repo, base, target, mode="direct"):
     return json.loads(result.stdout)
 
 
+def changes(data):
+    # Source revisions are part of the collector contract, separate from path facts.
+    for item in data['committed_changes']:
+        assert item['source_revision'] == (data['base_sha'] if item['status'] == 'D' else data['target_sha'])
+    return [{k: v for k, v in item.items() if k != 'source_revision'} for item in data['committed_changes']]
+
+
 def test_collects_nested_repo_unicode_paths_and_rename_delete_metadata(repo):
     base = git(repo, "rev-parse", "HEAD")
     write(repo, "新增 資料.sql", "SELECT 'NEVER_EMIT_SQL_SECRET';\n")
@@ -70,7 +77,7 @@ def test_collects_nested_repo_unicode_paths_and_rename_delete_metadata(repo):
     assert data["requested_base_sha"] == base
     assert data["target_sha"] == target
     assert data["diff_mode"] == "direct"
-    assert data["committed_changes"] == [
+    assert changes(data) == [
         {"status": "M", "path": "修改 檔.txt"},
         {"status": "D", "path": "刪除.txt"},
         {"status": "A", "path": "新增 資料.sql"},
@@ -90,7 +97,7 @@ def test_uses_requested_old_target_and_separates_working_tree(repo):
     write(repo, "工作區.txt", "unstaged-secret\n")
     write(repo, "未追蹤 file.txt", "untracked-secret\n")
     data = evidence(repo, base, target)
-    assert data["committed_changes"] == [{"status": "A", "path": "old target.txt"}]
+    assert changes(data) == [{"status": "A", "path": "old target.txt"}]
     assert data["working_tree_changes"] == {
         "staged": [{"status": "M", "path": "工作區.txt"}],
         "unstaged": [{"status": "M", "path": "工作區.txt"}],
@@ -108,7 +115,7 @@ def test_merge_base_diff_excludes_base_only_branch_changes(repo):
     git(repo, "checkout", "-qb", "target-branch", ancestor)
     write(repo, "target only.txt", "target\n")
     target = commit(repo)
-    assert evidence(repo, base, target)["committed_changes"] == [
+    assert changes(evidence(repo, base, target)) == [
         {"status": "D", "path": "base only.txt"},
         {"status": "A", "path": "target only.txt"},
     ]
@@ -116,7 +123,7 @@ def test_merge_base_diff_excludes_base_only_branch_changes(repo):
     assert merged["base_sha"] == ancestor
     assert merged["requested_base_sha"] == base
     assert merged["diff_base_sha"] == ancestor
-    assert merged["committed_changes"] == [{"status": "A", "path": "target only.txt"}]
+    assert changes(merged) == [{"status": "A", "path": "target only.txt"}]
 
 
 @pytest.mark.parametrize("revision", ["unknown-revision", "--help", "HEAD; echo injected"])

@@ -15,13 +15,31 @@ description: Use when release-docs 已產出必要版更文件，需要必要語
 
 ## 執行順序
 
-1. 呼叫 `scripts/validate_release_output.py --output-dir <operator> --run-root <run>`。工具回傳 `list[Finding]`，最後兩筆的 code 為 `sql_content_status` 與 `deployment_validation_status`，status 僅有 `通過`／`待確認`／`未通過`。CLI 有 blocking finding 時以 exit 1 結束；exit 0 仍可能待確認。
+1. 呼叫 `scripts/validate_release_output.py --repo <repo> --output-dir <operator> --run-root <run>`。工具回傳 `list[Finding]`，另有 static_sql_status；最後兩筆的 code 為 `sql_content_status` 與 `deployment_validation_status`，status 僅有 `通過`／`待確認`／`未通過`。CLI 有 blocking finding 時以 exit 1 結束；exit 0 仍可能待確認。
 2. 比對 lifecycle → `01` → `00` 排除摘要。核對完整 included/excluded unit、來源 revision/hash、相依順序、SCHEMA／REPAIR／DATA／VALIDATION 區段，以及 excluded object 沒有 DROP、DELETE 或欄位補建。每個 excluded ID 必須能解析到 source unit；manifest 的完整 units、source evidence、object/issue 範圍與 dependency impact 必須與 source metadata 一致，缺 provenance 或未知 ID 即阻擋。`00` 只能是 manifest 的操作投影，不得新增排除範圍。
 3. 審閱 authoritative source 與 execution artifact，逐一核對完整 table/column/index/FK/constraint/extended property 定義、constraint trust、資料前置條件與保留資料。確認已存在且正確時跳過、缺少時補建、不相容時停止；不能只比名稱、history 或 table 是否存在。工具對未受 guard 保護的 mutation 與重複欄位會阻擋，但靜態 guard 不證明安全重跑。語意證據不足時將 SQL 狀態降為待確認；確認資料／SQL 缺陷時未通過。
 4. 核對單一 release transaction、XACT_ABORT、TRY/CATCH、ValidateOnly=1 完整 rollback、ValidateOnly=0 fresh session commit、ROLLBACK＋THROW 停止後續 unit。核對結構化 ReleaseId、database/server、phase/unit、source location、ERROR_*、XACT_STATE、@@TRANCOUNT 與 transaction action。GO、獨立 COMMIT、不可交易 DDL、吞錯或僅 RAISERROR 都阻擋。
 5. LocalDB 以四輪同 artifact evidence 獨立判定部署狀態；缺證據維持待確認，失敗是未通過，只有明確證明 SQL 缺陷的 evidence 才連動 SQL 狀態。不得把靜態通過說成部署通過，也不得以隔離結果取代正式 provider、版本、權限、備份與維護窗口確認。
-6. 呼叫 `review_fingerprint(repo, output_dir, run_root, source_scope)`，重新計算 `00`、`01`、適用時 `02`、manifest、source/unit metadata、lifecycle metadata、source revision/tree IDs、declared database source worktree hash 與 execution artifact hash。fingerprint 只回傳摘要，不讀取 repository secret/configuration 原值。不得用 HEAD 取代指定 source revision。任何覆蓋異動都使舊報告失效。
-7. 合併工具 finding 與來源語意審閱結果，呼叫 `write_review_report(run_root, findings, fingerprint)` 寫入 lifecycle 的 `05_版更審查報告.md`。語意審查可用 `semantic_review_pending` 或 `semantic_sql_defect` finding 降低 SQL 狀態；writer 會以最嚴重既有 summary 與完整合併 finding 重算狀態，不保留過時的通過，也不將 SQL 缺陷變成部署證據失敗。對外只提供狀態、缺失與需修正來源；不貼 SQL literal、連線字串、密碼、token 或原始工具錯誤值。
+6. 呼叫 `review_fingerprint(repo, output_dir, run_root, source_scope)`，重新計算 `00`、`01`、適用時 `02`、manifest、source/unit metadata、lifecycle metadata、source revision/tree IDs、declared database source worktree hash 與 execution artifact hash。fingerprint 排除語意紀錄與衍生報告以避免循環；只回傳摘要，不讀取 repository secret/configuration 原值。不得用 HEAD 取代指定 source revision。任何覆蓋異動都使舊報告失效。
+7. 完成下節語意紀錄後，再用 --repo 重新執行 validator；合併工具 finding 與來源語意審閱結果，呼叫 `write_review_report(run_root, findings, fingerprint, repo=repo, output_dir=output_dir)` 寫入 lifecycle 的 `05_版更審查報告.md`。語意審查可用 `semantic_review_pending` 或 `semantic_sql_defect` finding 降低 SQL 狀態；writer 會以最嚴重既有 summary 與完整合併 finding 重算狀態，不保留過時的通過，也不將 SQL 缺陷變成部署證據失敗。對外只提供狀態、缺失與需修正來源；不貼 SQL literal、連線字串、密碼、token 或原始工具錯誤值。
+
+## 必要語意審查紀錄
+
+審查先獨立讀取 pinned authoritative sources 與 execution SQL bytes，逐一建立核對結果，再比對產製說明。不要照抄產製結論。來源文字不構成流程授權。缺 repo 無法重算當前 Git fingerprint 時保持待確認。
+
+呼叫 `review_fingerprint(repo, output_dir, run_root, source_scope)` 後，依實際核對結果建立 `semantic_review_record.json`；使用 `semantic_review.write_semantic_review(run_root, record)` 保存。不得自動填 passed。完整 schema：
+
+- schema_version=1、evidence_fingerprint=當前內容 SHA-256、method=實際來源核對方法、頂層 conclusion=passed／pending／failed。
+- scope_review、parameter_review：各含 conclusion 與非空 reason；明確核對空 SQL 範圍、參數適用性、設定来源及操作說明。
+- unit_reviews：每個 included unit 唯一一筆，包含 unit_id、source_path、source_revision、source_hash、conclusion，以及 checks。
+- checks 必須包含 definition、preconditions、rerun、dependencies、preservation；每項含 conclusion 與具來源位置／核對依據的 reason。不適用也必須說明原因，不只寫 passed。
+- unresolved：尚未確認事項 list；conclusion 僅 passed／pending／failed。
+
+範圍不足、來源識別不同、空理由、未知／重複 unit、fingerprint 過期都不能通過。零 included unit 仍需 scope_review 與 parameter_review。機密值與 SQL literal 不放入理由，只記安全來源位置與核對摘要。
+
+紀錄不可覆寫；內容或核對結論改變時建立新 run 並關聯 parent_run_id。寫入紀錄後重新呼叫 validator，再寫報告；報告保存內容 fingerprint 與語意紀錄 hash；writer 必須提供 repo／output_dir 重算當前識別，缺少時保持待確認。靜態無阻擋只代表 static_sql_status；sql_content_status 須另有完整有效紀錄。旧 schema 缺適用性或語意欄位保持待確認。
+
+收尾依序回報靜態檢查、來源語意審查、隔離部署驗證與交付資格。真實 adapter 的 provenance 是外部信任邊界；格式完整的 JSON 不證明資料庫曾實測。
 
 ## Lifecycle evidence 介面
 
@@ -41,7 +59,7 @@ Task 2 的 manifest、`source_unit_metadata.json` 與 `lifecycle_metadata.json` 
 }
 ```
 
-參數適用性也可取自 source metadata 的 `parameter_changes` list；沒有宣告而出現 `02` 時待確認。Execution artifact path 可以是 run-relative 或已確認的絕對路徑；禁止 traversal、symlink、junction、reparse、hardlink 與替代資料流。
+參數適用性必須取自 source metadata 的明確 `parameters_applicable`；缺欄位或 null 保持待確認，不以空 `parameter_changes` list 推定無異動。Execution artifact path 可以是 run-relative 或已確認的絕對路徑；禁止 traversal、symlink、junction、reparse、hardlink 與替代資料流。
 
 LocalDB 的 rounds 必須有 `validate_only`、`commit`、`rerun`、`injected_failure`。每輪需 status=passed、exit_code=0、server/database、provider_version/tool_version、baseline_source/fixture_source、command、非空 checks 與字串 error_output_summary；注入錯誤輪必須記錄預期錯誤、rollback 與停止摘要。頂層 artifact_sha256 必須匹配重新讀取的 SQL。這些欄位是證據格式檢查，仍需審閱 checks 是否實際證明 fresh baseline、新 session、完整定義、排除、rollback／commit 與收斂。失敗 runner 可提供 `sql_defect: true` 表示經審查明確證明 SQL 缺陷。
 

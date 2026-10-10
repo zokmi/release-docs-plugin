@@ -31,6 +31,9 @@ class AnalysisResult:
     exclusions: list = field(default_factory=list)
     baseline: dict = field(default_factory=dict)
     source_scope: dict = field(default_factory=dict)
+    structure_changes: list = field(default_factory=list)
+    parameter_changes: list = field(default_factory=list)
+    parameters_applicable: bool | None = None
     analysis_confidence: str = "blocked"
 
     @property
@@ -588,7 +591,8 @@ def analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, *, 
     else:
         baseline_text = ""
         _finding(result, "missing_baseline_schema")
-    result.source_scope = {k: evidence[k] for k in ("base_sha", "target_sha") if k in evidence}
+    result.source_scope = {k: evidence[k] for k in (
+        "base_sha", "target_sha", "requested_base_sha", "diff_base_sha", "diff_mode", "workspace_policy") if k in evidence}
     ef_covered = set()
     if ef_detection is not None:
         try:

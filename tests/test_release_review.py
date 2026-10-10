@@ -75,6 +75,7 @@ def release(tmp_path):
                                   "INSERT INTO dbo.Core VALUES (1);\n")]}
     analysis = analyze_release_units(repo, evidence, baseline, "#5005")
     assert not analysis.blocked
+    analysis.parameters_applicable = False
     run = tmp_path / ".release-docs/runs/review-1"
     manifest = write_lifecycle_run(run, analysis)
     excluded = {uid for item in analysis.exclusions for uid in item["unit_ids"]}
@@ -118,7 +119,8 @@ def replace_sql(release, sql):
 
 
 def test_valid_operator_contract_has_separate_static_and_deployment_statuses(release):
-    assert status(release, "sql_content_status") == "通過"
+    assert status(release, "static_sql_status") == "通過"
+    assert status(release, "sql_content_status") == "待確認"
     assert status(release, "deployment_validation_status") == "待確認"
     assert not any(f["blocking"] for f in findings(release))
 
@@ -157,7 +159,8 @@ def test_review_preserves_crlf_source_bytes_when_hashing(release):
     write_json(source_path, metadata)
     replace_sql(release, sql)
     assert "unit_sql_hash_mismatch" not in codes(release)
-    assert status(release, "sql_content_status") == "通過"
+    assert status(release, "static_sql_status") == "通過"
+    assert status(release, "sql_content_status") == "待確認"
 
 
 @pytest.mark.parametrize("name", ["02_資料SQL.sql", "03_例外排除.json", "04_參數異動.md",
@@ -177,15 +180,27 @@ def test_required_operator_documents_cannot_be_omitted(release, name):
 
 
 def test_parameter_document_follows_declared_applicability(release):
+    source_path = release[2] / 'source_unit_metadata.json'
+    source = json.loads(source_path.read_text())
+    source['parameters_applicable'] = True
+    source['parameter_changes'] = [{'environment': 'test', 'service': 'api', 'key': 'Cache:TTL'}]
+    write_json(source_path, source)
     update_metadata(release, operator_contract={"parameters_applicable": True})
     assert "missing_parameter_document" in codes(release)
     (release[1] / "02_參數異動.md").write_text("設定鍵與遮罩格式")
     assert "missing_parameter_document" not in codes(release)
+    source['parameters_applicable'] = False
+    source['parameter_changes'] = []
+    write_json(source_path, source)
     update_metadata(release, operator_contract={"parameters_applicable": False})
     assert "unexpected_parameter_document" in codes(release)
 
 
 def test_missing_parameter_declaration_with_present_document_is_pending(release):
+    source_path = release[2] / 'source_unit_metadata.json'
+    source = json.loads(source_path.read_text())
+    source.pop('parameters_applicable')
+    write_json(source_path, source)
     update_metadata(release, operator_contract={})
     (release[1] / "02_參數異動.md").write_text("設定鍵與遮罩格式")
     assert "parameter_applicability_unknown" in codes(release)
@@ -297,7 +312,8 @@ def test_deployment_pass_requires_current_fixture_and_baseline_hashes(release, d
         evidence["rounds"]["commit"]["fixture_sha256"] = "0" * 64
     update_metadata(release, localdb_validation=evidence)
     assert status(release, "deployment_validation_status") == "待確認"
-    assert status(release, "sql_content_status") == "通過"
+    assert status(release, "static_sql_status") == "通過"
+    assert status(release, "sql_content_status") == "待確認"
 
 
 @pytest.mark.parametrize("damage", ["missing_manifest", "missing_manifest_hash", "changed_manifest",
@@ -431,7 +447,8 @@ def test_stale_failed_localdb_evidence_cannot_poison_current_sql(release):
     update_metadata(release, localdb_validation={"status": "failed", "sql_defect": True,
                                                   "artifact_sha256": "0" * 64})
     assert status(release, "deployment_validation_status") == "待確認"
-    assert status(release, "sql_content_status") == "通過"
+    assert status(release, "static_sql_status") == "通過"
+    assert status(release, "sql_content_status") == "待確認"
     assert "deployment_proved_sql_defect" not in codes(release)
 
 
@@ -488,7 +505,8 @@ def test_deployment_pass_requires_structured_current_artifact_evidence(release, 
         evidence["rounds"]["validate_only"]["checks"] = []
     update_metadata(release, localdb_validation=evidence)
     assert status(release, "deployment_validation_status") == ("通過" if damage is None else "待確認")
-    assert status(release, "sql_content_status") == "通過"
+    assert status(release, "static_sql_status") == "通過"
+    assert status(release, "sql_content_status") == "待確認"
 
 
 def test_guide_claiming_localdb_pass_without_evidence_is_rejected(release):
@@ -502,7 +520,8 @@ def test_deployment_failure_does_not_prove_sql_defect_without_evidence(release):
     digest = hashlib.sha256((release[1] / "01_部署SQL.sql").read_bytes()).hexdigest()
     update_metadata(release, localdb_validation={"status": "failed", "sql_defect": False, "artifact_sha256": digest})
     assert status(release, "deployment_validation_status") == "未通過"
-    assert status(release, "sql_content_status") == "通過"
+    assert status(release, "static_sql_status") == "通過"
+    assert status(release, "sql_content_status") == "待確認"
     update_metadata(release, localdb_validation={"status": "failed", "sql_defect": True, "artifact_sha256": digest})
     assert status(release, "sql_content_status") == "未通過"
 
@@ -573,7 +592,7 @@ def test_review_report_stays_inside_lifecycle_and_omits_untrusted_values(release
     report = module.write_review_report(release[2], findings(release), record)
     assert report.parent == release[2]
     text = report.read_text(encoding="utf-8")
-    assert "SQL 內容審核：通過" in text
+    assert "SQL 內容審核：待確認" in text
     assert "部署驗證：待確認" in text
     assert record.sha256 in text
     assert {p.name for p in release[1].iterdir()} == {"00_上線指引.md", "01_部署SQL.sql"}

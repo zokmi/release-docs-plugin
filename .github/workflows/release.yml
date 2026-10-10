@@ -53,7 +53,7 @@ jobs:
         run: python -X utf8 scripts/check_plugin_release.py --tag "$RELEASE_TAG"
         shell: bash
       - run: python -m pip install pytest
-      - run: python -X utf8 -m unittest discover -s tests -v
+      - run: python -X utf8 -m pytest tests -q
   release:
     needs: [validate, test]
     runs-on: ubuntu-latest

@@ -119,7 +119,7 @@ EXEC sys.sp_set_session_context @key=N'ReleaseDocs.ValidateOnly', @value=0;
 
 SQL 內容審核與部署驗證分開回報「通過」「待確認」「未通過」。隔離 LocalDB adapter 需四輪：fresh baseline rollback、fresh baseline commit、已提交 database 的新 session rerun、fresh baseline 注入錯誤。含 DATA 異動時必須有既有值、保留資料、NULL、重複候選、邊界與筆數的 fixture 和逐輪前後查核。每輪保存 artifact／baseline／fixture／manifest hash、版本、session/database、committed-state lineage、不同 checks 與實際保留資料摘要。缺 adapter 是未執行，缺證據是待確認，不以 fixture test double 冒充資料庫實測。
 
-使用 `skills/release-docs-review/scripts/validate_release_output.py --output-dir <operator> --run-root <run>` 核對交付 allowlist、排除、SQL 契約與部署證據。exit 0 仍可能待確認；需讀取 SQL 內容與部署驗證兩個狀態並完成來源語意審查。任何來源、SQL、排除、參數或 fixture 變動都使先前 fingerprint 失效。
+使用 `skills/release-docs-review/scripts/validate_release_output.py --repo <repo> --output-dir <operator> --run-root <run>` 核對交付 allowlist、排除、SQL 契約與部署證據。exit 0 仍可能待確認；需讀取 SQL 內容與部署驗證兩個狀態並完成來源語意審查。任何來源、SQL、排除、參數或 fixture 變動都使先前 fingerprint 失效。
 
 ## 維護與 Release
 
@@ -159,3 +159,11 @@ git push origin v0.1.24
 
 
 
+
+## 證據門檻與協調器
+
+新版 `produce_release` 集中執行前置檢查、單一 SQL 組裝、永久輸入保存、可選隔離驗證及文件渲染。分析資料正式保存結構說明、遮罩後參數描述、明確參數適用性及 Git 比較／工作區決策；目前協調器只接受工作區不納入與已物化 baseline SQL。缺適用性、結構說明或 DATA 預期結果時停止產製。
+
+靜態檢查另回報 `static_sql_status`；最終 SQL 內容通過需有逐 included unit 的 `semantic_review_record.json`，綁定當前內容 fingerprint。審查紀錄與報告排除於內容 fingerprint，報告另記語意紀錄 hash。舊 schema 可讀取，但缺新證據維持待確認；變動輸入或新實測使用新 run，不覆寫永久證據。
+
+本插件尚未提供真實 LocalDB adapter；預設 runner 記錄 not_run。外部 executor 的結構化回報仍是信任邊界，fixture test double 不代表資料庫實測。插件沒有自動發布或正式部署能力。

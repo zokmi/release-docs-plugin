@@ -30,9 +30,9 @@ def _expectations():
         ("preserved", "preserved_data", "Id=2 Flag=7", "Id=2 Flag=7"),
         ("null", "null_boundary", "Id=3 Flag=NULL", "Id=3 Flag=NULL"),
         ("existing", "duplicate_candidate", "Id=4 Flag=1", "Id=4 Flag=1"),
-        ("boundary", "boundary_value", "Id=5 Flag=-1", "Id=5 Flag=-1"),
+        ("boundary", "value_boundary", "Id=5 Flag=-1", "Id=5 Flag=-1"),
         ("empty", "empty_set", "count=0", "count=0"),
-        ("count", "multiple_rows", "count=5", "count=5"),
+        ("count", "row_count", "count=5", "count=5"),
     ):
         rows.append({"id": key, "case": case, "seed_row_id": "Customer/" + key,
                      "expected_by_round": {
@@ -136,6 +136,7 @@ def _pipeline(tmp_path, adapter=_recorded_adapter, parameters=False, unguarded_e
         analysis.parameter_changes = [{"environment": "test", "service": "app", "key": "ApiPassword",
                                        "sensitive": True, "new_value": "PARAMETER_SECRET", "format_example": "PARAMETER_SECRET",
                                        "apply": "secret store", "reload": "restart app", "validation": "health check"}]
+    analysis.parameters_applicable = parameters
     run = repo / ".release-docs/runs/e2e"
     run.mkdir(parents=True)
     fixture = run / "fixture.sql"
@@ -144,8 +145,10 @@ def _pipeline(tmp_path, adapter=_recorded_adapter, parameters=False, unguarded_e
     fixture_manifest = run / "fixture.json"
     _write(fixture_manifest, json.dumps({"usage": "Backfill target, preserved rows, NULL, existing target, boundary and row counts",
         "expected_preserved_data_summary": PRESERVED,
+        "coverage": {"backfill": {case: True for case in ("existing_value", "preserved_data", "duplicate_candidate", "null_boundary", "value_boundary", "empty_set", "row_count")}},
         "seed_rows": [{"unit_id": "backfill", "row_id": row["seed_row_id"], "purpose": row["case"]} for row in _expectations()]}))
-    artifact = assemble_deployment_sql(analysis.units, run / "01_部署SQL.sql", {"release_id": "e2e"})
+    excluded = {uid for entry in analysis.exclusions for uid in entry["unit_ids"]}
+    artifact = assemble_deployment_sql([u for u in analysis.units if u["unit_id"] not in excluded], run / "01_部署SQL.sql", {"release_id": "e2e"})
     calls = []
 
     def recording_adapter(**kwargs):
@@ -172,8 +175,8 @@ def test_collection_to_review_preserves_allowlist_and_localdb_evidence(tmp_path,
     repo, run, output, analysis, localdb, calls = _pipeline(tmp_path, parameters=parameters)
     assert localdb["status"] == "passed", localdb["reason"]
     findings = validate_release_output(output, run)
-    assert {item["code"]: item["status"] for item in findings} == {
-        "sql_content_status": "通過", "deployment_validation_status": "通過"}, findings
+    assert {item["code"]: item["status"] for item in findings if item["code"].endswith("_status")} == {
+        "static_sql_status": "通過", "sql_content_status": "待確認", "deployment_validation_status": "通過"}, findings
     assert {p.name for p in output.iterdir()} == ({"00_上線指引.md", "01_部署SQL.sql"}
                                                 | ({"02_參數異動.md"} if parameters else set()))
     assert (output / "01_部署SQL.sql").read_bytes() == (run / "01_部署SQL.sql").read_bytes()
@@ -234,7 +237,7 @@ def test_incomplete_adapter_evidence_cannot_claim_deployment_pass(tmp_path, dama
     _, run, output, _, _, _ = _pipeline(tmp_path, adapter=None if damage == "missing_adapter" else adapter)
     findings = validate_release_output(output, run)
     assert next(f["status"] for f in findings if f["code"] == "deployment_validation_status") == "待確認"
-    assert next(f["status"] for f in findings if f["code"] == "sql_content_status") == "通過"
+    assert next(f["status"] for f in findings if f["code"] == "sql_content_status") == "待確認"
     assert "LocalDB：通過" not in (output / "00_上線指引.md").read_text()
 
 
@@ -249,7 +252,7 @@ def test_deliberate_adapter_failure_is_retained_without_deployment_success(tmp_p
     assert "failure probe" in localdb["rounds"]["injected_failure"]["error_output_summary"]
     findings = validate_release_output(output, run)
     assert next(f["status"] for f in findings if f["code"] == "deployment_validation_status") == "未通過"
-    assert next(f["status"] for f in findings if f["code"] == "sql_content_status") == "通過"
+    assert next(f["status"] for f in findings if f["code"] == "sql_content_status") == "待確認"
 
 
 def test_unguarded_ef_create_cannot_pass_content_review(tmp_path):
@@ -272,4 +275,4 @@ def test_unprovable_ef_column_definition_blocks_before_assembly(tmp_path):
     refresh_detection(repo, evidence, detection)
     analysis = analyze_release_units(repo, evidence, baseline, None, ef_detection=detection)
     assert analysis.blocked and not analysis.units
-    assert "unsupported_migration_definition" in {item["code"] for item in analysis.findings}
+    assert "unsupported_migration_operation" in {item["code"] for item in analysis.findings}

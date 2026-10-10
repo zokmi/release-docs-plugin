@@ -4,10 +4,12 @@ from pathlib import Path
 import os
 import re
 import shutil
+from path_safety import is_linked_path
+from parameter_metadata import sanitize_parameter_changes
 
 
 def write_lifecycle_run(run_root, analysis_result, localdb_validation=None,
-                        execution_artifact=None, operator_contract=None):
+                        execution_artifact=None, operator_contract=None, parent_run_id=None):
     """Persist deterministic metadata, rejecting operator paths and replacement."""
     requested = Path(run_root)
     if ".." in requested.parts:
@@ -16,8 +18,15 @@ def write_lifecycle_run(run_root, analysis_result, localdb_validation=None,
     if (root.parent.name != "runs" or root.parent.parent.name != ".release-docs"
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", root.name)):
         raise ValueError("Run must be inside lifecycle .release-docs/runs/<run-id>")
-    if any(p.is_symlink() or p.is_junction() for p in (root, *root.parents)):
+    if any(is_linked_path(p) for p in (root, *root.parents)):
         raise ValueError("Linked lifecycle paths are not permitted")
+    applicable = getattr(analysis_result, 'parameters_applicable', None)
+    changes = sanitize_parameter_changes(getattr(analysis_result, 'parameter_changes', []))
+    if applicable is not None and (type(applicable) is not bool or applicable != bool(changes)):
+        raise ValueError('Parameter applicability conflicts with analysis')
+    declared = (operator_contract or {}).get('parameters_applicable')
+    if applicable is not None and declared is not None and declared != applicable:
+        raise ValueError('Parameter applicability conflicts with operator contract')
     lifecycle_metadata = {
             "schema_version": 1, "run_id": root.name,
             "retention": {"failed_days": 7, "cleanup_after_success": True},
@@ -32,6 +41,10 @@ def write_lifecycle_run(run_root, analysis_result, localdb_validation=None,
         lifecycle_metadata["execution_artifact"] = execution_artifact
     if operator_contract is not None:
         lifecycle_metadata["operator_contract"] = operator_contract
+    if parent_run_id is not None:
+        if not isinstance(parent_run_id, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', parent_run_id):
+            raise ValueError('Invalid parent run')
+        lifecycle_metadata['parent_run_id'] = parent_run_id
     documents = {
         "lifecycle_exclusion_manifest.json": {"schema_version": 1, "exclusions": analysis_result.exclusions},
         "source_unit_metadata.json": {
@@ -39,6 +52,9 @@ def write_lifecycle_run(run_root, analysis_result, localdb_validation=None,
             "baseline": analysis_result.baseline, "sources": analysis_result.sources,
             "units": [{k: v for k, v in u.items() if k != "sql"} for u in analysis_result.units],
             "findings": analysis_result.findings,
+            "structure_changes": getattr(analysis_result, 'structure_changes', []),
+            "parameter_changes": changes,
+            "parameters_applicable": applicable,
         },
         "lifecycle_metadata.json": lifecycle_metadata,
     }
@@ -61,7 +77,7 @@ def write_lifecycle_run(run_root, analysis_result, localdb_validation=None,
     sweep_expired_lifecycle_runs(root.parent.parent)
     root.mkdir(parents=True, exist_ok=True)
     ignore = root.parent.parent / ".gitignore"
-    if ignore.is_symlink() or (ignore.exists() and (ignore.is_junction() or os.stat(ignore).st_nlink != 1)):
+    if is_linked_path(ignore) or (ignore.exists() and os.stat(ignore).st_nlink != 1):
         raise ValueError("Lifecycle ignore file is linked")
     existing_ignore = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
     if "runs/" not in {line.strip() for line in existing_ignore.splitlines()}:
@@ -89,7 +105,7 @@ def cleanup_lifecycle_run(run_root, *, outcome):
     if (root.parent.name != "runs" or root.parent.parent.name != ".release-docs"
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", root.name)):
         raise ValueError("Run must be inside lifecycle .release-docs/runs/<run-id>")
-    if any(p.is_symlink() or (p.exists() and p.is_junction()) for p in (root, *root.parents)):
+    if any(is_linked_path(p) for p in (root, *root.parents)):
         raise ValueError("Linked lifecycle paths are not permitted")
     if outcome != "success":
         return False
@@ -98,7 +114,7 @@ def cleanup_lifecycle_run(run_root, *, outcome):
     removed = False
     for name in ("temporary", ".tmp"):
         child = root / name
-        if child.is_dir() and not child.is_symlink():
+        if child.is_dir() and not is_linked_path(child):
             shutil.rmtree(child)
             removed = True
     return removed
@@ -115,20 +131,20 @@ def sweep_expired_lifecycle_runs(lifecycle_root, *, now=None, retention_days=7):
     """Remove only expired failed/temporary lifecycle runs under ``runs``."""
     base = Path(lifecycle_root).absolute()
     runs = base / "runs"
-    if base.name != ".release-docs" or runs.is_symlink() or runs.is_junction() or not runs.is_dir():
+    if base.name != ".release-docs" or is_linked_path(runs) or not runs.is_dir():
         raise ValueError("Lifecycle root must contain a regular runs directory")
-    if any(p.is_symlink() or (p.exists() and p.is_junction()) for p in (base, *base.parents)):
+    if any(is_linked_path(p) for p in (base, *base.parents)):
         raise ValueError("Linked lifecycle paths are not permitted")
     cutoff = (now.timestamp() if now is not None else __import__("time").time()) - retention_days * 86400
     removed = []
     for child in runs.iterdir():
-        if (not child.is_dir() or child.is_symlink() or child.is_junction()
+        if (not child.is_dir() or is_linked_path(child)
                 or child.stat().st_mtime > cutoff):
             continue
         # Permanent manifests and review records are never swept. Only an
         # explicitly owned temporary directory can expire.
         temporary = child / "temporary"
-        if temporary.is_dir() and not temporary.is_symlink():
+        if temporary.is_dir() and not is_linked_path(temporary):
             shutil.rmtree(temporary)
             removed.append(child.name)
     return removed
