@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "release-docs",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "description": "依 Git 證據產出版更文件與必要審查報告。",
   "author": {
     "name": "zokmi"
@@ -9,7 +9,4 @@
   "repository": "https://github.com/zokmi/release-docs-plugin",
   "license": "MIT",
   "skills": "./skills/"
-}
-
-
-
+}\n

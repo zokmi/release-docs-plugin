@@ -74,6 +74,13 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('找不到或多個符合者停止', index_sql)
         self.assertIn('index-adjustment', validator)
 
+    def test_guide_template_is_dba_change_summary(self):
+        guide = (ROOT / 'assets/00_上線指引.md').read_text(encoding='utf-8')
+        self.assertIn('## 結構異動表格說明', guide)
+        self.assertIn('## 資料異動表格說明', guide)
+        self.assertIn('## 執行摘要', guide)
+        self.assertNotIn('## 完整驗證與部署', guide)
+
 
 if __name__ == '__main__':
     unittest.main()

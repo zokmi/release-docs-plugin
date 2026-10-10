@@ -107,7 +107,7 @@ renderer 寫入前檢查全部輸入與輸出，拒絕 traversal、symlink、jun
 
 有參數異動時提供 `analysis.parameter_changes` list；每項含 `environment`、`service`、完整 `key`，以及 `format_example`、`apply`、`reload`、`validation`。缺必要環境／服務／完整 key 即阻擋；操作細節缺值顯示待確認。敏感 key 或 `sensitive=True` 的格式範例固定遮罩，raw value／old_value／new_value 不輸出，且其已知機密值會從操作描述移除。一般範例中的 URL 帳密與機密 assignment 也遮罩；機密原值留在受控機密儲存。沒有參數異動時不產出 `02_參數異動.md`。
 
-`00` 包含 release/source、六類結構範圍及說明、排除摘要、備份/preflight、ValidateOnly=1 完整 rollback 後以 fresh baseline／新 session 執行 ValidateOnly=0 commit、錯誤停止、結構化錯誤欄位與部署後查核。LocalDB 預設「未執行」，SQL 內容審核預設「待確認」，兩者不互相取代。
+`00` 是給 DBA 閱讀的異動摘要，只列 release/source、實際新增或異動的 table／column／index／FK／constraint／extended property、持久資料異動與排除項目。執行摘要只保留 `01_部署SQL.sql`、DBA 工具、ValidateOnly=1 rollback／ValidateOnly=0 COMMIT／ROLLBACK、備份與查核要求；完整 execution evidence 留在 run。LocalDB 預設「未執行」，SQL 內容審核預設「待確認」，兩者不互相取代。
 
 若 lifecycle metadata 有 `localdb_validation`，renderer 可讀取 `status`（not_run／failed／passed）。passed 必須有相符 `artifact_sha256` 及 `rounds`：validate_only、commit、rerun、injected_failure；每輪需 status=passed、exit_code=0 與 server、database、provider_version、tool_version、baseline_source、fixture_source、command、checks，以及必填字串 `error_output_summary`。正常成功輪可明確記錄空摘要，injected_failure 輪需非空預期錯誤摘要。注入錯誤輪的 exit_code=0 指 runner 成功驗證預期錯誤、rollback 與停止，並非 SQL 無錯誤。證據不完整或 artifact 不符只顯示「待確認」。這是讀取既有證據的介面，renderer 不執行資料庫測試。
 

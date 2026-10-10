@@ -102,15 +102,9 @@ def test_exclusions_come_from_manifest_not_in_memory_analysis(tmp_path):
 def test_guide_has_safe_execution_error_reporting_and_unexecuted_localdb_status(tmp_path):
     _, _, _, output, _ = render(tmp_path)
     text = (output / "00_上線指引.md").read_text(encoding="utf-8")
-    assert "SESSION_CONTEXT" in text
-    assert "sp_set_session_context" in text
-    assert "ReleaseDocs.ValidateOnly" in text
-    for token in ("備份", "唯讀 preflight", "ValidateOnly=1", "ROLLBACK", "ValidateOnly=0",
-                  "新 connection/session", "COMMIT", "THROW", "停止", "不跳過", "LocalDB：未執行",
-                  "ReleaseId", "DatabaseName", "ServerName", "Phase", "UnitId", "SourcePath",
-                  "SourceRevision", "SourceLine", "ErrorNumber", "ErrorSeverity", "ErrorState",
-                  "ErrorProcedure", "ErrorLine", "ErrorMessage", "XactState", "TranCount", "TransactionAction",
-                  "constraint trust", "index 定義", "重跑"):
+    for token in ("結構異動表格說明", "資料異動表格說明", "DBA 工具", "ValidateOnly=1",
+                  "ValidateOnly=0", "COMMIT", "ROLLBACK", "備份", "baseline",
+                  "LocalDB：未執行", "table", "column", "index", "constraint"):
         assert token in text
 
 
