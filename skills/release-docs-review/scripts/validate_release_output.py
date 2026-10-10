@@ -26,7 +26,8 @@ read_json = _fingerprint.read_json
 
 # Load the assembler's public static validator, including when invoked directly.
 sys.path.insert(0, str(Path(__file__).parents[2] / "release-docs/scripts"))
-from assemble_deployment_sql import PHASES, _generated_units, _lex, validate_sql_contract
+from assemble_deployment_sql import (PHASES, _dynamic_ddl_provider_sql, _generated_units,
+                                     _lex, _metadata_provider_sql, validate_sql_contract)
 
 Finding = dict
 STATUSES = ("通過", "待確認", "未通過")
@@ -318,9 +319,9 @@ def _minimal_units(sql):
             break
         source = "".join(body)
         if hashlib.sha256(source.encode("utf-8")).hexdigest() != mapping.get("sql_hash"):
-            findings.append(_finding("unit_sql_hash_mismatch", unit_id=mapping["unit_id"]))
+            findings.append(_finding("unit_sql_hash_mismatch"))
         if mapping.get("source_end_line") != mapping.get("source_line", 0) + len(source.splitlines()) - 1:
-            findings.append(_finding("unit_sql_hash_mismatch", unit_id=mapping["unit_id"]))
+            findings.append(_finding("unit_sql_hash_mismatch"))
         if any(dep not in seen for dep in mapping.get("depends_on", [])):
             findings.append(_finding("unit_dependency_order"))
         parsed.append((mapping, source))
@@ -331,6 +332,26 @@ def _minimal_units(sql):
 
 def _artifact_units(sql, profile="framework"):
     return _minimal_units(sql) if profile == "database_tool_minimal" else _generated_units(sql)
+
+
+def _approved_provider_body(mapping, body):
+    kind = mapping.get("provider_kind")
+    if kind == "metadata":
+        return _metadata_provider_sql(body)
+    if kind == "dynamic_ddl":
+        return _dynamic_ddl_provider_sql(body)
+    return False
+
+
+def _contract_sql(sql, profile):
+    """Mask only recognized provider bodies before generic lexical checks."""
+    if profile != "database_tool_minimal":
+        return sql
+    units, _ = _minimal_units(sql)
+    for mapping, body in units:
+        if _approved_provider_body(mapping, body):
+            sql = sql.replace(body, "-- approved provider body: " + mapping["unit_id"] + "\n", 1)
+    return sql
 
 
 def _unmapped_sql(sql, profile="framework"):
@@ -483,7 +504,7 @@ def _units(sql, evidence, exclusions, profile="framework"):
             continue
         if hashlib.sha256(body.encode("utf-8")).hexdigest() != unit.get("sql_hash"):
             findings.append(_finding("unit_sql_hash_mismatch"))
-        if _rerun_risk(body):
+        if _rerun_risk(body) and not _approved_provider_body(mapping, body):
             findings.append(_finding("rerun_risk"))
     if seen != set(expected):
         findings.append(_finding("included_unit_mapping_mismatch"))
@@ -607,7 +628,8 @@ def validate_release_output(output_dir, run_root, *, repo=None) -> list[Finding]
             findings.append(_finding("execution_artifact_mismatch"))
     except (ValueError, OSError):
         findings.append(_finding("unsafe_or_missing_execution_artifact"))
-    findings.extend(_finding(f["code"]) for f in validate_sql_contract(sql, profile=sql_profile))
+    findings.extend(_finding(f["code"]) for f in validate_sql_contract(
+        _contract_sql(sql, sql_profile), profile=sql_profile))
     if _unmapped_sql(sql, sql_profile):
         findings.append(_finding("unmapped_sql"))
     findings.extend(_units(sql, source, exclusions, sql_profile))

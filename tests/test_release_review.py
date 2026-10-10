@@ -158,6 +158,32 @@ def test_review_blocks_mismatched_localdb_sql_profile(release):
     assert "sql_profile_mismatch" in codes(release)
 
 
+def test_minimal_review_preserves_approved_metadata_provider_execution():
+    module = api()
+    source = ("IF NOT EXISTS (SELECT 1 FROM sys.extended_properties)\n"
+              "BEGIN\n"
+              "EXEC sp_addextendedproperty 'MS_Description', N'欄位描述', "
+              "'SCHEMA', 'dbo', 'TABLE', 'Customer', 'COLUMN', 'Name';\nEND\n")
+    mapping = {"unit_id": "metadata", "phase": "SCHEMA", "source_path": "metadata.sql",
+               "source_revision": "a", "source_hash": "b", "sql_hash": "c", "source_line": 1,
+               "source_end_line": 5, "depends_on": [], "provider_kind": "metadata"}
+    assert module._approved_provider_body(mapping, source)
+    artifact = ("-- Unified deployment: database tool owns transaction and session settings.\n"
+                "-- PHASE: SCHEMA\n-- UNIT: " + json.dumps(mapping) + "\n" + source
+                + "-- END UNIT: metadata\n")
+    checked = module._contract_sql(artifact, "database_tool_minimal")
+    assert not any(item["code"] == "opaque_execution"
+                   for item in module.validate_sql_contract(checked, profile="database_tool_minimal"))
+
+
+def test_unapproved_minimal_execution_remains_opaque():
+    module = api()
+    source = "EXEC dbo.UnreviewedProvider;\n"
+    assert not module._approved_provider_body({"provider_kind": "metadata"}, source)
+    assert any(item["code"] == "opaque_execution"
+               for item in module.validate_sql_contract(source, profile="database_tool_minimal"))
+
+
 def test_review_distinguishes_generated_execution_from_opaque_source(release):
     sql = (release[1] / "01_部署SQL.sql").read_text(encoding="utf-8")
     assert "EXEC sys.sp_executesql N'" in sql
