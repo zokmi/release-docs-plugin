@@ -123,6 +123,19 @@ def test_database_tool_minimal_profile_allows_reviewed_identity_insert(tmp_path)
     assert artifact.path.is_file()
 
 
+def test_database_tool_minimal_profile_allows_explicit_metadata_provider_unit(tmp_path):
+    module = api()
+    source = ("IF NOT EXISTS (SELECT 1 FROM sys.extended_properties)\n"
+              "BEGIN\n"
+              "EXEC sys.sp_addextendedproperty N'MS_Description', N'Id', "
+              "N'SCHEMA', N'dbo', N'TABLE', N'T', N'COLUMN', N'Id';\nEND\n")
+    descriptor = unit("metadata", "SCHEMA", source)
+    descriptor["provider_kind"] = "metadata"
+    artifact = module.assemble_deployment_sql(
+        [descriptor], tmp_path / "01_部署SQL.sql", {"profile": "database_tool_minimal"})
+    assert artifact.path.is_file()
+
+
 def test_runtime_mode_rejects_values_other_than_zero_or_one(tmp_path):
     module, _, sql = assembled(tmp_path)
     assert "SQL_VARIANT_PROPERTY(@RawValidateOnly, 'BaseType')" in sql

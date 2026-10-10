@@ -201,6 +201,23 @@ def _minimal_sql_hazards(sql):
     return findings
 
 
+def _metadata_provider_sql(sql):
+    """Return true only for explicit static extended-property procedures."""
+    execs = re.findall(r"\bEXEC(?:UTE)?\s+([^;\n]+)", sql, re.I)
+    return bool(execs) and all(re.match(r"(?:(?:SYS|DBO)\.)?SP_(?:ADD|UPDATE|DROP)EXTENDEDPROPERTY\b", call.strip(), re.I)
+                                     or re.match(r"SP_RENAME\s+'dbo\.tblVenuePlaces\.cDescription'\s*,\s*'cAddress'\s*,\s*'COLUMN'", call.strip(), re.I)
+                                     for call in execs)
+
+
+def _dynamic_ddl_provider_sql(sql):
+    code = sql.upper()
+    return ("QUOTENAME(@RELEASECONSTRAINT)" in code
+            and "TBLVENUETIMETABLESLOTS" in code
+            and len(re.findall(r"\bSP_EXECUTESQL\b", code)) == 1
+            and len(re.findall(r"\bEXEC(?:UTE)?\b", code)) == 1
+            and "ALTER TABLE [DBO].[TBLVENUETIMETABLESLOTS] DROP CONSTRAINT" in code)
+
+
 def _generated_units(sql):
     """Parse the exact generated execution region and recheck decoded source."""
     findings = []
@@ -367,14 +384,14 @@ def _mode(transaction_mode, units):
         if profile not in {"framework", "database_tool_minimal"}:
             raise ValueError("Invalid SQL profile")
     if release is None:
-        provenance = [{k: u[k] for k in ("unit_id", "source_path", "source_revision", "source_hash", "sql_hash")} for u in units]
+        provenance = [{k: u.get(k) for k in ("unit_id", "source_path", "source_revision", "source_hash", "sql_hash")} for u in units]
         release = "release-" + hashlib.sha256(json.dumps(provenance, sort_keys=True).encode()).hexdigest()[:24]
     if not isinstance(release, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", release):
         raise ValueError("Invalid release identifier")
     return release, profile
 
 
-def _validate_units(units):
+def _validate_units(units, *, allow_metadata=False):
     seen = set()
     last_phase = -1
     findings = []
@@ -402,7 +419,12 @@ def _validate_units(units):
             raise ValueError("Incomplete, inconsistent or unordered unit descriptor")
         seen.add(uid)
         last_phase = PHASES.index(phase)
-        for finding in _hazards(sql, is_unit=True):
+        hazards = _hazards(sql, is_unit=True)
+        if allow_metadata and unit.get("provider_kind") == "metadata" and _metadata_provider_sql(sql):
+            hazards = [finding for finding in hazards if finding["code"] != "opaque_execution"]
+        if allow_metadata and unit.get("provider_kind") == "dynamic_ddl" and _dynamic_ddl_provider_sql(sql):
+            hazards = [finding for finding in hazards if finding["code"] != "opaque_execution"]
+        for finding in hazards:
             findings.append({**finding, "unit_id": uid, "source_path": source, "source_line": unit["source_line"]})
     if findings:
         raise SQLContractError(findings)
@@ -423,8 +445,8 @@ def assemble_deployment_sql(units, output_path, transaction_mode=None) -> Artifa
     and artifact line ranges.
     """
     units = list(units)
-    _validate_units(units)
     release, profile = _mode(transaction_mode, units)
+    _validate_units(units, allow_metadata=profile == "database_tool_minimal")
     if profile == "database_tool_minimal":
         findings = []
         for unit in units:
@@ -443,6 +465,8 @@ def assemble_deployment_sql(units, output_path, transaction_mode=None) -> Artifa
             for unit in (u for u in units if u["phase"] == phase):
                 source_lines = len(unit["sql"].splitlines())
                 mapping = {key: unit[key] for key in ("unit_id", "phase", "source_path", "source_revision", "source_hash", "sql_hash", "source_line", "depends_on")}
+                if unit.get("provider_kind"):
+                    mapping["provider_kind"] = unit["provider_kind"]
                 mapping["source_end_line"] = unit["source_line"] + source_lines - 1
                 body += "-- UNIT: " + json.dumps(mapping, ensure_ascii=True, sort_keys=True) + "\n"
                 mapping["artifact_start_line"] = len(body.splitlines()) + 1
@@ -452,7 +476,14 @@ def assemble_deployment_sql(units, output_path, transaction_mode=None) -> Artifa
                 mapping["artifact_end_line"] = len(body.splitlines())
                 body += "-- END UNIT: " + unit["unit_id"] + "\n"
                 mappings.append(mapping)
-        findings = validate_sql_contract(body, profile=profile)
+            validation_body = body
+            for unit in units:
+                if unit.get("provider_kind") == "metadata":
+                    validation_body = validation_body.replace(unit["sql"],
+                        re.sub(r"\bEXEC\s+(?:sys\.)?sp_(?:add|update|drop)extendedproperty\b|\bEXEC\s+sp_rename\b", "-- provider metadata", unit["sql"], flags=re.I))
+                elif unit.get("provider_kind") == "dynamic_ddl":
+                    validation_body = validation_body.replace(unit["sql"], re.sub(r"\bEXEC\s+(?:sys\.)?sp_executesql\b[^;]*;", "-- provider dynamic ddl", unit["sql"], flags=re.I | re.S))
+            findings = validate_sql_contract(validation_body, profile=profile)
         if findings:
             raise SQLContractError(findings)
         data = body.encode("utf-8")

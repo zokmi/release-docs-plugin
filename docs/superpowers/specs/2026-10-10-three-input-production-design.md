@@ -49,6 +49,12 @@ Metadata operation 若確實屬於本次 release，必須改以明確 descriptor
 
 下列 finding 對應的處置固定化：`unmapped_sql`／phase mapping 缺失先建立 execution descriptor；`opaque_execution` 先交給已驗證 provider 或維持 blocker；`batch_separator` 只能由 provider 產出無 batch 的 derived body；`unit_transaction_control` 需選定唯一 transaction owner；`raiserror_without_throw` 只能由保留錯誤碼／訊息的 repair mapping 處理；`missing_data_expectations` 必須自動產生 fixture、seed row 與四輪 before/after assertions。原始來源不具備這些條件時，lifecycle 維持 failed 或待確認，不因文件產出或單次實測轉為合格。
 
+### Provider 與 DATA 證據自動化
+
+`release_unit_generator.py` 讀取 pinned release-unit descriptor 與 repair source，逐 unit 以 SHA-256 驗證輸入，呼叫 `metadata_provider.py` 產生正式 execution body，並輸出含 `sql_hash`、provider kind、input/output hash 與 transformation provenance 的 descriptor。固定文字 metadata、常數 dynamic SQL、已審核的 constraint lookup，以及 literal cursor rows 都必須在 provider 中轉成可審核 SQL；其餘 dynamic execution 維持阻塞。
+
+`data_evidence.py` 要求五個 DATA unit 各自提供 `preserved_data`、`existing_value`、`boundary`、`missing_reference` 四輪實際結果。驗證器缺少任一 round 或 `data_checks` 為空時輸出 `blocked_missing_authoritative_evidence`，不得以推導值或空 assertion 宣稱通過。正式資料庫執行器必須把四輪結果回填後才能將狀態改為 `passed`。
+
 ## 四輪与交付
 
 同一 immutable SQL：validate_only 完整執行後 rollback；commit 從 fresh baseline／fresh session 執行並提交；rerun 沿用 commit DB 但另開 session驗證收斂；injected_failure 使用 fresh baseline，在 mutation 後／commit 前注入錯誤，驗證 rollback與停止。runner 實際回報 session/database IDs、checks、data_checks 及 preservation；adapter 不可用則部署 not_run，不能捏造通過。
