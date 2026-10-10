@@ -29,6 +29,16 @@ def classify_data_impact(unit: dict) -> str:
     if (re.search(r'\b(?:UPDATE|DELETE|MERGE|TRUNCATE)\b|\bDROP\s+TABLE\b', code)
             or re.search(r'\bALTER\s+TABLE\b[^;]*(?:\b(?:ALTER|DROP)\s+COLUMN\b|\bWITH\s+VALUES\b)', code)):
         return 'mutation'
+    for addition in re.finditer(r'\bALTER\s+TABLE\b[^;]*?\bADD\b([^;]*)', code):
+        columns = addition[1]
+        default = re.search(r'\bDEFAULT\b', columns)
+        if default:
+            # NOT NULL defaults populate existing rows without WITH VALUES.
+            # Unspecified nullability depends on session/database settings.
+            if re.search(r'\bNOT\s+NULL\b', columns):
+                return 'mutation'
+            if ',' in columns or not re.search(r'\bNULL\b', columns[:default.start()]):
+                return 'unknown'
     provider = _approved_provider_body(unit, sql)
     if re.search(r'\bEXEC(?:UTE)?\b', code):
         if not provider:
@@ -41,7 +51,7 @@ def classify_data_impact(unit: dict) -> str:
         if leader and leader[1] not in {'CREATE', 'ALTER', 'SELECT', 'IF', 'BEGIN', 'END',
                                        'ELSE', 'DECLARE', 'SET', 'THROW', 'PRINT'}:
             return 'unknown'
-    operations = list(re.finditer(r'\b(?:CREATE|ALTER|DROP)\b', code))
+    operations = list(re.finditer(r'\b(?:CREATE|ALTER|DROP(?!\s+CONSTRAINT\b))\b', code))
     for operation in operations:
         tail = code[operation.start():]
         if not re.match(r'(?:CREATE\s+(?:TABLE\b|(?:UNIQUE\s+)?(?:CLUSTERED\s+|NONCLUSTERED\s+)?INDEX\b)'
@@ -72,8 +82,8 @@ def _preservation(check, unit, impact):
         _no_existing_row_mutation(reason) or re.search(r'\bN/A\b', reason, re.I)))
 
 
-def _review(value):
-    return (isinstance(value, dict) and value.get('conclusion') in CONCLUSIONS
+def _review(value, conclusions=CONCLUSIONS):
+    return (isinstance(value, dict) and value.get('conclusion') in conclusions
             and isinstance(value.get('reason'), str) and bool(value['reason'].strip()))
 
 
@@ -106,13 +116,14 @@ def validate_semantic_review(record, source, exclusions, fingerprint_sha256):
                 for k in ('source_path', 'source_revision', 'source_hash'))
                 or item.get('conclusion') not in CONCLUSIONS
                 or not isinstance(item.get('checks'), dict) or set(item['checks']) != CHECKS
-                or not all(_review(check) for name, check in item['checks'].items() if name != 'preservation')
-                or not _preservation(item['checks']['preservation'], unit, impact)):
+                or not all(_review(check, CONCLUSIONS | {'N/A'} if name == 'preservation' else CONCLUSIONS)
+                           for name, check in item['checks'].items())):
             return [_finding()]
         conclusions.append(item['conclusion'])
         conclusions.extend('passed' if check['conclusion'] == 'N/A' else check['conclusion']
                            for check in item['checks'].values())
-        if impact == 'unknown':
+        # Preservation-specific incompleteness must not erase a trusted failure.
+        if impact == 'unknown' or not _preservation(item['checks']['preservation'], unit, impact):
             conclusions.append('pending')
     if 'failed' in conclusions:
         return [_finding(failed=True)]

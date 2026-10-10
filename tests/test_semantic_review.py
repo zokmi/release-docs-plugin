@@ -88,6 +88,84 @@ def test_mutation_preservation_cannot_claim_no_existing_row_mutation(release):
     assert result and result[0]['status'] == '待確認'
 
 
+@pytest.mark.parametrize('sql', [
+    'ALTER TABLE dbo.Customer ADD Count int NOT NULL DEFAULT 0;',
+    'ALTER TABLE dbo.Customer ADD Count int NOT NULL CONSTRAINT DF_Count DEFAULT (0);',
+    'ALTER TABLE [dbo].[Customer] ADD [Count] int CONSTRAINT [DF_Count] DEFAULT (0) NOT NULL;',
+    'ALTER TABLE dbo.Customer ADD Note int NULL, Count int NOT NULL DEFAULT 0;',
+    'ALTER TABLE dbo.Customer ADD Count int DEFAULT 0;',
+])
+def test_review_fix_default_backfill_preservation_na_cannot_pass(release, sql):
+    from semantic_review import classify_data_impact, validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    source['units'][0]['target_definition']['sql'] = sql
+    record['unit_reviews'][0]['checks']['preservation']['conclusion'] = 'N/A'
+    result = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
+    assert result and result[0]['domain'] == 'sql_correctness'
+    assert classify_data_impact(source['units'][0]) in ('mutation', 'unknown')
+
+
+@pytest.mark.parametrize('sql', [
+    'ALTER TABLE dbo.Customer ADD Note int NULL, Count int DEFAULT 0;',
+    'ALTER TABLE dbo.Customer ADD Count int DEFAULT NULL;',
+    'ALTER TABLE dbo.Customer ADD Count int CONSTRAINT DF_Count DEFAULT (NULL);',
+])
+def test_review_fix_default_expression_does_not_prove_nullable_preservation(sql):
+    assert api('semantic_review').classify_data_impact({'sql': sql}) == 'unknown'
+
+
+@pytest.mark.parametrize('failed_check, preservation_conclusion, reason', [
+    ('definition', 'passed', 'Compared pinned definition'),
+    ('definition', 'N/A', 'N/A without source explanation'),
+    ('preservation', 'failed', 'Preservation is not N/A; fixture assertions failed'),
+    ('preservation', 'failed', 'No existing row mutation; fixture assertion failed'),
+])
+@pytest.mark.parametrize('sql', ['CREATE TABLE dbo.T (Id int);', 'UPDATE dbo.T SET Id = 2;'])
+def test_review_fix_failed_preservation_and_definition_remain_blocking(
+        release, failed_check, preservation_conclusion, reason, sql):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    source['units'][0]['target_definition']['sql'] = sql
+    checks = record['unit_reviews'][0]['checks']
+    checks['preservation'] = {'conclusion': preservation_conclusion, 'reason': reason}
+    checks[failed_check]['conclusion'] = 'failed'
+    assert validate_semantic_review(record, source, exclusions, fingerprint.sha256) == [
+        {'code': 'semantic_sql_defect', 'domain': 'sql_correctness',
+         'blocking': True, 'status': '未通過'}]
+
+
+def test_review_fix_failed_definition_does_not_bypass_stale_preservation_identity(release):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    record['unit_reviews'][0]['checks']['definition']['conclusion'] = 'failed'
+    record['unit_reviews'][0]['source_hash'] = '0' * 64
+    result = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
+    assert result[0]['code'] == 'semantic_review_pending'
+    assert result[0]['blocking'] is False
+
+
+@pytest.mark.parametrize('sql', ['ALTER TABLE dbo.Customer DROP CONSTRAINT DF_Count;',
+                               'ALTER TABLE [dbo].[Customer] DROP CONSTRAINT [DF_Count];'])
+def test_review_fix_direct_drop_constraint_preservation_accepts_na(release, sql):
+    from semantic_review import classify_data_impact, validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    source['units'][0]['target_definition']['sql'] = sql
+    record['unit_reviews'][0]['checks']['preservation']['conclusion'] = 'N/A'
+    assert classify_data_impact(source['units'][0]) == 'non_mutating'
+    assert validate_semantic_review(record, source, exclusions, fingerprint.sha256) == []
+
+
+@pytest.mark.parametrize('sql, expected', [
+    ('ALTER TABLE dbo.T ADD Count int NULL CONSTRAINT DF_Count DEFAULT 0;', 'non_mutating'),
+    ('DROP CONSTRAINT DF_Count;', 'unknown'),
+    ('ALTER TABLE dbo.T DROP CONSTRAINT DF_Count; UPDATE dbo.T SET Id = 2;', 'mutation'),
+    ('ALTER TABLE dbo.T DROP CONSTRAINT DF_Count; DROP TABLE dbo.T;', 'mutation'),
+    ('ALTER TABLE dbo.T DROP CONSTRAINT DF_Count; ALTER TABLE dbo.T DROP COLUMN Id;', 'mutation'),
+])
+def test_review_fix_constraint_and_default_domain_safety(sql, expected):
+    assert api('semantic_review').classify_data_impact({'sql': sql}) == expected
+
+
 @pytest.mark.parametrize('sql', [None, 'EXEC dbo.UnknownProcedure;', 'INSERT INTO dbo.Customer VALUES (1);'])
 def test_unknown_data_impact_preservation_remains_pending(release, sql):
     from semantic_review import validate_semantic_review

@@ -51,7 +51,7 @@ execution_disabled malformed_sql_lexeme silent_catch raiserror_without_throw mis
 missing_try_catch transaction_count missing_implicit_transactions_off unconditional_transaction_start
 validate_only_rollback deploy_commit missing_throw transaction_scope error_rollback missing_error_context
 missing_transaction_action unmapped_sql invalid_exclusion_provenance
-invalid_runtime_mode sql_profile_mismatch invalid_sql_profile
+invalid_runtime_mode sql_profile_mismatch invalid_sql_profile nonessential_set_statement
 business_data_validation
 """.split())
 SQL_CORRECTNESS_CODES = REPORT_CODES - {

@@ -1,4 +1,5 @@
 """Real lifecycle, SQL, operator and Git evidence boundaries for independent review."""
+import ast
 import hashlib
 import importlib
 import importlib.util
@@ -200,6 +201,60 @@ def test_business_data_domain_is_ignored_by_report_status():
               {'code': 'business_data_validation', 'domain': 'business_data_validation',
                'blocking': True, 'status': '未通過'}]
     assert api()._report_status(result, 'sql_correctness', 'sql_content_status') == '通過'
+
+
+def sql_contract_codes():
+    """Discover the assembler's emitted codes independently of review's registry."""
+    tree = ast.parse((PLUGIN / 'skills/release-docs/scripts/assemble_deployment_sql.py').read_text(encoding='utf-8'))
+    codes = {node.args[0].value for node in ast.walk(tree)
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+             and node.func.id == '_finding' and node.args
+             and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)}
+    hazards = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_hazards')
+    tables = [node.value for node in ast.walk(hazards) if isinstance(node, ast.Assign)
+              and any(isinstance(target, ast.Name) and target.id == 'checks' for target in node.targets)]
+    tables.extend(node.args[0] for node in ast.walk(hazards) if isinstance(node, ast.Call)
+                  and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                  and node.func.value.id == 'checks' and node.func.attr == 'extend')
+    codes.update(row.elts[0].value for table in tables for row in table.elts)
+    return sorted(codes)
+
+
+@pytest.mark.parametrize('code', sql_contract_codes())
+def test_review_fix_business_domain_protects_all_sql_contract_paths(code):
+    from semantic_review import validate_semantic_review
+    module = api()
+    supplied = {'code': code, 'domain': 'business_data_validation', 'blocking': True}
+    constructed = module._finding(**supplied)
+    assert constructed['domain'] == 'sql_correctness'
+    assert constructed['blocking'] is True
+    summaries = module._summary([supplied], semantic_complete=True)
+    assert next(f['status'] for f in summaries if f['code'] == 'sql_content_status') == '未通過'
+    source_findings = module._units('', {'units': [], 'findings': [supplied]}, [], 'database_tool_minimal')
+    assert any(f['code'] == 'blocking_source_analysis' and f['blocking'] for f in source_findings)
+    record = {'schema_version': 1, 'evidence_fingerprint': 'a' * 64, 'method': 'read pinned sources',
+              'unit_reviews': [], 'conclusion': 'passed',
+              'scope_review': {'conclusion': 'passed', 'reason': 'No included units'},
+              'parameter_review': {'conclusion': 'passed', 'reason': 'No parameter changes'},
+              'unresolved': [{**supplied, 'reason': 'Unresolved SQL contract failure'}]}
+    unresolved = validate_semantic_review(record, {'units': []}, [], 'a' * 64)
+    assert any(f['code'] == 'semantic_review_pending' and f['domain'] == 'sql_correctness' for f in unresolved)
+    report_findings = [{'code': 'sql_content_status', 'status': '通過'}, supplied]
+    assert module._report_status(report_findings, 'sql_correctness', 'sql_content_status') == '未通過'
+
+
+def test_review_fix_business_domain_cannot_hide_nonessential_set_in_report(release):
+    from test_semantic_review import record_for
+    from semantic_review import write_semantic_review
+    record, _, _, fingerprint = record_for(release)
+    write_semantic_review(release[2], record)
+    result = api().validate_release_output(release[1], release[2], repo=release[0])
+    result.append({'code': 'nonessential_set_statement', 'domain': 'business_data_validation', 'blocking': True})
+    report = api().write_review_report(release[2], result, fingerprint,
+                                      repo=release[0], output_dir=release[1])
+    text = report.read_text(encoding='utf-8')
+    assert 'SQL 內容審核：未通過' in text
+    assert '- nonessential_set_statement' in text
 
 
 def test_review_uses_database_tool_minimal_lifecycle_profile(release):
