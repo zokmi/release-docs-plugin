@@ -94,6 +94,34 @@ def test_invalid_ef_primary_key_blocks_units(tmp_path, replacement):
     assert "unsupported_migration_definition" in {finding["code"] for finding in result.findings}
 
 
+@pytest.mark.parametrize("indexed_column_type", [None, "nvarchar(max)"])
+def test_guard_rejects_index_without_supported_column_type(indexed_column_type):
+    analyzer, _ = api()
+    sql = "CREATE INDEX [IX_Widgets_Code] ON [dbo].[Widgets] ([Code]);"
+    with pytest.raises(ValueError, match="index column type"):
+        analyzer._guard_ef_sql(sql, indexed_column_type=indexed_column_type)
+    assert "CREATE INDEX" in analyzer._guard_ef_sql(sql, indexed_column_type="int")
+
+
+def test_ef_index_on_nvarchar_max_blocks_units(tmp_path):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    path = root / "20260101000000_AddWidget.cs"
+    source = path.read_text(encoding="utf-8")
+    source = source.replace('Id = table.Column<int>(type: "int", nullable: false) },',
+                            'Id = table.Column<int>(type: "int", nullable: false), '
+                            'Code = table.Column<string>(type: "nvarchar(max)", nullable: true) },')
+    source = source.replace('column: "Id");', 'column: "Code");')
+    path.write_text(source, encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "unindexable string column")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert result.blocked and not result.units
+    assert "unsupported_migration_definition" in {finding["code"] for finding in result.findings}
+
+
 def test_derives_ef6_create_table_without_ignoring_column_definition(tmp_path):
     analyzer, _ = api()
     root, evidence, baseline, detection = ef_case(tmp_path, migration=False, snapshot=False)

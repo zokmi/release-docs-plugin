@@ -238,7 +238,7 @@ def _up_body(source):
     return None
 
 
-def _guard_ef_sql(sql):
+def _guard_ef_sql(sql, *, indexed_column_type=None):
     """Guard the narrow, supported EF definitions; reject unprovable shapes.
 
     Metadata queries are not executable guards. Compare actual column and key
@@ -287,6 +287,8 @@ def _guard_ef_sql(sql):
                 f"IF {incompatible}\n    THROW 51011, N'Incompatible EF table definition', 1;")
     index = re.fullmatch(r"CREATE INDEX \[(\w+)\] ON \[dbo\]\.\[(\w+)\] \(\[(\w+)\]\);", sql)
     if index:
+        if not isinstance(indexed_column_type, str) or indexed_column_type.lower() not in {"int", "bigint", "bit"}:
+            raise ValueError("Unsupported EF index column type")
         name, table_name, column = index.groups()
         obj = f"dbo.{table_name}"
         selector = f"object_id=OBJECT_ID(N'{obj}') AND name=N'{name}'"
@@ -300,8 +302,9 @@ def _guard_ef_sql(sql):
     raise ValueError("Unsupported EF definition")
 
 
-def _ef_unit(metadata, unit_id, obj, sql, line, *, depends_on=(), issues=(), exists_query, definition_query):
-    sql = _guard_ef_sql(sql)
+def _ef_unit(metadata, unit_id, obj, sql, line, *, depends_on=(), issues=(), exists_query,
+             definition_query, indexed_column_type=None):
+    sql = _guard_ef_sql(sql, indexed_column_type=indexed_column_type)
     descriptor = {"unit_id": unit_id, "phase": "SCHEMA", "complete": True,
                   "objects": [obj], "depends_on": list(depends_on), "issues": list(issues),
                   "preconditions": [{"query": definition_query, "expected": "target_definition"}],
@@ -446,7 +449,8 @@ def _analyze_ef(result, repo, evidence, baseline_text, detection):
                 col_sql = ", ".join(f"[{name}] {typ} {'NULL' if nullable == 'true' else 'NOT NULL'}" for name, typ, nullable in columns)
                 sql = f"CREATE TABLE [dbo].[{table}] ({col_sql}, CONSTRAINT [{pk.group(1)}] PRIMARY KEY ([{pk.group(2)}]));"
                 obj = f"dbo.{table}"
-                last_table = (table, f"ef.{Path(path).stem}.table")
+                last_table = (table, f"ef.{Path(path).stem}.table",
+                              {name: typ for name, typ, _ in columns})
                 result.units.append(_ef_unit(metadata, last_table[1], obj, sql, line, issues=issues,
                                              exists_query=f"SELECT OBJECT_ID(N'{obj}', N'U')",
                                              definition_query=f"SELECT name, system_type_id, is_nullable FROM sys.columns WHERE object_id = OBJECT_ID(N'{obj}')"))
@@ -460,6 +464,7 @@ def _analyze_ef(result, repo, evidence, baseline_text, detection):
                 sql = f"CREATE INDEX [{fields['name']}] ON [dbo].[{fields['table']}] ([{fields['column']}]);"
                 result.units.append(_ef_unit(metadata, f"ef.{Path(path).stem}.index", obj, sql, line,
                                              depends_on=[last_table[1]], issues=issues,
+                                             indexed_column_type=last_table[2].get(fields["column"]),
                                              exists_query=f"SELECT name FROM sys.indexes WHERE name = N'{fields['name']}' AND object_id = OBJECT_ID(N'dbo.{fields['table']}')",
                                              definition_query=f"SELECT name, column_id, key_ordinal FROM sys.index_columns WHERE object_id = OBJECT_ID(N'dbo.{fields['table']}')"))
             else:
