@@ -39,7 +39,7 @@ def _base_round(name: str, *, server: str, database: str, baseline: str,
                 fixture: str, baseline_sha256: str, fixture_sha256: str,
                 command: str | list[str], provider: str, tool: str,
                 manifest: str, manifest_sha256: str,
-                preserved_summary: dict[str, Any]) -> dict[str, Any]:
+                preserved_summary: dict[str, Any], artifact_sha256: str) -> dict[str, Any]:
     return {
         "status": "not_run", "exit_code": None, "server": server,
         "database": database, "provider_version": provider,
@@ -50,7 +50,8 @@ def _base_round(name: str, *, server: str, database: str, baseline: str,
         "fixture_usage": "", "expected_preserved_data_summary": preserved_summary,
         "command": command, "checks": [], "data_checks": [], "error_output_summary": "",
         "database_id": "", "session_id": "", "committed_state": "",
-        "round": name,
+        "round": name, "artifact_sha256": artifact_sha256,
+        "preserved_data_summary": {},
     }
 
 
@@ -115,7 +116,8 @@ def run_local_validation(
                            baseline_sha256=baseline_sha256, fixture_sha256=fixture_sha256,
                            command=command, provider=provider_version,
                            tool=tool_version, manifest=str(fixture_manifest or ""),
-                           manifest_sha256=manifest_sha256, preserved_summary=preserved_summary)
+                           manifest_sha256=manifest_sha256, preserved_summary=preserved_summary,
+                           artifact_sha256=digest)
         for name in ROUNDS
     }
     result: dict[str, Any] = {
@@ -193,6 +195,7 @@ def run_local_validation(
     committed_state = ""
     committed_database_id = ""
     seen_sessions: set[str] = set()
+    seen_checks: set[str] = set()
     fresh_databases: set[str] = set()
     for index, name in enumerate(ROUNDS):
         evidence = rounds[name]
@@ -218,7 +221,7 @@ def run_local_validation(
             if not isinstance(raw, dict):
                 raise ValueError("executor result must be an object")
             for key in ("status", "exit_code", "checks", "data_checks", "error_output_summary",
-                        "database_id", "session_id", "committed_state"):
+                        "database_id", "session_id", "committed_state", "preserved_data_summary"):
                 if key in raw:
                     evidence[key] = raw[key]
             if "provider_version" in raw:
@@ -233,6 +236,21 @@ def run_local_validation(
                 failures.append(name)
             if not isinstance(evidence["checks"], (list, dict)) or not evidence["checks"]:
                 failures.append(f"{name}:checks")
+            else:
+                checks_key = json.dumps(evidence["checks"], sort_keys=True, ensure_ascii=True)
+                if checks_key in seen_checks:
+                    evidence["status"] = "not_run"
+                    failures.append(f"{name}:distinct_checks_pending")
+                seen_checks.add(checks_key)
+            if (not isinstance(preserved_summary, dict) or not preserved_summary
+                    or evidence["preserved_data_summary"] != preserved_summary):
+                evidence["status"] = "not_run"
+                failures.append(f"{name}:preserved_data_pending")
+            for source, expected_hash in ((artifact, digest), (baseline, baseline_sha256),
+                                           (fixture, fixture_sha256), (manifest, manifest_sha256)):
+                if source is not None and _digest(source) != expected_hash:
+                    evidence["status"] = "failed"
+                    failures.append(f"{name}:input_changed")
             if not isinstance(evidence["error_output_summary"], str):
                 failures.append(f"{name}:error_output_summary")
             session_id = evidence["session_id"]

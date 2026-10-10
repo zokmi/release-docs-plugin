@@ -105,46 +105,30 @@ base v1.2.0、target v1.3.0、direct，工作區不納入。
 
 日期目錄取已確認 release 分支名稱中的有效日期，例如 `release/2026-10-08` 在 2026-10-09 產出仍使用 `2026-10-08`；輸出文件另記產出日期／時區與日期來源。分支或日期不明先確認，不改用當天或 commit 日期。
 
-SQL 必須是可直接交給 SSMS、sqlcmd 或專案指定 SQL 工具執行的完整 deployment artifact，具備可核對的異常中斷後自動補完、重複執行不重複異動、交易、錯誤回拋與資料保護設計；實際資料庫首次執行、重跑及中斷測試改為選用部署驗證，不是內容審核必要條件。缺機制列來源修正待辦並阻擋，不能私改來源 SQL。
+SQL Server 最低支援 2016。交付目錄只包含 `00_上線指引.md`、唯一人工執行的 `01_部署SQL.sql`，以及有參數異動時的 `02_參數異動.md`。SQL 依序包含 SCHEMA、REPAIR、DATA、VALIDATION，在新 SSMS connection/session 一次執行，不依賴 GO 或 sqlcmd 指令。
 
-輸出預設為 Git 根目錄 `docs/release-doc/<release分支日期YYYY-MM-DD>/00_上線指引.md`、`01_結構SQL.sql`；有資料異動時才產生非必要的 `02_資料SQL.sql`，有受控排除時才產生非必要的 `03_例外排除.json`，有參數異動時才產生非必要的 `04_參數異動.md`。SQL 檔的說明使用 SQL 註解，部署內容完整保留來源語句、批次與交易，可交給指定資料庫工具執行；缺來源腳本時列為阻擋，不產生佔位 SQL。Database Project／SqlPackage、正式 repair migration 與外部產出 artifact 可作為入口輸入，先核對來源、工具、命令、exit code、hash 與 scope 再產出文件。00 只提供檔案用途；03 是排除唯一結構化來源。混合 SQL 保持完整執行單位且只執行一次。
+未設定 `SESSION_CONTEXT(N'ReleaseDocs.ValidateOnly')` 時預設 ValidateOnly=1，完整執行並驗證後 rollback。上板人員先確認唯讀 preflight、備份與維護窗口，再在同一新 session 設定以下值並執行整份 SQL，才可 commit：
 
-必要審查僅「通過」「待確認」「未通過」，最多三輪。hash 只驗證證據未變，不替代語意審查；任何文件或來源異動令舊審查失效。敏感值整值遮罩，正式值與部署來源缺漏不可宣稱可上線。
-
-`04_參數異動.md` 逐參數列出用途與調整原因、預期型別／格式／限制、安全資料範例及實際修改位置。範例明標非正式值，與正式預計值分列；來源檔案／revision 與部署時要修改的檔案、平台欄位、環境變數或 secret 鍵分開說明，位置與正式來源不明列待確認。
-
-明確非連續 commit 清單保留選定順序及每個 direct parent，merge 必須明確選 parent、root 的 parent 為 null。生成與必要審查共用 JSON 有序清單，例如 `[{"commit":"<A>","parent":"<A-parent>"},{"commit":"<C>","parent":"<C-parent>"}]`，不把 A、C 擴為包含 B 的 range；中間相依不足列待確認。collector 仍只接受 range；清單逐對蒐集完整證據。fingerprint 解析每對 SHA、識別 source trees 及選定差異，不在清單 snapshot 虛構 range 欄位：
-
-```text
-python skills/release-docs/scripts/review_fingerprint.py --repo <repo> --documents <repo/docs/release-doc/日期> --commit-scope <JSON檔>
+```sql
+EXEC sys.sp_set_session_context @key=N'ReleaseDocs.ValidateOnly', @value=0;
 ```
 
-`--commit-scope` 與 `--base`／`--target`／`--diff-mode` 互斥；既有 range 介面保持相容。開始審查、最終保存及再次使用報告時保留同一範圍；比較來源識別時包含完整有序 `commit_scope`，任何 pair、順序、樹、差異或工作區變動都需重審。hash 相符仍不能替代語意審查。
+插件不連線或修改正式資料庫。EF6／EF Core 偵測以 pinned source revision 為依據；目前自動產製支援可核對完整定義的簡單建表、單欄 PK 與單欄非唯一索引，其他 operation 或無法證明的型別／基準會阻擋。既有物件只在定義相符時跳過，缺少時建立，不相容時 THROW，整份 release rollback 並停止。
 
-每次首次建立或立即更新／fallback 寫入前，先選定保留既有簽核的最終版本目錄，再執行唯讀 guard：
+排除意圖經完整 unit 與 dependency 分析後寫入 `.release-docs/runs/<run-id>/lifecycle_exclusion_manifest.json`。此 manifest 是唯一排除真相，指引只顯示其操作摘要；原始 SQL、source metadata、fixture、baseline、execution artifact、fingerprint、review record 與 LocalDB evidence 都留在 lifecycle 永久區。
 
-```text
-python skills/release-docs/scripts/validate_output_paths.py --repo <repo> --documents <repo/docs/release-doc/日期>
-```
+SQL 內容審核與部署驗證分開回報「通過」「待確認」「未通過」。隔離 LocalDB adapter 需四輪：fresh baseline rollback、fresh baseline commit、已提交 database 的新 session rerun、fresh baseline 注入錯誤。含 DATA 異動時必須有既有值、保留資料、NULL、重複候選、邊界與筆數的 fixture 和逐輪前後查核。每輪保存 artifact／baseline／fixture／manifest hash、版本、session/database、committed-state lineage、不同 checks 與實際保留資料摘要。缺 adapter 是未執行，缺證據是待確認，不以 fixture test double 冒充資料庫實測。
 
-拒絕越界目錄、必備成品或已存在資料 SQL 的 symlink、非一般檔案及 hard-link 別名。失敗只在對話報告，不嘗試寫 blocked 文件或報告。preflight 不建立目錄，安全的新目錄可在通過後建立；fingerprint 使用同一 guard。
-
-設定預期資料範例直接提供可解析的 JSON 程式碼區塊，即使只調整一個參數也需保留實際父層、鍵與型別，附設定 ID、修改位置及非正式值標示；表格引用區塊，不用文字描述取代。
+使用 `skills/release-docs-review/scripts/validate_release_output.py --output-dir <operator> --run-root <run>` 核對交付 allowlist、排除、SQL 契約與部署證據。exit 0 仍可能待確認；需讀取 SQL 內容與部署驗證兩個狀態並完成來源語意審查。任何來源、SQL、排除、參數或 fixture 變動都使先前 fingerprint 失效。
 
 ## 維護與 Release
 
-目前版本：`0.1.21`。本版要求 SQL 可直接由 SSMS 等工具執行，交易驗證在同一 connection/session 內以 `ValidateOnly=1` 回滾或 `ValidateOnly=0` 提交，並支援中斷後續跑與安全重複執行；索引名稱或環境定義不確定時可產生獨立 `01_索引調整.sql`；隔離資料庫實測仍是選用部署驗證。
-
-`00_上線指引.md` 是入口導覽，只說明後續檔案用途；`03_例外排除.json` 是非必要且唯一的例外排除來源，`04_參數異動.md` 是非必要的參數操作文件。分支、PR、回合併、tag、清理與人工簽核由專案部署流程處理，不放入 00、03 或 04。
-
-文件產出後可執行 `skills/release-docs/scripts/validate_release_artifacts.py --documents <release目錄>`，驗證必要／選用檔案、artifact class、例外排除 JSON schema 與參數文件結構；這項檢查不取代 SQL 語意審查或資料庫部署驗證。
-
-release 目錄是封閉輸出目錄，只允許 `00` 至 `05` 規範定義的文件；差異摘要、暫存檔、log、額外 JSON、工具原始輸出與其他資料必須保存於 artifact metadata 或 release 目錄之外。preflight 遇到未定義項目會拒絕寫入與審查。
+目前插件版本以三份 manifest 為準。此分支改採單一交易 SQL 與 lifecycle evidence；舊版 01_結構SQL／02_資料SQL／03_例外排除／04_參數異動不再是新流程的交付契約。正式執行與人工簽核由上板流程另行保存證據。
 
 需要 Python 3.11–3.13 與 Git；腳本僅用標準函式庫。CI 在 Linux／Windows 執行：
 
 ```text
-python -X utf8 -m unittest discover -s tests -v
+python -X utf8 -m pytest tests -q
 claude plugin validate .claude-plugin/plugin.json --json --strict
 claude plugin validate .claude-plugin/marketplace.json --json --strict
 ```
@@ -154,7 +138,7 @@ claude plugin validate .claude-plugin/marketplace.json --json --strict
 ```text
 git switch main
 git pull --ff-only
-python -X utf8 -m unittest discover -s tests -v
+python -X utf8 -m pytest tests -q
 git tag -a v0.1.18 -m "release-docs 0.1.18"
 git push origin v0.1.18
 ```
@@ -167,6 +151,6 @@ git push origin v0.1.18
 
 重現來源fixture需明確給定兩個尚不存在的目的地：`python -X utf8 evals/prepare_actual_fixtures.py --run-root .superpowers/actual-rerun-2026-10-09 --archive-root evals/rerun-2026-10-09`。run或archive任一存在就先拒絕、完全不寫入；新clone的 `evals/actual/` 是保留的原評估證據，不能覆用。腳本只準備來源，後續仍須agent實際生成／審查，見上述情境結果的重現步驟。
 
-## 暫存產物管理（0.1.18）
+## 暫存產物管理
 
-詳見 [產物生命週期](references/artifact-lifecycle.md)。暫存統一放在目標 repo 的 `.release-docs/runs/<run-id>/`，先確認 `/.release-docs/` 與 `/docs/release-artifacts/` 被 Git ignore 且沒有 tracked/staged 產物，才允許產製。成品保留在 docs/release-doc；05 保存精簡來源、工具、單位對照與 hash 摘要。必要審查通過及最後核對完成後，agent 必須呼叫 artifact_lifecycle.py finish 清除本次 run。失敗／中斷保留七天，下次啟動清除到期、無鎖且有 ownership manifest 的 run。既有 release-artifacts 不自動刪除，需先核對歸屬與引用。這是技能調用工具的流程，不是背景服務或 Git 伺服器端防護。
+每次產製使用不可覆寫的 `.release-docs/runs/<run-id>/` 並排除於 Git。成功交付及審查後，`finalize_lifecycle_run` 僅清除明確標記的 temporary／.tmp，保留永久 manifest、source metadata、review record 與 execution evidence。失敗或中斷保留七天，過期也只清理受控 temporary。操作目錄不可含 lifecycle JSON、原始工具日誌、暫存路徑或未宣告檔案。既有 `artifact_lifecycle.py` 屬舊版流程，不用它清除新流程的永久證據。

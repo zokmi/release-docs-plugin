@@ -1,108 +1,86 @@
 ---
 name: release-docs
-description: Use when 使用者要先確認 Git 差異範圍，再自動產出過版／上線規範文件、SQL、設定異動與執行指引，最後驗證與審核；也適用功能收尾，不用於實際部署。
+description: 當使用者要先確認 Git 差異範圍，再以舊版資料庫來源與排除意圖產製上線 SQL、參數與操作文件時使用；不執行正式部署。
 ---
 
-# 版更文件生成
+# Release Docs
 
-依 Git 與完整來源產出給上板人員使用的 SQL／Markdown 文件，再進行驗證與必要審查；審查結果在對話收尾回報，並在 05 保存清除暫存後仍可查核的精簡審查摘要。輸出文件只放執行所需資訊；完整來源追溯、產製命令與工具輸出保留在 artifact metadata／審查輸入，供審查查核，不在文件中重複展開。每個結論附可定位來源；未知寫「待確認（原因與所需證據）」。SQL 使用完整既有來源或專案工具產出的可追溯 artifact，不憑空推導、拆分或手改部署 SQL，不連正式資料庫。Redmine 只在工具可用且有指定單號時補充需求，不是必要相依；需求素材不能取代程式事實。
+## 輸入與證據
 
-## 必要流程順序
+先從已提供內容取得 repository、base／target 或明確 commit 範圍、diff mode、工作區是否納入、舊版 DB 結構來源、release 識別與排除意圖。缺少影響範圍的必要資訊時標示待確認；不得自行將 HEAD 或工作區異動視為本次 scope。
 
-1. **確認差異範圍**：確認 repo、base／target 或 commit 清單、diff 模式、解析後 SHA 與工作區納入決策，回報實際範圍。使用者已提供明確範圍時直接解析與核對，不重複要求批准；範圍不明才先詢問。
-2. **自動產生規範文件**：範圍確認後持續分析完整 diff 與前後來源，完成 SQL 執行單位分類、重複／替代關係核對、相依排序、設定來源追查及必要文件。大量檔案分批處理並記錄已讀／未讀範圍，不能以檔案數、行數或腳本數作為停止理由。缺 SQL 時依下節嘗試專案工具產生；缺外部證據只標記受影響單位，完成其餘可確定內容。
-3. **驗證與審核**：文件產出後核對來源、完整性、SQL／設定相依與安全，條件具備時執行隔離本機 SQL 驗證，再呼叫 release-docs-review。可證實的文件問題先修正再複審，最多三輪；來源 SQL 的錯誤列為開發待辦，不在文件中悄悄改寫。
-
-正式資料庫版本、基準、provider／driver 或主機設定屬部署驗證，不是 SQL 內容審核條件；缺少時只記錄為部署待辦，繼續其他 diff 分析、分類、排序、文件產出與來源審查。文件審核只判斷 SQL 來源忠實性、執行單位完整性、交易／錯誤回拋／重跑與資料保護機制。收尾分別回報文件審核與部署驗證狀態，列明受阻單位、已嘗試方法與所需證據；部署驗證未完成不改寫 SQL 審核結論。
-
-## 專案工具產生 SQL
-
-DB-first repo 有 Database.sqlproj 時，結構產製優先走 [SQL 判讀規則](../../references/sql-review-rules.md) 的 Database Project 標準流程：兩端 revision schema → 鎖定 SSDT／Database Project 工具 → base／target dacpac 或 schema compare → deployment／publish script → 受控排除 manifest → 核對 execution artifact → 01。宣告式 dbo/Tables/*.sql 不能直接當增量部署腳本，不能人工包裝 CREATE TABLE。保存 base／target SHA、schema／dacpac／script hash、DSP/provider、工具版本、遮罩命令、exit code 及來源／執行單位一對一對照。工具不可用標「待確認（缺少 Database Project 工具／schema artifact／產出證據）」，繼續其餘分析。
-
-來源 artifact 與 execution artifact 分離保存；不要求兩者 byte-for-byte 相同，也不允許以可重跑作為人工改寫理由。工具轉換與有證據的格式轉換依 SQL 判讀規則進入語意等價審核；GO／批次變更須確認編譯、交易與停止行為未變。新增 guard、交易、欄位補建、REPAIR 或錯誤處理屬語意轉換，須正式來源、工具或可追溯 repair source 支持。已證實未管理人工改寫判內容未通過；缺可判定證據判待確認。EF Sql／migration／混合單位缺安全機制時列正式來源修正或 repair migration 待辦，不在 01／02 私補。修正來源須重新確認 scope。
-
-受控排除只移除完整單位，不改寫納入單位；不可分割批次／交易須在受控 schema／產製設定表達排除並重產工具 artifact。存在排除時建立 `03_例外排除.json`，每項必須具備唯一 ID、類型、完整 units、operator_action、reason、dependency_impact、reinstatement_conditions、evidence、approval 與 review 欄位；operator_action 只能是 `skip` 或明確受控前置條件。沒有排除時不建立 03。來源、執行檔、03 或文件變動立即使舊審查失效，重新 fingerprint 與複審；外部／ignored 證據依 reference 重算 hash。
-
-完整 SQL 已存在時先核對是否適用此次範圍；缺 artifact 時先檢查專案既有 EF migration、model snapshot、Database Project 與指定 schema compare 工具，使用專案鎖定版本、provider、設定與部署慣例，自動產生可追溯腳本。EF 使用此次 base／target 對應的 migration 起訖；Database Project 使用兩端 revision 的 schema artifact。清單模式逐對產生並核對相依，不能包含未選 commit 的異動。不能把整個歷史腳本當作本次差異，不能自創 migration 或直接把 ORM／Up／Down 翻寫為 SQL。若本次刻意不上線某項功能，分開保存「來源 artifact」與「本次執行 artifact」：來源檔逐位元保留，本次執行檔可人工移除完整的受控排除單位，但不得改寫、包裝或調整任何納入單位的 SQL、交易或 guard。
-
-工具產生在隔離暫存工作副本進行，保留原工作區與既有 artifact；先確認啟動／設計階段不會連正式資料庫，採不連線正式環境的 script／build 模式。記錄來源 SHA、migration 起訖或 schema 基準、provider、工具版本、遮罩後命令、輸出 artifact 定位與內容識別、exit code 及錯誤摘要；重新核對工具輸出完整內容，將生成證據納入文件及審查。需資料庫連線的 compare 僅可對已確認的隔離本機基準進行。工具缺失、來源不足或執行失敗時明列嘗試結果與缺口，繼續其他單位；禁止以推測 SQL 或佔位語句補足。產生腳本成功不等於資料庫執行驗證成功。
-
-## 確認與蒐集
-
-1. 讀目標專案 AGENTS.md、CLAUDE.md、資料庫與部署慣例。确认目標 repo、base/target 或明確 commit 清單、diff 模式、文件識別（版本／單號）、release 分支名稱及其日期、產出當地日期／時區與工作區納入決策。已提供的不用重問。缺範圍先詢問，不猜 main；沒有單號也可用確認的版本識別。非 Git／無權讀取时要求正確目標，不任選輸出位置。
-2. 使用所在 shell 可用的 Python 與 Git，不強制 Bash。以插件內部工具取得根目錄及路徑 metadata：
-
-   ```text
-   python <此技能目录>/scripts/collect_release_evidence.py --repo "<目标或巢状目录>" --base <base> --target <target> --diff-mode <direct或merge-base>
-   ```
-
-   消費 schema_version=1、repo_root、base_sha、target_sha、diff_mode、committed_changes、working_tree_changes 的 staged/unstaged/untracked。記錄解析後 SHA，保留刪除與 rename 原路徑。工作區始終分列，標每項是否納入；不明時請使用者決定，先盤點但不混入部署步骤。
-3. metadata 不含檔案內容。完整讀實際 revision 的 SQL、migration、相關程式及設定的前後版本。已提交新增／修改取 target SHA，刪除取 base SHA；rename 对照旧路徑。`git show <SHA>:<path>` 只在安全且可遮罩的工具介面讀取，敏感內容不得出現在可留存日誌。index 用 `git show :<path>`，unstaged/untracked 讀工作區；刪除項讀 metadata 指示的舊來源。各來源明確分開，不用目前檔案代替舊 target。
-4. 明確 commit 清單逐個解析 SHA，保留原順序與每個 commit 的選定 direct parent；merge commit 必須明確選 parent，root commit 的 parent 為 null。以 JSON 有序清單保存 `[{"commit":"<revision>","parent":"<revision或null>"}, ...]`，傳給必要審查與 fingerprint 的 `--commit-scope <JSON檔>`，解析後每一對 SHA 必須一致。逐對蒐集 name/status 與完整前後來源，root 取空樹對 commit；collector 只支援 range，不對清單冒填 base/target 或將 A、C 擴為包含 B 的 range。未納入中間 commit 的相依列待確認；即使完整 source tree 有相依內容，也不將中間 commit 的異動列為此次執行範圍。
-5. 盤點全 repo 的 SQL、migration、ORM/model/schema、內嵌 SQL、設定消費處及部署流程，不限副檔名或固定目錄。零搜尋命中不是已查證的「無」；缺 ORM 对应脚本、方言、實際設定来源或部署 artifact 时列缺口。
-
-## 判讀與文件
-
-涉及資料庫時讀 [SQL 判讀規則](../../references/sql-review-rules.md)；涉及設定時讀 [設定判讀規則](../../references/config-rules.md)。入口導覽與結構 SQL 必須產出；只有確認存在資料異動、受控排除或參數異動時才分別產出 02、03、04。結構內容優先以 EF model／migration 差異或資料庫專案 schema compare／部署腳本驗證，並記錄 provider、工具版本與 artifact；只有 ORM 類別或 migration 名稱時不得自行推導 SQL。
-
-- 使用 [00_上線指引](../../assets/00_上線指引.md)、[01_結構SQL](../../assets/01_結構SQL.sql)、條件式的 [01_索引調整](../../assets/01_索引調整.sql)、選用的 [02_資料SQL](../../assets/02_資料SQL.sql)、[03_例外排除](../../assets/03_例外排除.json) 與 [04_參數異動](../../assets/04_參數異動.md)。00 只說明後續檔案用途，03 是唯一的排除結構化來源，來源、artifact、核准與追蹤資料由 03／artifact metadata 保存。
-- 每個原始 SQL／migration 執行單位分配唯一 ID；02 若存在，與 01 引用同一 ID。03 每個排除項目使用唯一 ID；04 每個參數異動使用唯一設定 ID。來源 revision／路徑／行號及實際執行證據由 artifact metadata／審查輸入保存。
-- 正式設定未知寫待填及安全來源。04 只列環境、服務、實際修改位置、完整鍵、用途、格式範例、provider 優先順序與重啟／reload 需求；來源 revision／行號、消費程式追查與部署 artifact 證據留在審查輸入。敏感值在持久化、工具輸出、diff 摘錄及文件前遮罩；不為文件開啟會把 secrets 印到日誌的原始 diff/show。
-
-- 04 必須逐設定 ID 說明預計調整的參數用途與原因、預期型別／格式／限制、安全資料範例及實際修改位置。位置包含環境、服務、檔案與完整鍵，或平台欄位／環境變數／secret 鍵。範例標「格式示例，非正式值」，與正式預計值分開，敏感值整值遮罩；未知項目寫待確認及所需證據。複雜物件／陣列補最小片段，刪除／改名列預期狀態與兩端位置，詳見設定判讀規則。來源 revision／行號與部署 artifact 由審查證據保存。
-
-04 的預期資料範例直接提供可解析的 fenced json 區塊，純量異動也適用；保留實際鍵、必要父層、陣列及型別，標明對應設定 ID、修改位置與非正式值。表格引用 JSON 區塊，不能只列文字示例；非 JSON provider 另說明實際映射位置，未知結構不編造。
-
-## 可執行 SQL 交付
-
-部署驗證是可選的部署信心檢查，不是 SQL 內容審核的必要條件。使用者或專案流程要求時，才依 [SQL 判讀規則](../../references/sql-review-rules.md) 的「可選的舊版升級部署驗證順序」執行：舊版本 DB＋測試資料 → 結構 SQL → 資料 SQL → 最終結果查核；在同一隔離 DB 依序執行並逐階段查核，失敗停止。產出 04 時列出可執行的前置／後驗證與部署驗證選用狀態；完整基準、測試資料與實測證據留在審查輸入。未要求或未執行時標「未執行」，不能宣稱已實測；實測失敗僅在直接證明 SQL 語法、交易或資料邏輯錯誤時回頭否決內容。無資料異動階段及混合單位依引用規則處理。
-
-有資料異動時產出 `02_資料SQL.sql`；沒有 seed、回填、修正、遷移或刪除等資料異動時不要建立該檔案。`01_結構SQL.sql` 必須產出。說明、標頭、來源、風險、檢查與更新紀錄一律使用 `--` SQL 註解，不能有未註解的 Markdown 表格、標題或程式碼圍欄。所有模板佔位符必須填妥或移除。部署語句放在註解之外，使用已核對的完整 execution artifact（來源複製或有完整證據的工具／受控轉換），保留方言、GO／delimiter、交易與工作階段設定；04 寫明相容引擎與執行工具。前後檢查及回復範例只作註解，避免執行成品時一併執行。
-
-可執行 SQL 的內容審核必須確認 01／02 可直接交給 SSMS、sqlcmd 或專案指定 SQL 工具執行，不依賴 ORM runtime 或上板人員手動補 SQL；同時核對異常中斷容錯及可多次重跑的設計，涵蓋結構、資料及表／欄位描述。交易驗證必須在同一 connection/session 內完成：`ValidateOnly=1` 執行完整 SQL、查核後 `ROLLBACK`，`ValidateOnly=0` 執行相同 SQL、查核後 `COMMIT`；禁止第一次保留未提交交易，再由第二次獨立執行接續 commit。每個執行單位都要能在已提交後中斷再執行、正常重複執行時收斂：已正確者跳過、缺少者補建、描述不存在新增或不符時更新，未完成項目不能因表已存在或 history 已標記而跳過。有來源依據且可證安全的結構差異才自動修正；不相容或可能損失資料時停止並報錯，不吞錯；資料不得重複新增、累加或覆寫應保留值。以來源、工具產出、語意等價、方言／批次／交易／錯誤回拋、相依順序及前後只讀查核作為必要內容證據；實際 DB 重跑不是必要條件，若未執行標記部署驗證未執行。
-
-來源缺上述機制時，先嘗試專案工具支援的可重跑產出模式並核對完整 artifact；不能解決時列來源修正待辦及阻擋。受控排除可使用人工產生的本次執行 artifact，但必須同時保存來源 artifact hash、執行 artifact hash、排除 ID、來源 revision／路徑／行號、完整物件或執行單位、排除理由、相依影響、負責人、核准／追蹤依據及逐單位差異核對；不得改寫納入單位。缺任一證據、刪除範圍跨越執行單位、或人工處理改變納入 SQL 的語意，判未通過；缺必要證據判待確認。
-
-SQL 檔若執行隔離本機資料庫或 disposable container，只把結果作為選用部署驗證證據；不得連線或執行正式資料庫。provider／driver、SQL Azure、主機版本、collation、相容性層級與部署工具不納入 SQL 內容審核，不因環境尚未提供而判 SQL 未通過。未執行實測時，透過 artifact 來源、工具輸出、schema／資料語意對照、SQL parser／lint（若可用）、交易／錯誤流程及前後只讀查核完成內容審核，並將部署驗證標為未執行。若執行部署驗證，記錄環境、命令、exit code、錯誤輸出與 schema／資料結果；lint、parser、dry-run 或只產生 script 不能冒充已完成部署驗證。部署驗證失敗只回報環境或部署待辦，除非錯誤直接證明 SQL 內容或異常機制有缺陷。
-
-混合 DDL/DML 完整內容僅放在一份 SQL，另一份以註解引用同 ID 與檔案；完整單位只執行一次。不可將不同方言／工具、互斥條件、需穿插程式或設定步驟的來源直接串接為一次執行；保留來源單位與其工具、條件及完整批次／交易範圍。刻意排除的單位不得以 SQL 內的粗粒度 IF 包住多個物件；納入單位的表、欄位、索引、約束與描述仍須各自檢查。無法在這兩份 SQL 中保持可執行完整單位時列阻擋與待確認，不交付假可執行內容。
-
-无異動時僅產註解「無異動」與盤點證據，執行為無動作。缺 SQL artifact 的 ORM／migration 先嘗試專案工具產生；仍缺 artifact 時不可將 Up/Down 翻寫為 SQL，在 SQL 註解及 04 列缺口、禁止執行，審查不得通過。含敏感值而不能安全交付亦阻擋，不能以遮罩或待填值替換語句後聲稱可執行。格式可執行不代表資料庫已測試；未連資料庫驗證不得聲稱已測試。
-
-## 輸出與必要審查
-
-00 只說明後續檔案用途；03_例外排除為選用文件，使用固定欄位保存排除單位、理由、相依、證據、核准與 review 狀態；04_參數異動為選用文件，使用固定欄位保存設定鍵、來源、套用與驗證。00／03／04 不放執行歷程或審查簽核紀錄；未知寫待確認。
-
-## 外部產物輸入與流程分層
-
-外部排除 manifest（例如 `05_5005_exclusion_manifest.json`）先保留原檔與原始 SHA-256，驗證後正規化為唯一的 `03_例外排除.json`；後續文件與審查只引用 03，不讓兩份清單各自成為排除真相。
-
-使用者已提供並完成工具產出的 schema compare／deployment script、repair migration 或 exclusion manifest 時，入口不得重新人工推導或包裝 SQL；先建立 artifact inventory，核對其來源、SHA、工具、命令、exit code、範圍與單位對照，再進入文件產出。標準流程為：
-
-1. **輸入盤點**：解析 base／target、工具產物、正式 repair source 與可選的 `03_例外排除.json`。
-2. **來源完整性**：確認產物涵蓋 Git scope，沒有範圍外異動、重複單位或排除外物件。
-3. **語意對照**：Database Project 比對 base／target schema；repair migration 比對資料條件、交易與重跑設計；排除依 03 的完整單位與相依影響核對。
-4. **文件生成**：先產生 00、01；索引名稱或環境定義不確定且有受控調整時才產生 01_索引調整；有資料異動才產生 02，有受控排除才產生 03，有參數異動才產生 04；對應情境不存在時不建立選用文件。
-5. **成品結構驗證**：文件生成後執行 `scripts/validate_release_artifacts.py --documents <release目錄>`；它只做檔案、schema、artifact class 與跨文件結構核對，不取代 SQL 語意審查或資料庫部署驗證。
-5. **必要審查**：release-docs-review 讀取 inventory、artifact 與 03，分別回報來源完整性、語意等價性、靜態執行安全性及選用部署驗證。
-
-Database Project 若 schema compare 產物只有交易包裝／訊息而沒有 CREATE、ALTER 或 DROP，應記為「schema 無差異」並保留產物 hash；不得為了讓 01 看起來有內容而人工新增 DDL。正式 repair migration 是資料來源單位，02 只引用並依序執行它，不得再內嵌相同 REPAIR。
-
-預設寫入 `<repo_root>/docs/release-doc/<release分支日期YYYY-MM-DD>/`，日期取已確認 release 分支名稱中的日期，例如 `release/2026-10-08` 使用 `2026-10-08`，亦接受分支中 YYYYMMDD，例如 release/20261012-no-5005 解析為 2026-10-12；不能改用產出當天、commit 或推測的分支建立日期。核對分支與此次 target／commit 清單的關係，驗證日期為真實日曆日期；未提供分支、名稱無日期、日期無效、有多個日期或無法確認對應時，先詢問 release 分支與日期，繼續獨立分析，暫停日期目錄寫入，不默認當天。文件標頭保留 release 識別、適用範圍、產出日期／時區；分支日期來源與工作區納入決策留在 artifact metadata／審查輸入。日期目錄不附加識別，識別記在文件標頭。若使用者明確指定其他目錄，移除識別中的 `/`、`\`、控制字元及 Windows 不合法字元，去尾端空白／句點，拒絕空值、`.`、`..`、保留裝置名；記錄原識別與安全識別的對應。寫入前解析 `docs/release-doc` 與候選目錄實際路徑，確認仍在 Git 根目錄內；symlink/junction 指向外部即停止，不僅作字串前綴比較。
-
-先讀已有文件、審查與簽核／執行紀錄。沒有紀錄可就地更新並留時間與異動摘要；已有任一紀錄或無法判定時使用下一個未占用的 `_v2`／`_v3` 目錄，保留舊文件並記取代理由。先選定最終版本目錄，再執行以下唯讀 preflight；首次建立目錄／文件前，以及每次立即更新、修正或 fallback 寫入前，都必須重跑（包含最終對話回報）：
+執行唯讀工具（SCRIPT_DIR 為此技能的 scripts 目錄）：
 
 ```text
-python <此技能目錄>/scripts/validate_output_paths.py --repo "<repo>" --documents "<最終版本目錄>"
+python SCRIPT_DIR/collect_release_evidence.py --repo PATH --base REV --target REV --diff-mode direct
 ```
 
-檢查 Git 根目錄 docs 內的實際目錄及三個必備成品，並在存在時檢查 `01_索引調整.sql`、`02_資料SQL.sql`；拒絕任何成品 symlink（即使指向 repo 內）、非一般檔案與 `st_nlink > 1` hard-link 別名。拒絕時立即停止所有該目錄寫入，只在對話交付阻擋原因；不能先寫草稿、05 待確認或覆寫 alias 後才讓 review 檢查。preflight 不建立目錄也不寫檔，通過後才建立或寫入；已有簽核紀錄的版本選擇規則仍適用。
-release 目錄是封閉輸出目錄，只允許 00、01、01_索引調整、02（存在時）、03（存在時）、04（存在時）與 05；`差異摘要.md`、暫存檔、log、額外 JSON、工具原始輸出及其他未定義資料不得寫入。artifact metadata、原始工具輸出與完整審查輸入統一放在 `<repo_root>/.release-docs/runs/<run-id>/`，禁止納入版控，依產物生命週期於成功後自動清除。preflight 發現任何未定義項目即拒絕寫入與審查。
+完成審查與交付後才呼叫 `finalize_lifecycle_run(run_root, review_status="success", delivery_status="success")`；它只清除該 run 下的暫存目錄，保留 manifest、審查報告與 execution evidence。每次新 run 建立時會先掃描並清除已到期的暫存資料。
 
-**生成後必須调用 `release-docs-review`** 進行另一輪來源與成品審查，在對話收尾分開回報「SQL 內容審核狀態」與「部署驗證狀態」。無此技能／無法審查時 SQL 內容狀態回報「待確認（未完成必要審查，缺少能力／證據）」；不能自評通過。內容審核以來源完整性、工具／artifact 追溯、語意等價、執行單位完整性、交易／錯誤機制、相依順序、前後查核及資料保護為必要證據；缺隔離資料庫實測不單獨阻擋內容。最多三輪修正複審。
+選擇 `merge-base` 時以共同祖先作為實際比較起點。讀取 JSON 的完整 SHA、Git 根目錄與 A/M/D/R 等路徑證據；將 staged、unstaged、untracked 與 committed changes 分開。工具不輸出內容，後續 source 分析必須再取得對應 revision 的來源，不可從檔名或 commit 標題猜測 SQL。
 
-SQL 內容審核狀態必須在最終文件識別計算與 05 寫入前更新；部署驗證另列，未完成時標示部署待辦，不回頭否決 SQL 內容。之後任何輸出文件或來源改動都使舊審查失效；重新審查。交付完整路徑、必要執行單位與相依、兩種狀態及未解問題；SQL 內容審核通過不代表已完成主機部署驗證、人工簽核或實際執行。
+## 產製與審查邊界
 
-## 必要產物生命週期
+先收集 Git 證據，再分析完整 execution units、保存 lifecycle 證據、組裝 SQL，最後渲染上板操作文件。以下工具負責產製；SQL 內容審核與 LocalDB／disposable runner 驗證須另行取得證據。缺少必要能力或證據時標示待確認，不得宣稱已完成審查或部署驗證。
 
-生成、獨立審查及複審都必須讀取並執行 [產物生命週期](../../references/artifact-lifecycle.md)：先設定精準 Git ignore、執行 init／check；最後在 05 保存永久摘要與 receipt，成功執行 finish 自動清除；失敗或中斷保留七天並於下次啟動清理到期 run。禁止新建 docs/release-artifacts、禁止暫存納入版控及成品依賴暫存路徑。清除後再次審查須重建證據，不能僅憑舊 snapshot 續認通過。
+完整工作流需依 Database Project／dacpac／migration／SQL 與 codebase 的實際消費，建立可追溯的 SCHEMA、REPAIR、DATA、VALIDATION execution units。不得從 ORM Up/Down 自行猜出 SQL。排除意圖須分析完整 unit 與 dependency impact，無法安全切出單位時阻擋產出。
+
+上板檔案固定為 `00_上線指引.md`、唯一人工 SQL `01_部署SQL.sql`，以及有參數異動時的 `02_參數異動.md`。source、工具輸出、完整 mapping 與排除真相 `lifecycle_exclusion_manifest.json` 保存在 `.release-docs/runs/<run-id>/`，不得交給上板人員操作、不得放入 release 目錄或版控，也不得寫入 `docs/release-artifacts`。`00` 的排除摘要由 lifecycle 真相投影，不反向改寫排除範圍。
+
+單一 release-level transaction 必須完整執行與驗證後，在 ValidateOnly=1 rollback，在 ValidateOnly=0 從 fresh baseline／fresh session 重新執行後 commit；rerun 使用已 commit 的資料庫，以 fresh session 驗證收斂，不重置 baseline。任何錯誤 rollback、THROW 並停止；不可交易 DDL 需受控分類，不能宣稱外層 transaction 可回復。不得直接連線或修改正式資料庫。
+
+分開回報 SQL 內容審核與部署驗證狀態。證據不足用「待確認」，不得以文件存在或 Git 收集成功代替 SQL／部署驗證。
+
+## 產製器串接
+
+從 scripts 目錄載入 Python 函式，依序呼叫：
+
+```python
+ef = detect_entity_framework(repo, evidence["source_scope"])
+analysis = analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, ef_detection=ef)
+# 不將排除單位交給 assembler；manifest 是排除真相。
+excluded_ids = {uid for exclusion in analysis.exclusions for uid in exclusion["unit_ids"]}
+included_units = [unit for unit in analysis.units if unit["unit_id"] not in excluded_ids]
+artifact = assemble_deployment_sql(included_units, run_root / "01_部署SQL.sql", {
+    "release_id": release_id,  # runtime_mode 為 session_context；不可傳入 validate_only
+})
+localdb_evidence = run_local_validation(
+    artifact.path, server="(localdb)\\MSSQLLocalDB", database=release_id,
+    baseline_source=str(run_root / "baseline.sql"), fixture_source=str(run_root / "fixture.sql"),
+    fixture_manifest=run_root / "fixture.json",
+    data_units=[unit for unit in included_units if unit["phase"] == "DATA"],
+    # 未提供 executor 時只記錄 not_run；真實隔離 adapter 另提供版本、command、provenance。
+)
+manifest_path = write_lifecycle_run(
+    run_root, analysis,
+    localdb_validation=localdb_evidence,
+    execution_artifact={"path": str(artifact.path), "sha256": artifact.sha256},
+    operator_contract={"parameters_applicable": bool(getattr(analysis, "parameter_changes", []))},
+)
+inventory = render_release_documents(analysis, artifact, manifest_path, output_dir)
+```
+
+遇到 blocking findings 即停止產製。`run_root` 必須是 `.release-docs/runs/<run-id>`。execution artifact、baseline 與 fixture 的不可變副本保存於 `run_root`；最終 output 另選受控目錄；不得使用 `docs/release-artifacts`。renderer 接受 `write_lifecycle_run` 回傳的 manifest Path 或其 run directory，從檔案讀取排除證據，核對 SQL SHA-256 及 included unit mapping；只逐 byte 複製已組裝 SQL，不重建或修改 SQL 語意。`OutputInventory.output_dir` 為絕對路徑，`files` 為交付檔名到 SHA-256 的 mapping，供後續 fingerprint 使用。
+
+renderer 寫入前檢查全部輸入與輸出，拒絕 traversal、symlink、junction、hardlink、未宣告的檔案／子目錄、legacy artifact 路徑與 lifecycle 目錄。既有檔案只接受完全相同內容；存在過期參數文件或內容衝突時，換新的交付目錄。不得把 lifecycle JSON、完整來源 hash、內部 dependency graph 或工具紀錄放進操作文件。
+
+## 結構與參數文件
+
+產製文件前，根據已確認的來源語意補充 `analysis.structure_changes`，每項包含 `kind`（table、column、index、fk、constraint、extended_property）、`name`、`description`、`impact`，並以必填 `unit_id` 關聯有效 included source unit。renderer 會移除排除單位的描述；缺少或未知單位的 top-level 描述會省略且標待確認，不能將其物件寫入結構異動範圍。也可在 `units[].structure_changes` 提供同格式資訊，其來源 ID 繼承包含它的 unit，只有 included units 會被讀取。列出實際異動物件、目的與影響；不得憑 SQL 關鍵字、檔名或 commit 標題猜測說明。沒有說明時 `00` 會顯示「結構異動說明待確認」，必須補齊後再交付。排除摘要只投影 lifecycle 的 issue、理由、物件範圍、保留操作與重新納入條件。
+
+有參數異動時提供 `analysis.parameter_changes` list；每項含 `environment`、`service`、完整 `key`，以及 `format_example`、`apply`、`reload`、`validation`。缺必要環境／服務／完整 key 即阻擋；操作細節缺值顯示待確認。敏感 key 或 `sensitive=True` 的格式範例固定遮罩，raw value／old_value／new_value 不輸出，且其已知機密值會從操作描述移除。一般範例中的 URL 帳密與機密 assignment 也遮罩；機密原值留在受控機密儲存。沒有參數異動時不產出 `02_參數異動.md`。
+
+`00` 包含 release/source、六類結構範圍及說明、排除摘要、備份/preflight、ValidateOnly=1 完整 rollback 後以 fresh baseline／新 session 執行 ValidateOnly=0 commit、錯誤停止、結構化錯誤欄位與部署後查核。LocalDB 預設「未執行」，SQL 內容審核預設「待確認」，兩者不互相取代。
+
+若 lifecycle metadata 有 `localdb_validation`，renderer 可讀取 `status`（not_run／failed／passed）。passed 必須有相符 `artifact_sha256` 及 `rounds`：validate_only、commit、rerun、injected_failure；每輪需 status=passed、exit_code=0 與 server、database、provider_version、tool_version、baseline_source、fixture_source、command、checks，以及必填字串 `error_output_summary`。正常成功輪可明確記錄空摘要，injected_failure 輪需非空預期錯誤摘要。注入錯誤輪的 exit_code=0 指 runner 成功驗證預期錯誤、rollback 與停止，並非 SQL 無錯誤。證據不完整或 artifact 不符只顯示「待確認」。這是讀取既有證據的介面，renderer 不執行資料庫測試。
+
+
+## Session context 與四輪證據
+
+SQL Server 2016 以上支援此契約。assembler 的 transaction_mode 只接受可選 release_id，產物 runtime_mode 為 session_context。每次在同一 connection/session 一次執行整份 SQL；預設 ValidateOnly=1 完整 rollback。正式執行前由人員在同一新 session 設定 `EXEC sys.sp_set_session_context @key=N'ReleaseDocs.ValidateOnly', @value=0;` 才允許 ValidateOnly=0 commit。禁止第一次留下未提交交易，再由第二次獨立 connection 接續 commit；不得將執行模式寫死在產製參數。不可交易 DDL 直接阻擋。
+
+DATA units 的 expected_assertions 必須在保存 lifecycle 前由已核對來源與 fixture 補齊：每項有唯一 id、case、seed_row_id，以及 validate_only／commit／rerun／injected_failure 的 expected_by_round.before／after。fixture manifest 保存 usage、seed_rows 的 unit_id／row_id／purpose、expected_preserved_data_summary；assertions 可由 manifest 或 data_units 提供，避免重複。資料來源需涵蓋既有值、保留值、NULL、重複候選、邊界、空集合與筆數。無法安全定義預期值時阻擋內容審查。
+
+runner 每輪保存 artifact_sha256、baseline_sha256、fixture_sha256、fixture_manifest_sha256、database_id、session_id、committed_state、distinct checks、data_checks 與 adapter 實際回報的 preserved_data_summary。保留資料實測摘要不可由預期摘要代填。ValidateOnly、commit、failure 使用不同 fresh baseline database；rerun 保留 commit 的 database_id／committed_state 並使用不同 session_id。fixture、baseline、manifest 與 execution artifact 需留在 lifecycle 永久區，不得放 temporary。缺 runner 時未執行；缺必要證據、相同 checks 或保留資料摘要不符時待確認。四輪隔離結果不代表正式部署成功。
+
+目前 EF 自動 guarded SQL 僅接受可完整比對定義的簡單 CreateTable（int／bigint／bit／nvarchar(max)、單欄 PK）及單欄非唯一 CreateIndex；其他欄位或 operation shape 會阻擋，須提供經核對的可追溯完整 SQL／repair source。不得將 metadata 的 skip_condition 當成 SQL 已具備重跑保護。

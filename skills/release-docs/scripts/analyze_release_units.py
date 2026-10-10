@@ -238,7 +238,63 @@ def _up_body(source):
     return None
 
 
+def _guard_ef_sql(sql):
+    """Guard the narrow, supported EF definitions; reject unprovable shapes.
+
+    Metadata queries are not executable guards. Compare actual column and key
+    definitions before accepting an existing object, then verify after creation.
+    """
+    table = re.fullmatch(r"CREATE TABLE \[dbo\]\.\[(\w+)\] \((.*), CONSTRAINT \[([\w.]+)\] PRIMARY KEY \(\[(\w+)\]\)\);", sql)
+    if table:
+        name, body, pk_name, pk_column = table.groups()
+        columns = body.split(", ")
+        expected = []
+        types = {"int": (4, 10, 0), "bigint": (8, 19, 0), "bit": (1, 1, 0),
+                 "nvarchar(max)": (-1, 0, 0)}
+        for ordinal, column in enumerate(columns, 1):
+            match = re.fullmatch(r"\[(\w+)\] ([\w()]+) (NULL|NOT NULL)", column)
+            if not match or match[2].lower() not in types:
+                raise ValueError("Unsupported EF column definition")
+            column_name, typ, nullable = match.groups()
+            length, precision, scale = types[typ.lower()]
+            base_type = typ.split("(")[0]
+            expected.append(f"({ordinal}, N'{column_name}', TYPE_ID(N'{base_type}'), {length}, {precision}, {scale}, {int(nullable == 'NULL')})")
+        obj = f"dbo.{name}"
+        expected_rows = ", ".join(expected)
+        fields = "column_id, name, user_type_id, max_length, precision, scale, is_nullable"
+        actual = f"SELECT {fields} FROM sys.columns WHERE object_id = OBJECT_ID(N'{obj}')"
+        wanted = f"SELECT * FROM (VALUES {expected_rows}) AS expected({fields})"
+        incompatible = (
+            f"EXISTS ({actual} EXCEPT {wanted}) OR EXISTS ({wanted} EXCEPT {actual})\n"
+            f" OR EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'{obj}') AND (is_identity=1 OR is_computed=1 OR default_object_id<>0 OR is_rowguidcol=1 OR is_sparse=1 OR generated_always_type<>0))\n"
+            f" OR EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'{obj}') AND collation_name IS NOT NULL AND collation_name <> CONVERT(sysname, DATABASEPROPERTYEX(DB_NAME(), N'Collation')))\n"
+            f" OR (SELECT COUNT(*) FROM sys.key_constraints WHERE parent_object_id = OBJECT_ID(N'{obj}')) <> 1\n"
+            f" OR NOT EXISTS (SELECT 1 FROM sys.key_constraints k JOIN sys.indexes i ON i.object_id=k.parent_object_id AND i.index_id=k.unique_index_id WHERE k.parent_object_id=OBJECT_ID(N'{obj}') AND k.name=N'{pk_name}' AND k.type='PK' AND i.type=1 AND i.is_unique=1 AND i.is_disabled=0)\n"
+            f" OR NOT EXISTS (SELECT 1 FROM sys.index_columns ic JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id JOIN sys.indexes i ON i.object_id=ic.object_id AND i.index_id=ic.index_id WHERE ic.object_id=OBJECT_ID(N'{obj}') AND i.is_primary_key=1 AND c.name=N'{pk_column}' AND ic.key_ordinal=1 AND ic.is_descending_key=0)\n"
+            f" OR (SELECT COUNT(*) FROM sys.index_columns ic JOIN sys.indexes i ON i.object_id=ic.object_id AND i.index_id=ic.index_id WHERE ic.object_id=OBJECT_ID(N'{obj}') AND i.is_primary_key=1) <> 1\n"
+            f" OR EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'{obj}'))\n"
+            f" OR EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'{obj}'))")
+        return (f"IF OBJECT_ID(N'{obj}') IS NOT NULL AND OBJECT_ID(N'{obj}', N'U') IS NULL\n"
+                "    THROW 51010, N'Incompatible EF object kind', 1;\n"
+                f"IF OBJECT_ID(N'{obj}', N'U') IS NULL\nBEGIN\n{sql}\nEND;\n"
+                f"IF {incompatible}\n    THROW 51011, N'Incompatible EF table definition', 1;")
+    index = re.fullmatch(r"CREATE INDEX \[(\w+)\] ON \[dbo\]\.\[(\w+)\] \(\[(\w+)\]\);", sql)
+    if index:
+        name, table_name, column = index.groups()
+        obj = f"dbo.{table_name}"
+        selector = f"object_id=OBJECT_ID(N'{obj}') AND name=N'{name}'"
+        return (f"IF OBJECT_ID(N'{obj}', N'U') IS NULL\n    THROW 51012, N'Missing EF index table', 1;\n"
+                f"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE {selector})\nBEGIN\n{sql}\nEND;\n"
+                f"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE {selector} AND type=2 AND is_unique=0 AND is_disabled=0 AND has_filter=0 AND is_hypothetical=0)\n"
+                "    THROW 51013, N'Incompatible EF index options', 1;\n"
+                f"IF (SELECT COUNT(*) FROM sys.index_columns ic JOIN sys.indexes i ON i.object_id=ic.object_id AND i.index_id=ic.index_id WHERE i.object_id=OBJECT_ID(N'{obj}') AND i.name=N'{name}' AND (ic.key_ordinal>0 OR ic.is_included_column=1)) <> 1\n"
+                f" OR NOT EXISTS (SELECT 1 FROM sys.index_columns ic JOIN sys.indexes i ON i.object_id=ic.object_id AND i.index_id=ic.index_id JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id WHERE i.object_id=OBJECT_ID(N'{obj}') AND i.name=N'{name}' AND c.name=N'{column}' AND ic.key_ordinal=1 AND ic.is_descending_key=0 AND ic.is_included_column=0)\n"
+                "    THROW 51014, N'Incompatible EF index columns', 1;")
+    raise ValueError("Unsupported EF definition")
+
+
 def _ef_unit(metadata, unit_id, obj, sql, line, *, depends_on=(), issues=(), exists_query, definition_query):
+    sql = _guard_ef_sql(sql)
     descriptor = {"unit_id": unit_id, "phase": "SCHEMA", "complete": True,
                   "objects": [obj], "depends_on": list(depends_on), "issues": list(issues),
                   "preconditions": [{"query": definition_query, "expected": "target_definition"}],
@@ -418,7 +474,10 @@ def analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, *, 
     result.source_scope = {k: evidence[k] for k in ("base_sha", "target_sha") if k in evidence}
     ef_covered = set()
     if ef_detection is not None:
-        _analyze_ef(result, repo, evidence, baseline_text, ef_detection)
+        try:
+            _analyze_ef(result, repo, evidence, baseline_text, ef_detection)
+        except ValueError:
+            _finding(result, "unsupported_migration_definition")
         if not result.blocked:
             ef_covered.update(ef_detection.migration_paths)
             ef_covered.update(p[:-3] + ".Designer.cs" for p in ef_detection.migration_paths)

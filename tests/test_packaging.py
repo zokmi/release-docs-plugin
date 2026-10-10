@@ -47,6 +47,15 @@ class PackagingTests(unittest.TestCase):
         for name in ['LICENSE', 'README.md', 'skills/release-docs/scripts/collect_release_evidence.py']:
             self.assertTrue((ROOT / name).is_file(), name)
 
+    def test_transactional_pipeline_resources_are_packaged(self):
+        for name in ('detect_entity_framework.py', 'analyze_release_units.py', 'assemble_deployment_sql.py',
+                     'run_local_validation.py', 'render_release_documents.py', 'lifecycle_store.py'):
+            self.assertTrue((ROOT / 'skills/release-docs/scripts' / name).is_file(), name)
+        for name in ('validate_release_output.py', 'review_fingerprint.py'):
+            self.assertTrue((ROOT / 'skills/release-docs-review/scripts' / name).is_file(), name)
+        for name in ('00_上線指引.md', '02_參數異動.md'):
+            self.assertTrue((ROOT / 'skills/release-docs/assets' / name).is_file(), name)
+
     def test_transaction_validation_contract_is_documented(self):
         rules = (ROOT / 'references/sql-review-rules.md').read_text(encoding='utf-8')
         skill = (ROOT / 'skills/release-docs/SKILL.md').read_text(encoding='utf-8')
