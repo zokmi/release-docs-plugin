@@ -13,6 +13,8 @@ description: Use when release-docs 已產出必要版更文件，需要必要語
 
 `lifecycle_exclusion_manifest.json` 必須從 run 讀取，是唯一排除真相；缺少或無法解析時不得假設沒有排除。完整 metadata、原始工具紀錄、fingerprint 與 `05_版更審查報告.md` 都留在 run。
 
+`00` 必查「結構異動表格說明」與「資料異動表格說明」。依產製技能的兩表契約逐列核對來源定位、前後效果、條件、保留／清除風險及查核方式；結構表含六類物件與 REPAIR 效果，資料表包含所有 phase 的持久資料異動及動態 SQL，不只 DATA units。只有執行步驟、檔名清單或物件條列視為文件缺件，不能因 validator exit 0 就宣稱文件完整。缺描述保持待確認，已確認漏列／錯列標記文件需修正；不得僅因文件缺表而捏造 SQL 缺陷或 DB 執行失敗。無異動須附實際查核範圍，excluded units 僅留排除摘要。補表後重新核對 inventory／fingerprint，過期報告不得續認通過。
+
 ## 執行順序
 
 1. 呼叫 `scripts/validate_release_output.py --repo <repo> --output-dir <operator> --run-root <run>`。工具回傳 `list[Finding]`，另有 static_sql_status；最後兩筆的 code 為 `sql_content_status` 與 `deployment_validation_status`，status 僅有 `通過`／`待確認`／`未通過`。CLI 有 blocking finding 時以 exit 1 結束；exit 0 仍可能待確認。

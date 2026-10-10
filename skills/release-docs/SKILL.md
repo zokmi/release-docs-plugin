@@ -89,6 +89,17 @@ renderer 寫入前檢查全部輸入與輸出，拒絕 traversal、symlink、jun
 
 ## 結構與參數文件
 
+### 上線指引必備的兩張異動表
+
+`00_上線指引.md` 必須分別包含「結構異動表格說明」與「資料異動表格說明」兩節，使用 Markdown 表格。執行步驟、來源檔名清單、六類物件條列或「已完成分析」不能替代表格。先分析 pinned diff、完整來源與 included units，從可核對語意取得描述，不把表格資料整份要求使用者提供。
+
+- **結構異動表格：**欄位至少為「物件／欄位」「異動類型」「異動前 → 異動後」「目的與功能影響」「資料保留／相依注意事項」「來源定位」。涵蓋新增、修改、刪除、更名的 table、column、index、FK、constraint、extended property，包含 REPAIR 的結構效果。預設值、NULL／唯一性／約束變動與刪除欄位的資料損失須明確說明；可將同用途的一組物件合併一列，但不能漏掉其影響。
+- **資料異動表格：**欄位至少為「資料對象」「操作與觸發條件」「異動前 → 預期異動後」「保留／清除範圍與風險」「部署後查核」「來源定位」。涵蓋 INSERT、UPDATE、DELETE、回填、搬移、預設資料初始化及結構修復附帶的資料效果，不只篩選 phase=DATA；核對動態 SQL 的實際語意。排除暫存表／table variable 的內部處理，除非會影響持久資料。條件式全表清空、覆寫與不可逆變換不得淡化為一般初始化；未知保留授權標待確認。描述預期效果，不把它寫成已實測結果，不輸出正式資料或機密原值。
+
+來源定位使用可供人員核對的來源路徑／行號，完整 unit mapping、revision/hash 與 dependency graph 保存在 run。兩表只列 included units 的實際異動；excluded units 放排除摘要，不混入預計執行範圍。確認沒有某類異動時仍保留該節，明確寫「本次無結構異動」或「本次無資料異動」並附已查核範圍；未完成分析不能寫無異動。
+
+缺來源描述、前後定義或資料條件時，仍列出已確認的對象及「待確認」缺口，先繼續來源分析，不能省略整節或捏造內容。交付前逐一對照 source units／`01` 與兩表，確認無漏列、無排除誤列；任何必要描述待確認均不宣稱文件完整。現有 renderer 的結構條列不滿足此格式，且尚未提供資料表格；此為產製與獨立審查必查契約，不宣稱工具已自動產出兩表。只能依已核對來源補充文件，不改 SQL bytes、不修改 lifecycle 真相；若補充影響既有 inventory／fingerprint，使用新 run 重新計算並審查，不沿用舊通過報告。
+
 產製文件前，根據已確認的來源語意補充 `analysis.structure_changes`，每項包含 `kind`（table、column、index、fk、constraint、extended_property）、`name`、`description`、`impact`，並以必填 `unit_id` 關聯有效 included source unit。renderer 會移除排除單位的描述；缺少或未知單位的 top-level 描述會省略且標待確認，不能將其物件寫入結構異動範圍。也可在 `units[].structure_changes` 提供同格式資訊，其來源 ID 繼承包含它的 unit，只有 included units 會被讀取。列出實際異動物件、目的與影響；不得憑 SQL 關鍵字、檔名或 commit 標題猜測說明。沒有說明時 `00` 會顯示「結構異動說明待確認」，必須補齊後再交付。排除摘要只投影 lifecycle 的 issue、理由、物件範圍、保留操作與重新納入條件。
 
 有參數異動時提供 `analysis.parameter_changes` list；每項含 `environment`、`service`、完整 `key`，以及 `format_example`、`apply`、`reload`、`validation`。缺必要環境／服務／完整 key 即阻擋；操作細節缺值顯示待確認。敏感 key 或 `sensitive=True` 的格式範例固定遮罩，raw value／old_value／new_value 不輸出，且其已知機密值會從操作描述移除。一般範例中的 URL 帳密與機密 assignment 也遮罩；機密原值留在受控機密儲存。沒有參數異動時不產出 `02_參數異動.md`。
