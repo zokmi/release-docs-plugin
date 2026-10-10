@@ -71,6 +71,9 @@ def collect_release_evidence(repo, base, target, diff_mode="direct"):
             raise EvidenceError("Revisions have no available merge base") from error
     diff_options = ("--no-ext-diff", "--no-textconv", "--name-status", "-z", "--find-renames")
     committed = parse_changes(git(root, "diff", *diff_options, diff_base_sha, target_sha, "--"))
+    for change in committed:
+        # Preserve the source revision metadata consumed by existing analyzers.
+        change["source_revision"] = base_sha if change["status"] == "D" else target_sha
     staged = parse_changes(git(root, "diff", *diff_options, "--cached", "--"))
     unstaged = parse_changes(git(root, "diff", *diff_options, "--"))
     untracked_paths = git(root, "ls-files", "--others", "--exclude-standard", "-z").decode(

@@ -1,6 +1,6 @@
 # release-docs
 
-依目標 Git 專案的實際證據產出必要版更文件、精簡審查摘要及對話回報。名稱 `release-docs`，版本 `0.1.21`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
+依目標 Git 專案的實際證據產出必要版更文件、精簡審查摘要及對話回報。名稱 `release-docs`，版本 `0.1.24`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
 
 ## 插件安裝
 
@@ -139,8 +139,8 @@ claude plugin validate .claude-plugin/marketplace.json --json --strict
 git switch main
 git pull --ff-only
 python -X utf8 -m pytest tests -q
-git tag -a v0.1.21 -m "release-docs 0.1.21"
-git push origin v0.1.21
+git tag -a v0.1.24 -m "release-docs 0.1.24"
+git push origin v0.1.24
 ```
 
 以上是維護者發布流程；一般使用者僅需插件管理器安裝，不需建立 tag。不要 force 覆寫 tag；版本錯誤使用新版本。Release workflow 支援推送 `v*` tag 與 workflow_dispatch 重跑既有 tag，先驗證嚴格 `vMAJOR.MINOR.PATCH`（禁止前導零與 prerelease），再 checkout。檢查三份版本、必備資源、tag commit 位於 `origin/main` 且 checkout 一致，Linux／Windows 測試通過才建立 GitHub Release。預設 contents:read，僅 release job contents:write。已有 Release 不修改；建立使用 `--verify-tag --generate-notes`。workflow 本身需在預設分支才可手動觸發；此專案已公開；GitHub Release 不等於上架到官方插件目錄，安裝來源仍是上述 Git marketplace。
@@ -154,6 +154,8 @@ git push origin v0.1.21
 ## 暫存產物管理
 
 每次產製使用不可覆寫的 `.release-docs/runs/<run-id>/` 並排除於 Git。成功交付及審查後，`finalize_lifecycle_run` 僅清除明確標記的 temporary／.tmp，保留永久 manifest、source metadata、review record 與 execution evidence。失敗或中斷保留七天，過期也只清理受控 temporary。操作目錄不可含 lifecycle JSON、原始工具日誌、暫存路徑或未宣告檔案。既有 `artifact_lifecycle.py` 屬舊版流程，不用它清除新流程的永久證據。
+
+
 
 
 
