@@ -45,6 +45,8 @@ review fingerprint／lifecycle／semantic review 必須理解衍生来源，完�
 4. execution artifact 採 `database_tool_minimal` 時，只含基礎 T-SQL、phase/unit 註解與 mapping；connection、最高權限、transaction、模式、錯誤攔截與逐 unit execution evidence 由資料庫工具負責。source unit 的非必要 `SET`、`USE`、SQLCMD directive、`GO`、權限與自有 transaction 在寫檔前阻擋；`SET IDENTITY_INSERT` 僅在有來源證據且成對出現時例外允許。
 5. 舊 wrapper 僅作 framework fallback，必須保存 fallback 原因；不能把 wrapper 內的 metadata `SET` 當成 source unit 可以任意使用 session option 的理由。
 
+Metadata operation 若確實屬於本次 release，必須改以明確 descriptor 接入，不得把任意 `EXEC` 放寬為可執行 SQL。descriptor 至少包含 `operation_id`、`provider`、`provider_version`、`object`、`action`（add/update/drop）、`arguments` 的遮罩後摘要、`source_path`／`source_line`、`input_hash`、`output_sql_hash` 與 `reversible`／`transaction_policy`。provider 只能輸出固定、可 fingerprint 的 T-SQL；缺 provider、參數無法核對或 output mapping 不一致時維持 blocker。欄位描述等 metadata 不得因 assembler 不支援而靜默刪除，必須拆成獨立受審核 phase 或保留待確認。
+
 下列 finding 對應的處置固定化：`unmapped_sql`／phase mapping 缺失先建立 execution descriptor；`opaque_execution` 先交給已驗證 provider 或維持 blocker；`batch_separator` 只能由 provider 產出無 batch 的 derived body；`unit_transaction_control` 需選定唯一 transaction owner；`raiserror_without_throw` 只能由保留錯誤碼／訊息的 repair mapping 處理；`missing_data_expectations` 必須自動產生 fixture、seed row 與四輪 before/after assertions。原始來源不具備這些條件時，lifecycle 維持 failed 或待確認，不因文件產出或單次實測轉為合格。
 
 ## 四輪与交付

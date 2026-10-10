@@ -26,7 +26,7 @@
 3. 同一來源有多個 provider/context 或 migration 分叉，不能選第一個（Task 1）。
 4. 動態 SQL／獨立 COMMIT 不因 metadata 完整就合格（Task 4）。
 5. 衍生 artifact 被覆寫、連結或換來源後舊報告失效（Task 2/5）。
-6. 既有 SSMS／sqlcmd migration 的 `GO`、內部 transaction、dynamic `EXEC`、metadata procedure 與 `RAISERROR` 不由 assembler 靜默改寫；必須由 provider 產生 `derived_artifact`，或保留 blocking finding（Task 3/4）。
+6. 既有 SSMS／sqlcmd migration 的 `GO`、內部 transaction、dynamic `EXEC`、metadata procedure 與 `RAISERROR` 不由 assembler 靜默改寫；必須由 provider 產生 `derived_artifact`，或保留 blocking finding（Task 3/4）。metadata provider 另需固定 descriptor 與 output mapping。
 
 ## 支援策略與介面共同約定
 
@@ -64,7 +64,7 @@ discovery 自動取得 source inventory／provider／chain／tool capabilities�
 
 - [ ] RED：`test_target_only_uses_formal_baseline`、`test_existing_excluded_object_preserved`、`test_tool_failure_retains_evidence`、`test_target_create_script_not_deployment`；斷言輸入 hash／工具命令及原 repo 不變。
 - [ ] 執行 adapter 測試，確認失敗。
-- [ ] 實作 build/model compare與原始 plan/script 保存；target-only 使用已授權隔離 DB物化 baseline後取模型。不能安全排除即 blocker，不刪除 SQL文字。對 `GO`、dynamic `EXEC`、metadata procedure、RAISERROR 與 unit transaction 逐項保存 finding；只有 provider 產生帶 mapping 的 derived execution body 才能接入 producer。
+- [ ] 實作 build/model compare與原始 plan/script 保存；target-only 使用已授權隔離 DB物化 baseline後取模型。不能安全排除即 blocker，不刪除 SQL文字。對 `GO`、dynamic `EXEC`、metadata procedure、RAISERROR 與 unit transaction 逐項保存 finding；只有 provider 產生帶 mapping 的 derived execution body 才能接入 producer。metadata operation 必須先通過固定 descriptor、遮罩 arguments、provider version 與 output hash 驗證。
 - [ ] 跑單元測試及實際工具整合；未安裝工具的整合測試明確 skip、不冒稱成功。成功案例須真實 SqlPackage 與 disposable DB；提交並回報實測能力。
 
 ### Task 4: 三項輸入 orchestration 與機器可讀候選
