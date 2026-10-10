@@ -1,6 +1,6 @@
 # release-docs
 
-依目標 Git 專案的實際證據產出必要版更文件、精簡審查摘要及對話回報。名稱 `release-docs`，版本 `0.1.28`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
+依目標 Git 專案的實際證據產出必要版更文件、精簡審查摘要及對話回報。名稱 `release-docs`，版本 `0.1.29`，無 MCP、資料庫連線或外部服務必要相依；Redmine 是選用需求來源。文件審查不代表已執行 SQL、正式驗證或人工簽核。
 
 ## 插件安裝
 
@@ -139,8 +139,8 @@ claude plugin validate .claude-plugin/marketplace.json --json --strict
 git switch main
 git pull --ff-only
 python -X utf8 -m pytest tests -q
-git tag -a v0.1.28 -m "release-docs 0.1.28"
-git push origin v0.1.28
+git tag -a v0.1.29 -m "release-docs 0.1.29"
+git push origin v0.1.29
 ```
 
 以上是維護者發布流程；一般使用者僅需插件管理器安裝，不需建立 tag。不要 force 覆寫 tag；版本錯誤使用新版本。Release workflow 支援推送 `v*` tag 與 workflow_dispatch 重跑既有 tag，先驗證嚴格 `vMAJOR.MINOR.PATCH`（禁止前導零與 prerelease），再 checkout。檢查三份版本、必備資源、tag commit 位於 `origin/main` 且 checkout 一致，Linux／Windows 測試通過才建立 GitHub Release。預設 contents:read，僅 release job contents:write。已有 Release 不修改；建立使用 `--verify-tag --generate-notes`。workflow 本身需在預設分支才可手動觸發；此專案已公開；GitHub Release 不等於上架到官方插件目錄，安裝來源仍是上述 Git marketplace。
@@ -166,4 +166,4 @@ git push origin v0.1.28
 
 靜態檢查另回報 `static_sql_status`；最終 SQL 內容通過需有逐 included unit 的 `semantic_review_record.json`，綁定當前內容 fingerprint。審查紀錄與報告排除於內容 fingerprint，報告另記語意紀錄 hash。舊 schema 可讀取，但缺新證據維持待確認；變動輸入或新實測使用新 run，不覆寫永久證據。
 
-本插件尚未提供真實 LocalDB adapter；預設 runner 記錄 not_run。外部 executor 的結構化回報仍是信任邊界，fixture test double 不代表資料庫實測。插件沒有自動發布或正式部署能力。\n
+本插件尚未提供真實 LocalDB adapter；預設 runner 記錄 not_run。外部 executor 的結構化回報仍是信任邊界，fixture test double 不代表資料庫實測。插件沒有自動發布或正式部署能力。
