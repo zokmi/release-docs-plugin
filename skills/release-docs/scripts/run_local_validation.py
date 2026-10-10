@@ -16,6 +16,8 @@ import sys
 from typing import Any, Callable, Sequence
 
 ROUNDS = ("validate_only", "commit", "rerun", "injected_failure")
+DATA_CASES = ("existing_value", "preserved_data", "duplicate_candidate",
+              "null_boundary", "value_boundary", "empty_set", "row_count")
 _LOCALDB = re.compile(r"^\(localdb\)(?:\\[A-Za-z0-9_.-]+)?$", re.IGNORECASE)
 
 
@@ -152,6 +154,15 @@ def run_local_validation(
         raise ValueError("baseline_source and fixture_source must be existing regular files")
     if data_units:
         unit_ids = {unit.get("unit_id") for unit in data_units if isinstance(unit, dict) and unit.get("unit_id")}
+        coverage = manifest_data.get("coverage")
+        if (not isinstance(coverage, dict) or set(coverage) != unit_ids
+                or any(not isinstance(coverage[unit_id], dict)
+                       or set(coverage[unit_id]) != set(DATA_CASES)
+                       or any(value is not True and not (isinstance(value, str) and value.strip())
+                              for value in coverage[unit_id].values())
+                       for unit_id in unit_ids)):
+            result["reason"] = "資料異動缺少完整適用分支與邊界評估；待確認"
+            return result
         seed_rows = manifest_data.get("seed_rows", [])
         valid_seed_rows = [row for row in seed_rows if isinstance(row, dict)
                            and row.get("unit_id") in unit_ids and row.get("row_id")
@@ -181,9 +192,13 @@ def run_local_validation(
                          item["expected_by_round"]["commit"]["before"] !=
                          item["expected_by_round"]["commit"]["after"]}
         relevant = {row["unit_id"] for row in valid_seed_rows}
+        covered_cases = {(item["unit_id"], item["case"]) for item in valid_assertions}
+        required_cases = {(unit_id, case) for unit_id in unit_ids for case in DATA_CASES
+                          if coverage[unit_id][case] is True}
         if (len(unit_ids) != len(data_units) or covered != unit_ids or relevant != unit_ids
                 or not preserved or {item["unit_id"] for item in preserved} != unit_ids
                 or changed_units != unit_ids or not all(consistent_rounds(item) for item in valid_assertions)
+                or not required_cases <= covered_cases
                 or not preserved_summary or not fixture_usage or not manifest_sha256):
             result["reason"] = "資料異動缺少 fixture 用途、保留資料摘要或前後預期查核；待確認"
             return result

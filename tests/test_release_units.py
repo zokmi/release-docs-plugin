@@ -68,6 +68,47 @@ def test_derives_units_from_ef_migration_operations(tmp_path):
                for u in result.units)
 
 
+@pytest.mark.parametrize("addition", [
+    'b.Property<string>("Unexpected");',
+    'modelBuilder.Entity("Unexpected", b => { b.Property<int>("Id"); b.HasKey("Id"); b.ToTable("Unexpected"); });',
+])
+def test_snapshot_extra_schema_blocks_ef_units(tmp_path, addition):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    path = root / "AppDbContextModelSnapshot.cs"
+    source = path.read_text(encoding="utf-8")
+    if addition.startswith("b.Property"):
+        source = source.replace('b.HasKey("Id");', addition + '\n            b.HasKey("Id");')
+    else:
+        source = source.replace('    }\n}', '        ' + addition + '\n    }\n}')
+    path.write_text(source, encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "snapshot contains extra schema")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert result.blocked and not result.units
+    assert "baseline_model_conflict" in {f["code"] for f in result.findings}
+
+
+@pytest.mark.parametrize("source_change", [
+    lambda source: source.replace('migrationBuilder.CreateTable(', 'AddAuditColumn();\n        migrationBuilder.CreateTable('),
+    lambda source: source.replace('migrationBuilder.CreateTable(', 'if (false)\n            migrationBuilder.CreateTable('),
+])
+def test_unprovable_ef_control_or_helper_blocks_units(tmp_path, source_change):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    path = root / "20260101000000_AddWidget.cs"
+    path.write_text(source_change(path.read_text(encoding="utf-8")), encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "unprovable Up body")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert result.blocked and not result.units
+    assert "unsupported_migration_operation" in {f["code"] for f in result.findings}
+
+
 @pytest.mark.parametrize("pk_sql", ["[Id] int NULL", "[Id] nvarchar(max) NOT NULL",
                                             "[Id] nvarchar(max) NULL"])
 def test_guard_rejects_invalid_sql_server_primary_key_definition(pk_sql):

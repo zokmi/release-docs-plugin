@@ -149,7 +149,8 @@ def _status(metadata, artifact, data_ids=()):
         if validation.get("status") == "failed":
             status = "未通過" if validation.get("artifact_sha256") == artifact.sha256 else "待確認"
         if (validation.get("status") == "passed" and validation.get("artifact_sha256") == artifact.sha256
-                and _current_evidence_hash(validation.get("fixture_source"), validation.get("fixture_sha256"))):
+                and _current_evidence_hash(validation.get("fixture_source"), validation.get("fixture_sha256"))
+                and _current_evidence_hash(validation.get("fixture_manifest"), validation.get("fixture_manifest_sha256"))):
             rounds = validation.get("rounds", {})
             assertions = validation.get("expected_assertions")
             required = set()
@@ -163,7 +164,7 @@ def _status(metadata, artifact, data_ids=()):
                     rounds = {}
             fields = ("server", "database", "provider_version", "tool_version", "baseline_source",
                       "fixture_source", "command", "checks")
-            if isinstance(rounds, dict) and all(
+            if (isinstance(rounds, dict) and all(
                     isinstance(rounds.get(name), dict) and rounds[name].get("status") == "passed"
                     and type(rounds[name].get("exit_code")) is int and rounds[name]["exit_code"] == 0
                     and isinstance(rounds[name].get("error_output_summary"), str)
@@ -173,14 +174,31 @@ def _status(metadata, artifact, data_ids=()):
                     and all(rounds[name].get(k) for k in fields)
                     and rounds[name].get("fixture_source") == validation["fixture_source"]
                     and rounds[name].get("fixture_sha256") == validation["fixture_sha256"]
+                    and rounds[name].get("fixture_manifest") == validation["fixture_manifest"]
+                    and rounds[name].get("fixture_manifest_sha256") == validation["fixture_manifest_sha256"]
+                    and rounds[name].get("artifact_sha256") == artifact.sha256
                     and _current_evidence_hash(rounds[name].get("baseline_source"), rounds[name].get("baseline_sha256"))
                     and (not required or required.issubset({(item.get("unit_id"), item.get("id"))
                          for item in (rounds[name].get("data_checks") if isinstance(rounds[name].get("data_checks"), list) else []) if isinstance(item, dict)
                          and isinstance(item.get("unit_id"), str) and isinstance(item.get("id"), str)
                          and item.get("passed") is True and "before" in item and "after" in item}))
-                    for name in ("validate_only", "commit", "rerun", "injected_failure")):
+                    for name in ("validate_only", "commit", "rerun", "injected_failure"))
+                    and _valid_round_identity(rounds)):
                 status = "通過（隔離 evidence 已記錄）"
     return "SQL 內容審核：待確認（由獨立審核結果確認）。\n\nLocalDB：" + status + "。"
+
+
+def _valid_round_identity(rounds):
+    names = ("validate_only", "commit", "rerun", "injected_failure")
+    sessions = [rounds[name].get("session_id") for name in names]
+    databases = [rounds[name].get("database_id") for name in names]
+    committed = rounds["commit"].get("committed_state")
+    return (all(isinstance(value, str) and value.strip() for value in sessions + databases)
+            and len(set(sessions)) == len(names)
+            and len({databases[0], databases[1], databases[3]}) == 3
+            and databases[2] == databases[1]
+            and isinstance(committed, str) and bool(committed.strip())
+            and rounds["rerun"].get("committed_state") == committed)
 
 
 def _current_evidence_hash(source, expected):
@@ -266,7 +284,7 @@ def render_release_documents(analysis, deployment_artifact, lifecycle_record, ou
     scope_text = ("Release：" + _text(deployment_artifact.release_id) + "\n\n來源 revision：" +
                   _text(str(scope.get("base_sha", "待確認"))[:12]) + " → " +
                   _text(str(scope.get("target_sha", "待確認"))[:12]) + "\n\n舊版結構來源：" +
-                  _text(analysis.baseline.get("source_path", "待確認")))
+                  _text(str(analysis.baseline.get("source_path", "待確認")).replace("\\", "/").rsplit("/", 1)[-1]))
     documents = {SQL: data, GUIDE: _template(GUIDE, {
         "SCOPE": scope_text, "STRUCTURE": _structure(analysis, excluded),
         "EXCLUSIONS": _exclusion_summary(exclusions),

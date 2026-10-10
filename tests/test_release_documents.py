@@ -294,18 +294,27 @@ def test_localdb_status_accepts_only_complete_current_artifact_evidence(tmp_path
     metadata = json.loads(path.read_text())
     baseline = tmp_path / "baseline.sql"
     fixture = tmp_path / "fixture.sql"
+    fixture_manifest = tmp_path / "fixture.json"
     baseline.write_text("CREATE TABLE dbo.Existing (Id int);", encoding="utf-8")
     fixture.write_text("INSERT INTO dbo.Existing VALUES (1);", encoding="utf-8")
+    fixture_manifest.write_text("{}", encoding="utf-8")
     evidence = {"status": "passed", "exit_code": 0, "server": "(localdb)\\test",
                 "database": "disposable", "provider_version": "SQL Server test",
                 "tool_version": "runner test", "baseline_source": str(baseline),
                 "baseline_sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
                 "fixture_source": str(fixture), "fixture_sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
+                "fixture_manifest": str(fixture_manifest), "fixture_manifest_sha256": hashlib.sha256(fixture_manifest.read_bytes()).hexdigest(),
+                "artifact_sha256": artifact.sha256,
                 "command": "isolated runner", "checks": ["all checks passed"],
                 "error_output_summary": ""}
+    rounds = {name: dict(evidence, database_id={"validate_only": "db-v", "commit": "db-c", "rerun": "db-c", "injected_failure": "db-f"}[name],
+                         session_id="session-" + name,
+                         committed_state="committed-handle" if name in ("commit", "rerun") else "")
+              for name in ("validate_only", "commit", "rerun", "injected_failure")}
     metadata["localdb_validation"] = {"status": "passed", "artifact_sha256": artifact.sha256,
                                      "fixture_source": str(fixture), "fixture_sha256": evidence["fixture_sha256"],
-                                     "rounds": {name: dict(evidence) for name in ("validate_only", "commit", "rerun", "injected_failure")}}
+                                     "fixture_manifest": str(fixture_manifest), "fixture_manifest_sha256": evidence["fixture_manifest_sha256"],
+                                     "rounds": rounds}
     metadata["localdb_validation"]["rounds"]["injected_failure"]["error_output_summary"] = "Expected THROW 51000, rollback and later-unit stop confirmed"
     path.write_text(json.dumps(metadata))
     module.render_release_documents(analysis, artifact, manifest, tmp_path / "complete")
@@ -314,6 +323,20 @@ def test_localdb_status_accepts_only_complete_current_artifact_evidence(tmp_path
     path.write_text(json.dumps(metadata))
     module.render_release_documents(analysis, artifact, manifest, tmp_path / "stale")
     assert "LocalDB：待確認" in (tmp_path / "stale/00_上線指引.md").read_text(encoding="utf-8")
+    valid = metadata["localdb_validation"]
+    valid["artifact_sha256"] = artifact.sha256
+    for index, (round_name, field) in enumerate((
+            (None, "fixture_manifest_sha256"), ("commit", "artifact_sha256"),
+            ("validate_only", "session_id"), ("rerun", "database_id"),
+            ("commit", "committed_state"))):
+        altered = json.loads(json.dumps(valid))
+        selected = altered if round_name is None else altered["rounds"][round_name]
+        selected.pop(field)
+        metadata["localdb_validation"] = altered
+        path.write_text(json.dumps(metadata), encoding="utf-8")
+        output = tmp_path / f"incomplete-{index}"
+        module.render_release_documents(analysis, artifact, manifest, output)
+        assert "LocalDB：待確認" in (output / "00_上線指引.md").read_text(encoding="utf-8")
 
 
 def test_guide_requires_current_fixture_and_data_checks_for_data_units(tmp_path):
@@ -321,19 +344,27 @@ def test_guide_requires_current_fixture_and_data_checks_for_data_units(tmp_path)
     analysis, artifact, manifest = inputs(tmp_path)
     baseline = tmp_path / "baseline.sql"
     fixture = tmp_path / "fixture.sql"
+    fixture_manifest = tmp_path / "fixture.json"
     baseline.write_text("CREATE TABLE dbo.Existing (Id int);", encoding="utf-8")
     fixture.write_text("INSERT INTO dbo.Existing VALUES (1);", encoding="utf-8")
+    fixture_manifest.write_text("{}", encoding="utf-8")
     path = manifest.parent / "lifecycle_metadata.json"
     metadata = json.loads(path.read_text())
     round_evidence = {"status": "passed", "exit_code": 0, "server": "(localdb)\\test", "database": "disposable",
                       "provider_version": "SQL Server test", "tool_version": "runner test",
                       "baseline_source": str(baseline), "baseline_sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
                       "fixture_source": str(fixture), "fixture_sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
+                      "fixture_manifest": str(fixture_manifest), "fixture_manifest_sha256": hashlib.sha256(fixture_manifest.read_bytes()).hexdigest(),
+                      "artifact_sha256": artifact.sha256,
                       "command": "isolated runner", "checks": ["all checks passed"], "error_output_summary": ""}
-    rounds = {name: dict(round_evidence) for name in ("validate_only", "commit", "rerun", "injected_failure")}
+    rounds = {name: dict(round_evidence, database_id={"validate_only": "db-v", "commit": "db-c", "rerun": "db-c", "injected_failure": "db-f"}[name],
+                         session_id="session-" + name,
+                         committed_state="committed-handle" if name in ("commit", "rerun") else "")
+              for name in ("validate_only", "commit", "rerun", "injected_failure")}
     rounds["injected_failure"]["error_output_summary"] = "Expected error rollback and stop"
     metadata["localdb_validation"] = {"status": "passed", "artifact_sha256": artifact.sha256,
                                       "fixture_source": str(fixture), "fixture_sha256": round_evidence["fixture_sha256"],
+                                      "fixture_manifest": str(fixture_manifest), "fixture_manifest_sha256": round_evidence["fixture_manifest_sha256"],
                                       "rounds": rounds}
     path.write_text(json.dumps(metadata), encoding="utf-8")
     module.render_release_documents(analysis, artifact, manifest, tmp_path / "current")

@@ -223,8 +223,8 @@ def _metadata(repo, revision, path, kind):
             "source_hash": hashlib.sha256(raw).hexdigest(), "kind": kind}, raw.decode("utf-8-sig")
 
 
-def _up_body(source):
-    match = re.search(r'\bvoid\s+Up\s*\([^)]*\)\s*\{', source)
+def _method_body(source, method):
+    match = re.search(r'\bvoid\s+' + method + r'\s*\([^)]*\)\s*\{', source)
     if not match:
         return None
     depth = 1
@@ -236,6 +236,44 @@ def _up_body(source):
             if depth == 0:
                 return source[match.end():position], match.end()
     return None
+
+
+def _up_body(source):
+    return _method_body(source, "Up")
+
+
+def _snapshot_schema(source):
+    """Accept only snapshot mappings whose entire model shape can be proved."""
+    extracted = _method_body(source, "BuildModel")
+    if not extracted:
+        raise ValueError("Unsupported model snapshot")
+    body, _ = extracted
+    entity = re.compile(r'modelBuilder\.Entity\(\s*"\w+"\s*,\s*(?P<var>\w+)\s*=>\s*\{(?P<body>.*?)\}\s*\)\s*;', re.S)
+    tables = {}
+    position = 0
+    for match in entity.finditer(body):
+        if body[position:match.start()].strip():
+            raise ValueError("Unsupported model snapshot")
+        var = re.escape(match.group("var"))
+        mapping = re.fullmatch(
+            r'\s*(?P<properties>(?:' + var + r'\.Property<(?:int|long|bool|string)>\(\s*"\w+"\s*\)\s*;\s*)+)'
+            + var + r'\.HasKey\(\s*"(?P<key>\w+)"\s*\)\s*;\s*'
+            + var + r'\.ToTable\(\s*"(?P<table>\w+)"\s*\)\s*;\s*',
+            match.group("body"), re.S)
+        if not mapping:
+            raise ValueError("Unsupported model snapshot")
+        properties = re.findall(var + r'\.Property<(int|long|bool|string)>\(\s*"(\w+)"\s*\)\s*;', mapping.group("properties"))
+        types = {"int": "int", "long": "bigint", "bool": "bit", "string": "nvarchar(max)"}
+        columns = tuple((name, types[kind]) for kind, name in properties)
+        table = mapping.group("table")
+        if (table in tables or len({name for name, _ in columns}) != len(columns)
+                or mapping.group("key") not in {name for name, _ in columns}):
+            raise ValueError("Unsupported model snapshot")
+        tables[table] = (columns, mapping.group("key"))
+        position = match.end()
+    if body[position:].strip() or not tables:
+        raise ValueError("Unsupported model snapshot")
+    return tables
 
 
 def _guard_ef_sql(sql, *, indexed_column_type=None):
@@ -318,6 +356,44 @@ def _ef_unit(metadata, unit_id, obj, sql, line, *, depends_on=(), issues=(), exi
     return unit
 
 
+EF_CORE_CREATE_TABLE = re.compile(
+    r'migrationBuilder\.CreateTable\(\s*name\s*:\s*"(?P<table>\w+)"\s*,\s*'
+    r'columns\s*:\s*(?P<builder>\w+)\s*=>\s*new\s*\{(?P<columns>.*?)\}\s*,\s*'
+    r'constraints\s*:\s*(?P=builder)\s*=>\s*\{\s*(?P=builder)\.PrimaryKey\('
+    r'\s*"(?P<pk_name>\w+)"\s*,\s*(?P<key_var>\w+)\s*=>\s*(?P=key_var)\.(?P<pk>\w+)\s*\)\s*;\s*\}\s*\)\s*;',
+    re.S)
+EF_CORE_CREATE_INDEX = re.compile(
+    r'migrationBuilder\.CreateIndex\(\s*name\s*:\s*"(?P<name>\w+)"\s*,\s*'
+    r'table\s*:\s*"(?P<table>\w+)"\s*,\s*column\s*:\s*"(?P<column>\w+)"\s*\)\s*;')
+EF_CORE_COLUMN = re.compile(
+    r'(?P<name>\w+)\s*=\s*(?P<builder>\w+)\.Column<(?P<kind>int|long|bool|string)>\('
+    r'\s*type\s*:\s*"(?P<type>int|bigint|bit|nvarchar\(max\))"\s*,\s*'
+    r'nullable\s*:\s*(?P<nullable>true|false)\s*\)')
+
+
+def _ef_core_columns(source, builder):
+    kind_types = {"int": "int", "long": "bigint", "bool": "bit", "string": "nvarchar(max)"}
+    columns = []
+    position = 0
+    while position < len(source):
+        position += len(source[position:]) - len(source[position:].lstrip())
+        match = EF_CORE_COLUMN.match(source, position)
+        if not match or match.group("builder") != builder or kind_types[match.group("kind")] != match.group("type"):
+            raise ValueError("Unsupported EF column definition")
+        columns.append((match.group("name"), match.group("type"), match.group("nullable")))
+        position = match.end()
+        separator = re.match(r'\s*,\s*', source[position:])
+        if separator:
+            position += separator.end()
+        elif source[position:].strip():
+            raise ValueError("Unsupported EF column definition")
+        else:
+            break
+    if not columns or len({name for name, _, _ in columns}) != len(columns):
+        raise ValueError("Unsupported EF column definition")
+    return columns
+
+
 def _analyze_ef(result, repo, evidence, baseline_text, detection):
     if detection.blocking or detection.findings or detection.provider != "SQL Server" or not detection.database_identity:
         _finding(result, "unresolved_ef_detection")
@@ -378,13 +454,24 @@ def _analyze_ef(result, repo, evidence, baseline_text, detection):
     if detection.framework == "EF Core" and not snapshot_paths:
         _finding(result, "missing_model_snapshot")
         return
-    try:
-        snapshot_text = "\n".join(_metadata(repo, target, p, "model_snapshot")[1] for p in snapshot_paths)
-    except ValueError:
-        _finding(result, "missing_model_snapshot")
-        return
+    target_schema, base_schema = {}, {}
+    if detection.framework == "EF Core":
+        try:
+            for path in sorted(snapshot_paths):
+                schema = _snapshot_schema(_metadata(repo, target, path, "model_snapshot")[1])
+                if target_schema.keys() & schema.keys():
+                    raise ValueError("Duplicate snapshot table")
+                target_schema.update(schema)
+            for path in sorted(p for p in base_paths if p.endswith("ModelSnapshot.cs")):
+                schema = _snapshot_schema(_metadata(repo, base, path, "model_snapshot")[1])
+                if base_schema.keys() & schema.keys():
+                    raise ValueError("Duplicate snapshot table")
+                base_schema.update(schema)
+        except ValueError:
+            _finding(result, "baseline_model_conflict")
+            return
     baseline_tables = set(re.findall(r"\bCREATE\s+TABLE\s+(?:\[?dbo\]?\.)?\[?(\w+)\]?", baseline_text, re.I))
-    snapshot_tables = set(re.findall(r'\.ToTable\(\s*"(\w+)"', snapshot_text))
+    migration_schema = {}
     for path in new_migrations:
         try:
             metadata, source = _metadata(repo, target, path, "migration")
@@ -410,8 +497,15 @@ def _analyze_ef(result, repo, evidence, baseline_text, detection):
                 _finding(result, "unsupported_migration_operation", path)
                 return
             table, column_body, pk = statements[0]
-            columns = re.findall(r'(\w+)\s*=\s*\w+\.(Int|String|Long|Boolean)\(\s*nullable\s*:\s*(true|false)\s*\)', column_body)
-            if not columns or len(columns) != len(re.findall(r'\w+\s*=\s*\w+\.', column_body)) or table in baseline_tables or pk not in {c[0] for c in columns}:
+            column_pattern = re.compile(r'\s*(\w+)\s*=\s*(\w+)\.(Int|String|Long|Boolean)\(\s*nullable\s*:\s*(true|false)\s*\)\s*')
+            parts = column_body.split(",")
+            matches = [column_pattern.fullmatch(part) for part in parts]
+            if (not matches or any(match is None or match.group(2) != "c" for match in matches)
+                    or len({match.group(1) for match in matches}) != len(matches)):
+                _finding(result, "unsupported_migration_operation", path)
+                return
+            columns = [(match.group(1), match.group(3), match.group(4)) for match in matches]
+            if table in baseline_tables or pk not in {c[0] for c in columns}:
                 _finding(result, "baseline_model_conflict", path)
                 return
             types = {"Int": "int", "String": "nvarchar(max)", "Long": "bigint", "Boolean": "bit"}
@@ -423,41 +517,42 @@ def _analyze_ef(result, repo, evidence, baseline_text, detection):
                                          exists_query=f"SELECT OBJECT_ID(N'{obj}', N'U')",
                                          definition_query=f"SELECT name, system_type_id, is_nullable FROM sys.columns WHERE object_id = OBJECT_ID(N'{obj}')"))
             continue
-        calls = list(re.finditer(r'\bmigrationBuilder\.(\w+)\s*\(', body))
-        if not calls:
+        if not body.strip():
             _finding(result, "unsupported_migration_operation", path)
             return
         last_table = None
-        for index, call in enumerate(calls):
-            chunk = body[call.start():calls[index + 1].start() if index + 1 < len(calls) else len(body)]
-            operation = call.group(1)
-            line = source[:body_start + call.start()].count("\n") + 1
-            if operation == "CreateTable":
-                name_match = re.search(r'\bname\s*:\s*"(\w+)"', chunk)
-                columns = re.findall(r'(\w+)\s*=\s*table\.Column<\w+>\(\s*type\s*:\s*"([\w()]+)"\s*,\s*nullable\s*:\s*(true|false)', chunk)
-                pk = re.search(r'table\.PrimaryKey\(\s*"(\w+)"\s*,\s*\w+\s*=>\s*\w+\.(\w+)', chunk)
-                if (not name_match or not columns or not pk
-                    or re.search(r'table\.PrimaryKey\(\s*"\w+"\s*,\s*\w+\s*=>\s*new\s*\{', chunk)
-                    or len(columns) != len(re.findall(r'table\.Column\s*<', chunk))
-                    or re.search(r'\b(?:schema|defaultValue|defaultValueSql|computedColumnSql|comment|collation)\s*:|\.Annotation\s*\(|table\.(?:ForeignKey|UniqueConstraint|CheckConstraint)\s*\(', chunk)):
+        position = 0
+        while position < len(body):
+            position += len(body[position:]) - len(body[position:].lstrip())
+            if position == len(body):
+                break
+            table_call = EF_CORE_CREATE_TABLE.match(body, position)
+            index_call = EF_CORE_CREATE_INDEX.match(body, position)
+            line = source[:body_start + position].count("\n") + 1
+            if table_call:
+                try:
+                    columns = _ef_core_columns(table_call.group("columns"), table_call.group("builder"))
+                except ValueError:
                     _finding(result, "unsupported_migration_operation", path)
                     return
-                table = name_match.group(1)
-                if table in baseline_tables or (detection.framework == "EF Core" and table not in snapshot_tables) or pk.group(2) not in {c[0] for c in columns}:
+                table = table_call.group("table")
+                pk = table_call.group("pk")
+                if table in baseline_tables or table in migration_schema or pk not in {c[0] for c in columns}:
                     _finding(result, "baseline_model_conflict", path)
                     return
                 col_sql = ", ".join(f"[{name}] {typ} {'NULL' if nullable == 'true' else 'NOT NULL'}" for name, typ, nullable in columns)
-                sql = f"CREATE TABLE [dbo].[{table}] ({col_sql}, CONSTRAINT [{pk.group(1)}] PRIMARY KEY ([{pk.group(2)}]));"
+                sql = f"CREATE TABLE [dbo].[{table}] ({col_sql}, CONSTRAINT [{table_call.group('pk_name')}] PRIMARY KEY ([{pk}]));"
                 obj = f"dbo.{table}"
                 last_table = (table, f"ef.{Path(path).stem}.table",
                               {name: typ for name, typ, _ in columns})
+                migration_schema[table] = (tuple((name, typ) for name, typ, _ in columns), pk)
                 result.units.append(_ef_unit(metadata, last_table[1], obj, sql, line, issues=issues,
                                              exists_query=f"SELECT OBJECT_ID(N'{obj}', N'U')",
                                              definition_query=f"SELECT name, system_type_id, is_nullable FROM sys.columns WHERE object_id = OBJECT_ID(N'{obj}')"))
-            elif operation == "CreateIndex":
-                fields = dict(re.findall(r'\b(name|table|column)\s*:\s*"(\w+)"', chunk))
-                if (set(fields) != {"name", "table", "column"} or not last_table or fields["table"] != last_table[0]
-                    or not re.fullmatch(r'\s*migrationBuilder\.CreateIndex\(\s*name\s*:\s*"\w+"\s*,\s*table\s*:\s*"\w+"\s*,\s*column\s*:\s*"\w+"\s*\)\s*;\s*', chunk)):
+                position = table_call.end()
+            elif index_call:
+                fields = index_call.groupdict()
+                if not last_table or fields["table"] != last_table[0]:
                     _finding(result, "unsupported_migration_operation", path)
                     return
                 obj = f"dbo.{fields['table']}.{fields['name']}"
@@ -467,9 +562,12 @@ def _analyze_ef(result, repo, evidence, baseline_text, detection):
                                              indexed_column_type=last_table[2].get(fields["column"]),
                                              exists_query=f"SELECT name FROM sys.indexes WHERE name = N'{fields['name']}' AND object_id = OBJECT_ID(N'dbo.{fields['table']}')",
                                              definition_query=f"SELECT name, column_id, key_ordinal FROM sys.index_columns WHERE object_id = OBJECT_ID(N'dbo.{fields['table']}')"))
+                position = index_call.end()
             else:
                 _finding(result, "unsupported_migration_operation", path)
                 return
+    if detection.framework == "EF Core" and target_schema != {**base_schema, **migration_schema}:
+        _finding(result, "baseline_model_conflict")
 
 
 def analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, *, ef_detection=None):

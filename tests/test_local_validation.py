@@ -57,6 +57,8 @@ def test_four_rounds_use_fresh_sessions_and_expected_transaction_contract(tmp_pa
     fixture = tmp_path / "test-data.sql"
     baseline.write_text("CREATE TABLE old_table (id int);", encoding="utf-8")
     fixture.write_text("INSERT INTO old_table VALUES (1);", encoding="utf-8")
+    manifest = tmp_path / "fixture.json"
+    manifest.write_text(json.dumps({"expected_preserved_data_summary": {"old_table": "id=1"}}))
     calls = []
 
     def executor(**kwargs):
@@ -64,18 +66,19 @@ def test_four_rounds_use_fresh_sessions_and_expected_transaction_contract(tmp_pa
         identity = {"validate_only": "db-v", "commit": "db-c", "rerun": "db-c", "injected_failure": "db-f"}[kwargs["round_name"]]
         if kwargs["round_name"] == "injected_failure":
             return {"exit_code": 0, "status": "passed", "database_id": identity,
-                    "session_id": "session-f", "checks": [
+                    "session_id": "session-f", "preserved_data_summary": {"old_table": "id=1"}, "checks": [
                 "expected THROW observed", "rollback confirmed", "later units did not execute"
             ], "error_output_summary": "Expected SQL error 51000; rollback and stop confirmed"}
         return {"exit_code": 0, "status": "passed", "database_id": identity,
                 "session_id": "session-" + kwargs["round_name"],
+                "preserved_data_summary": {"old_table": "id=1"},
                 "committed_state": "commit-db-1" if kwargs["round_name"] == "commit" else kwargs["committed_state"], "checks": [
-            "fresh baseline", "new session", "transaction checks passed"
+            kwargs["round_name"] + " transaction checked", "new session"
         ], "error_output_summary": ""}
 
     result = module.run_local_validation(
         artifact, server="(localdb)\\MSSQLLocalDB", database="release_test",
-        baseline_source=str(baseline), fixture_source=str(fixture),
+        baseline_source=str(baseline), fixture_source=str(fixture), fixture_manifest=manifest,
         executor=executor, command=["sqlcmd", "-S", "(localdb)\\MSSQLLocalDB"],
         adapter_provenance="fake-disposable-adapter/1",
         provider_version="sqlcmd-localdb/1", tool_version="mssql/1",
@@ -170,6 +173,13 @@ def _data_case(tmp_path, *, manifest=True):
     expectations = tmp_path / "fixture.json"
     expectations.write_text(json.dumps({
         "usage": "existing and preserved customer rows",
+        "coverage": {"customer-data": {
+            "existing_value": True, "preserved_data": True,
+            "duplicate_candidate": True, "null_boundary": True,
+            "value_boundary": "No value range predicate in this update",
+            "empty_set": "No set aggregation or insert selection",
+            "row_count": "Single row selected by primary key; counts covered by existing_value",
+        }},
         "expected_preserved_data_summary": {"dbo.Customer": "Id=2, Flag=0"},
         "seed_rows": [
             {"unit_id": "customer-data", "row_id": "Customer/1", "purpose": "existing_value"},
@@ -210,14 +220,14 @@ def _data_executor(**kwargs):
                "before": before, "after": after}
               for key, (before, after) in values.items()]
     identity = {"validate_only": "db-v", "commit": "db-c", "rerun": "db-c", "injected_failure": "db-f"}[kwargs["round_name"]]
-    round_evidence = {"database_id": identity, "session_id": "session-" + kwargs["round_name"],
+    round_evidence = {"preserved_data_summary": {"dbo.Customer": "Id=2, Flag=0"}, "database_id": identity, "session_id": "session-" + kwargs["round_name"],
                       "committed_state": "committed-db-handle" if kwargs["round_name"] == "commit"
                       else kwargs["committed_state"] if kwargs["round_name"] == "rerun" else ""}
     if kwargs["round_name"] == "injected_failure":
         return {"status": "passed", "exit_code": 0, "checks": ["expected error", "rollback", "THROW", "later units did not execute"],
                 "data_checks": checks, **round_evidence, "error_output_summary": "Expected error; rollback; THROW; later units did not execute"}
     return {"status": "passed", "exit_code": 0, **round_evidence,
-            "checks": ["schema", "row count", "preserved data", "excluded scope", "unit result"],
+            "checks": [kwargs["round_name"], "schema", "row count", "preserved data", "excluded scope", "unit result"],
             "data_checks": checks, "error_output_summary": ""}
 
 
@@ -233,6 +243,43 @@ def test_data_fixture_covers_existing_and_preserved_rows(tmp_path):
     assert result["fixture_manifest_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
     assert result["expected_preserved_data_summary"] == {"dbo.Customer": "Id=2, Flag=0"}
     assert all(len(row["data_checks"]) == 4 for row in result["rounds"].values())
+
+
+@pytest.mark.parametrize("mutation", ["missing_coverage", "missing_applicable_case"])
+def test_data_coverage_requires_explicit_applicability_and_assertions(tmp_path, mutation):
+    artifact, baseline, fixture, manifest = _data_case(tmp_path)
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    if mutation == "missing_coverage":
+        del data["coverage"]["customer-data"]["empty_set"]
+    else:
+        data["coverage"]["customer-data"]["value_boundary"] = True
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    result = module.run_local_validation(
+        artifact, server="(localdb)\\MSSQLLocalDB", database="test",
+        baseline_source=str(baseline), fixture_source=str(fixture), fixture_manifest=manifest,
+        data_units=[{"unit_id": "customer-data"}], executor=_data_executor,
+        adapter_provenance="fixture/1", provider_version="sql/1", tool_version="tool/1")
+    assert result["status"] != "passed"
+
+
+@pytest.mark.parametrize("changed_input", ["artifact", "baseline", "fixture", "manifest"])
+def test_adapter_cannot_pass_after_mutating_validation_inputs(tmp_path, changed_input):
+    artifact, baseline, fixture, manifest = _data_case(tmp_path)
+    inputs = dict(artifact=artifact, baseline=baseline, fixture=fixture, manifest=manifest)
+
+    def executor(**kwargs):
+        if kwargs["round_name"] == "commit":
+            with inputs[changed_input].open("a", encoding="utf-8") as stream:
+                stream.write("\n ")
+        return _data_executor(**kwargs)
+
+    result = module.run_local_validation(
+        artifact, server="(localdb)\\MSSQLLocalDB", database="test",
+        baseline_source=str(baseline), fixture_source=str(fixture), fixture_manifest=manifest,
+        data_units=[{"unit_id": "customer-data"}], executor=executor,
+        adapter_provenance="fixture/1", provider_version="sql/1", tool_version="tool/1")
+    assert result["status"] == "failed"
+    assert "commit:input_changed" in result["reason"]
 
 
 def test_data_unit_without_expected_assertions_is_pending(tmp_path):
