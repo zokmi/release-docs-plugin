@@ -219,6 +219,32 @@ def test_preservation_failure_dominance_requires_all_current_identities(release)
              'blocking': False, 'status': '待確認'}]
 
 
+@pytest.mark.parametrize('review_name', ['scope_review', 'parameter_review'])
+@pytest.mark.parametrize('failed_location', ['record', 'unit', 'definition', 'preservation'])
+def test_failed_semantic_conclusion_requires_well_formed_top_level_reviews(
+        release, review_name, failed_location):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    target = (record if failed_location == 'record' else record['unit_reviews'][0]
+              if failed_location == 'unit' else record['unit_reviews'][0]['checks'][failed_location])
+    target['conclusion'] = 'failed'
+    for damage in ('missing', None, {}, 'not a review',
+                   {'conclusion': 'passed'},
+                   {'conclusion': 'passed', 'reason': ''},
+                   {'conclusion': 'passed', 'reason': '   '},
+                   {'conclusion': 'passed', 'reason': []},
+                   {'conclusion': '', 'reason': 'Compared source'},
+                   {'conclusion': [], 'reason': 'Compared source'}):
+        damaged = copy.deepcopy(record)
+        if damage == 'missing':
+            del damaged[review_name]
+        else:
+            damaged[review_name] = damage
+        assert validate_semantic_review(damaged, source, exclusions, fingerprint.sha256) == [
+            {'code': 'semantic_review_pending', 'domain': 'sql_correctness',
+             'blocking': False, 'status': '待確認'}]
+
+
 def test_malformed_preservation_without_trusted_failure_remains_pending(release):
     from semantic_review import validate_semantic_review
     record, source, exclusions, fingerprint = record_for(release)

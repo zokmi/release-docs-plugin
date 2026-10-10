@@ -96,6 +96,9 @@ def validate_semantic_review(record, source, exclusions, fingerprint_sha256):
             or not isinstance(record.get('conclusion'), str) or record['conclusion'] not in CONCLUSIONS
             or not isinstance(record.get('unresolved'), list)):
         return [_finding()]
+    # Top-level review structure is a trust gate, not unit-check incompleteness.
+    if not _review(record.get('scope_review')) or not _review(record.get('parameter_review')):
+        return [_finding()]
     units = source.get('units')
     reviews = record.get('unit_reviews')
     if not isinstance(units, list) or not isinstance(reviews, list):
