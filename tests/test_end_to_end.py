@@ -57,11 +57,17 @@ def test_collection_to_review_preserves_allowlist_and_localdb_evidence(tmp_path)
     artifact = assemble_deployment_sql(analysis.units, sql_path, {"release_id": "e2e"})
 
     def executor(**kwargs):
+        identity = {"validate_only": "db-v", "commit": "db-c", "rerun": "db-c", "injected_failure": "db-f"}[kwargs["round_name"]]
+        state = ("e2e-committed-db" if kwargs["round_name"] == "commit" else
+                 kwargs["committed_state"] if kwargs["round_name"] == "rerun" else "")
         if kwargs["round_name"] == "injected_failure":
-            return {"status": "passed", "exit_code": 0,
+            return {"status": "passed", "exit_code": 0, "database_id": identity,
+                    "session_id": "session-failure",
                     "checks": ["expected error", "rollback", "THROW", "later units did not execute"],
                     "error_output_summary": "Expected error; rollback; THROW; later units did not execute"}
         return {"status": "passed", "exit_code": 0,
+                "committed_state": state, "database_id": identity,
+                "session_id": "session-" + kwargs["round_name"],
                 "checks": ["fresh baseline", "fresh session", "checks passed"],
                 "error_output_summary": ""}
 

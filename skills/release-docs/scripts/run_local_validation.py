@@ -23,6 +23,18 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _source_path(value: str | os.PathLike[str] | None, label: str) -> Path | None:
+    if not value:
+        return None
+    original = Path(value).absolute()
+    if any(part.is_symlink() or (part.exists() and part.is_junction())
+           for part in (original, *original.parents)):
+        raise ValueError(f"{label} must be a regular, non-linked file")
+    if original.is_file() and os.stat(original).st_nlink != 1:
+        raise ValueError(f"{label} must be a regular, non-linked file")
+    return original if original.is_file() else None
+
+
 def _base_round(name: str, *, server: str, database: str, baseline: str,
                 fixture: str, baseline_sha256: str, fixture_sha256: str,
                 command: str | list[str], provider: str, tool: str,
@@ -37,6 +49,7 @@ def _base_round(name: str, *, server: str, database: str, baseline: str,
         "fixture_manifest": manifest, "fixture_manifest_sha256": manifest_sha256,
         "fixture_usage": "", "expected_preserved_data_summary": preserved_summary,
         "command": command, "checks": [], "data_checks": [], "error_output_summary": "",
+        "database_id": "", "session_id": "", "committed_state": "",
         "round": name,
     }
 
@@ -58,24 +71,24 @@ def run_local_validation(
     """Run four isolated checks or return explicit ``not_run`` evidence.
 
     ``executor`` is an injected disposable LocalDB adapter. Every invocation is
-    marked as a fresh session and gets a distinct baseline token. The adapter
+    marked as a fresh session; the adapter reports database/session identity. It
     must report checks and an error summary; it never receives production
     credentials or a production server because the server is checked here.
     """
-    artifact = Path(artifact_path).resolve()
-    if not artifact.is_file() or artifact.is_symlink():
+    artifact = _source_path(artifact_path, "Deployment artifact")
+    if artifact is None:
         raise ValueError("Deployment artifact must be a regular file")
     if not isinstance(server, str) or not _LOCALDB.fullmatch(server):
         raise ValueError("LocalDB validation requires a (localdb) server; production is forbidden")
     if not isinstance(database, str) or not database.strip():
         raise ValueError("Disposable LocalDB database is required")
     digest = _digest(artifact)
-    baseline = Path(baseline_source).resolve() if baseline_source else None
-    fixture = Path(fixture_source).resolve() if fixture_source else None
-    manifest = Path(fixture_manifest).resolve() if fixture_manifest else None
-    baseline_sha256 = _digest(baseline) if baseline and baseline.is_file() and not baseline.is_symlink() else ""
-    fixture_sha256 = _digest(fixture) if fixture and fixture.is_file() and not fixture.is_symlink() else ""
-    manifest_sha256 = _digest(manifest) if manifest and manifest.is_file() and not manifest.is_symlink() else ""
+    baseline = _source_path(baseline_source, "baseline_source")
+    fixture = _source_path(fixture_source, "fixture_source")
+    manifest = _source_path(fixture_manifest, "fixture_manifest")
+    baseline_sha256 = _digest(baseline) if baseline else ""
+    fixture_sha256 = _digest(fixture) if fixture else ""
+    manifest_sha256 = _digest(manifest) if manifest else ""
     manifest_data: dict[str, Any] = {}
     if manifest_sha256:
         try:
@@ -116,6 +129,7 @@ def run_local_validation(
         "fixture_usage": fixture_usage,
         "expected_preserved_data_summary": preserved_summary,
         "expected_assertions": expected_assertions,
+        "fixture_seed_rows": manifest_data.get("seed_rows", []),
         "rounds": rounds,
     }
     if executor is None:
@@ -136,13 +150,39 @@ def run_local_validation(
         raise ValueError("baseline_source and fixture_source must be existing regular files")
     if data_units:
         unit_ids = {unit.get("unit_id") for unit in data_units if isinstance(unit, dict) and unit.get("unit_id")}
+        seed_rows = manifest_data.get("seed_rows", [])
+        valid_seed_rows = [row for row in seed_rows if isinstance(row, dict)
+                           and row.get("unit_id") in unit_ids and row.get("row_id")
+                           and row.get("purpose")] if isinstance(seed_rows, list) else []
+        seed_purposes = {(row["unit_id"], row["row_id"]): row["purpose"] for row in valid_seed_rows}
         valid_assertions = [item for item in expected_assertions
                             if isinstance(item, dict) and item.get("unit_id") in unit_ids
                             and item.get("id") and item.get("case")
-                            and "before" in item and "after" in item]
+                            and seed_purposes.get((item["unit_id"], item.get("seed_row_id"))) == item["case"]
+                            and isinstance(item.get("expected_by_round"), dict)
+                            and all(isinstance(item["expected_by_round"].get(round_name), dict)
+                                    and set(item["expected_by_round"][round_name]) == {"before", "after"}
+                                    for round_name in ROUNDS)]
         covered = {item["unit_id"] for item in valid_assertions}
-        if (len(unit_ids) != len(data_units) or covered != unit_ids or not preserved_summary
-                or not fixture_usage or (fixture_manifest and not manifest_sha256)):
+        def consistent_rounds(item: dict[str, Any]) -> bool:
+            expected = item["expected_by_round"]
+            before = expected["commit"]["before"]
+            after = expected["commit"]["after"]
+            return (expected["validate_only"] == {"before": before, "after": before}
+                    and expected["rerun"] == {"before": after, "after": after}
+                    and expected["injected_failure"] == {"before": before, "after": before})
+        preserved = [item for item in valid_assertions if item["case"] == "preserved_data"
+                     and item["expected_by_round"]["commit"]["before"] ==
+                     item["expected_by_round"]["commit"]["after"]]
+        changed_units = {item["unit_id"] for item in valid_assertions
+                         if item["case"] == "existing_value" and
+                         item["expected_by_round"]["commit"]["before"] !=
+                         item["expected_by_round"]["commit"]["after"]}
+        relevant = {row["unit_id"] for row in valid_seed_rows}
+        if (len(unit_ids) != len(data_units) or covered != unit_ids or relevant != unit_ids
+                or not preserved or {item["unit_id"] for item in preserved} != unit_ids
+                or changed_units != unit_ids or not all(consistent_rounds(item) for item in valid_assertions)
+                or not preserved_summary or not fixture_usage or not manifest_sha256):
             result["reason"] = "資料異動缺少 fixture 用途、保留資料摘要或前後預期查核；待確認"
             return result
         expected_assertions = valid_assertions
@@ -150,32 +190,35 @@ def run_local_validation(
 
     failures: list[str] = []
     sql = artifact.read_text(encoding="utf-8")
+    committed_state = ""
+    committed_database_id = ""
+    seen_sessions: set[str] = set()
+    fresh_databases: set[str] = set()
     for index, name in enumerate(ROUNDS):
         evidence = rounds[name]
-        # A fresh baseline/session is an explicit contract, not an implied retry.
         evidence["baseline_usage"] = ("committed database; new session" if name == "rerun"
                                       else f"fresh disposable baseline/session #{index + 1}")
         evidence["fixture_usage"] = ("fixture loaded during commit round" if name == "rerun"
                                      else fixture_usage or "loaded into disposable LocalDB")
-        if name == "rerun":
-            # Convergence must exercise the committed database from the prior
-            # round in a fresh session; resetting its baseline would hide rerun
-            # defects instead of detecting them.
-            fresh_baseline_source = f"{baseline_source}#committed-from=commit#session={index + 1}"
-        else:
-            fresh_baseline_source = f"{baseline_source}#fresh={index + 1}"
+        if name == "rerun" and not committed_state:
+            evidence["error_output_summary"] = "Commit round did not return committed state"
+            failures.append("rerun:committed_state_pending")
+            continue
         try:
             raw = executor(
                 sql=sql, artifact_path=str(artifact), round_name=name,
                 validate_only=(name == "validate_only"),
                 inject_failure=(name == "injected_failure"),
-                fresh_session=True, baseline_source=fresh_baseline_source,
-                fixture_source=fixture_source, fixture_manifest=str(fixture_manifest or ""),
+                fresh_session=True, fresh_database=(name != "rerun"),
+                committed_state=committed_state if name == "rerun" else "",
+                baseline_source=str(baseline), fixture_source=str(fixture),
+                fixture_manifest=str(manifest) if manifest else "",
                 server=server, database=database,
             )
             if not isinstance(raw, dict):
                 raise ValueError("executor result must be an object")
-            for key in ("status", "exit_code", "checks", "data_checks", "error_output_summary"):
+            for key in ("status", "exit_code", "checks", "data_checks", "error_output_summary",
+                        "database_id", "session_id", "committed_state"):
                 if key in raw:
                     evidence[key] = raw[key]
             if "provider_version" in raw:
@@ -192,6 +235,21 @@ def run_local_validation(
                 failures.append(f"{name}:checks")
             if not isinstance(evidence["error_output_summary"], str):
                 failures.append(f"{name}:error_output_summary")
+            session_id = evidence["session_id"]
+            database_id = evidence["database_id"]
+            if not isinstance(session_id, str) or not session_id or session_id in seen_sessions:
+                failures.append(f"{name}:fresh_session_evidence")
+            else:
+                seen_sessions.add(session_id)
+            if not isinstance(database_id, str) or not database_id:
+                failures.append(f"{name}:database_identity")
+            elif name == "rerun":
+                if database_id != committed_database_id or evidence["committed_state"] != committed_state:
+                    failures.append("rerun:committed_state_mismatch")
+            elif database_id in fresh_databases:
+                failures.append(f"{name}:fresh_database_evidence")
+            else:
+                fresh_databases.add(database_id)
             if data_units:
                 actual = evidence["data_checks"]
                 actual_ids = {(item.get("unit_id"), item.get("id")) for item in actual
@@ -204,10 +262,21 @@ def run_local_validation(
                 else:
                     observations = {(item["unit_id"], item["id"]): item for item in actual
                                     if isinstance(item, dict) and item.get("unit_id") and item.get("id")}
-                    if any(observations[(item["unit_id"], item["id"])][field] != item[field]
-                           for item in expected_assertions for field in ("before", "after")):
+                    if any(observations[(item["unit_id"], item["id"])].get("seed_row_id") != item["seed_row_id"]
+                           or any(observations[(item["unit_id"], item["id"])][field] !=
+                                  item["expected_by_round"][name][field]
+                                  for field in ("before", "after"))
+                           for item in expected_assertions):
                         evidence["status"] = "failed"
                         failures.append(f"{name}:data_assertion_mismatch")
+            if name == "commit":
+                handle = evidence["committed_state"]
+                if (isinstance(handle, str) and handle.strip() and evidence["status"] == "passed"
+                        and evidence["exit_code"] == 0 and isinstance(database_id, str) and database_id):
+                    committed_state = handle
+                    committed_database_id = database_id
+                else:
+                    failures.append("commit:committed_state_pending")
             if name == "injected_failure":
                 semantic = " ".join(map(str, [evidence["checks"], evidence["error_output_summary"]])).lower()
                 required = ("expected" in semantic and "error" in semantic,
