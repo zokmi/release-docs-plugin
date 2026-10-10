@@ -265,7 +265,43 @@ def test_localdb_non_mutating_preservation_na_keeps_reason_without_inventing_res
     assert result["preservation"] == preservation
     assert result["expected_assertions"] == []
     assert result["fixture_seed_rows"] == []
+    manifest_hash = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    assert result["fixture_manifest_sha256"] == manifest_hash
     assert all(row["preservation"] == preservation and row["data_checks"] == []
+               and row["preserved_data_summary"] == {}
+               and row["fixture_manifest_sha256"] == manifest_hash for row in result["rounds"].values())
+
+
+@pytest.mark.parametrize("damage", ["omitted", "nonexistent", "invalid_json", "non_object", "wrong_suffix"])
+def test_localdb_preservation_na_manifest_identity_is_required(tmp_path, damage):
+    from validate_release_output import _deployment
+    artifact, baseline, fixture, manifest, unit, preservation = _non_mutating_case(tmp_path)
+    # Keep the N/A contract complete independently of the manifest being tested.
+    unit.update(expected_preserved_data_summary="N/A", preservation=preservation["new-table"])
+    if damage == "omitted":
+        manifest = None
+    elif damage == "nonexistent":
+        manifest = tmp_path / "missing.json"
+    elif damage == "invalid_json":
+        manifest.write_text("{", encoding="utf-8")
+    elif damage == "non_object":
+        manifest.write_text("[]", encoding="utf-8")
+    else:
+        manifest = tmp_path / "manifest.sql"
+        manifest.write_text("{}", encoding="utf-8")
+    result = module.run_local_validation(
+        artifact, server="(localdb)\\MSSQLLocalDB", database="test",
+        baseline_source=str(baseline), fixture_source=str(fixture), fixture_manifest=manifest,
+        data_units=[unit], executor=_non_mutating_executor, command=["runner", "--isolated"],
+        adapter_provenance="fixture/1", provider_version="sql/1", tool_version="tool/1")
+    reviewer_status = _deployment({"localdb_validation": result}, result["artifact_sha256"],
+                                  {"units": [unit]}, run=tmp_path)
+    assert result["status"] == "not_run"
+    assert reviewer_status == "待確認"
+    assert result["data_impact"] == {"new-table": "non_mutating"}
+    assert result["preservation"] == preservation
+    assert result["expected_assertions"] == [] and result["fixture_seed_rows"] == []
+    assert all(row["status"] == "not_run" and row["data_checks"] == []
                and row["preserved_data_summary"] == {} for row in result["rounds"].values())
 
 

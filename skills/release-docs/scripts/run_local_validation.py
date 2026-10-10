@@ -97,9 +97,11 @@ def run_local_validation(
     fixture_sha256 = _digest(fixture) if fixture else ""
     manifest_sha256 = _digest(manifest) if manifest else ""
     manifest_data: dict[str, Any] = {}
+    manifest_valid = False
     if manifest_sha256:
         try:
             manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+            manifest_valid = isinstance(manifest_data, dict) and manifest.suffix.lower() == ".json"
         except (ValueError, UnicodeError):
             manifest_data = {}
     if not isinstance(manifest_data, dict):
@@ -191,6 +193,9 @@ def run_local_validation(
             result["reason"] = "資料異動缺少 baseline 或 fixture 來源；待確認"
             return result
         raise ValueError("baseline_source and fixture_source must be existing regular files")
+    if preservation_na and (not manifest_valid or not manifest_sha256):
+        result["reason"] = "N/A preservation requires a valid fixture manifest and SHA-256 identity; 待確認"
+        return result
     if data_units:
         unit_ids = {unit.get("unit_id") for unit in data_units if isinstance(unit, dict) and unit.get("unit_id")}
         coverage = manifest_data.get("coverage")
