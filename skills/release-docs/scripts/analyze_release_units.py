@@ -79,8 +79,6 @@ def _kind(path):
         return "database_project"
     if lower.endswith(".dacpac"):
         return "dacpac"
-    if "migration" in lower or "modelsnapshot" in lower:
-        return "migration"
     return None
 
 
@@ -440,12 +438,13 @@ def analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, *, 
     detected_paths = ({record["path"] for record in ef_detection.evidence}
                       if ef_detection is not None and not result.blocked else set())
     candidates = {_safe_path(c["path"]): c for c in evidence.get("committed_changes", [])
-                  if _kind(c["path"]) or (ef_detection is not None and
+                  if _kind(c["path"]) or _safe_path(c["path"]) in covered or (ef_detection is not None and
                                           _ef_source_candidate(repo, evidence, c, detected_paths))}
     for path in explicit:
         candidates.setdefault(path, {"path": path, "status": "A"})
     for path, change in sorted(candidates.items()):
-        kind = _kind(path)
+        kind = _kind(path) or ("migration" if path in ef_covered or
+                               (path in covered and path.lower().endswith(".cs")) else None)
         revision = evidence.get("base_sha") if change["status"] == "D" else evidence.get("target_sha")
         try:
             sha, raw = _read_revision(repo, revision, path)

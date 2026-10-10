@@ -193,6 +193,26 @@ def test_unrelated_application_changes_do_not_block_ef_units(tmp_path):
     assert not {item["source_path"] for item in result.sources} & set(unrelated)
 
 
+def test_migration_like_application_filenames_do_not_count_as_ef_sources(tmp_path):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    ordinary = {"MigrationStatus.cs": "public class MigrationStatus { public string Label; }",
+                "ModelSnapshotViewModel.cs": "public class ModelSnapshotViewModel { public int Count; }"}
+    for path, contents in ordinary.items():
+        (root / path).write_text(contents, encoding="utf-8")
+        evidence["committed_changes"].append({"status": "A", "path": path})
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "ordinary names")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert not result.blocked, result.findings
+    sources = {item["source_path"]: item["kind"] for item in result.sources}
+    assert not set(ordinary) & set(sources)
+    assert sources["20260101000000_AddWidget.cs"] == "migration"
+    assert sources["AppDbContextModelSnapshot.cs"] == "migration"
+
+
 def test_stale_detection_revision_blocks(tmp_path):
     analyzer, _ = api()
     root, evidence, baseline, detection = ef_case(tmp_path)
@@ -411,14 +431,14 @@ def test_requested_revision_does_not_read_current_worktree(fixture):
     assert "BAD WORKTREE" not in result.units[0]["sql"]
 
 
-def test_missing_authoritative_sql_blocks_migration_inference(fixture):
+def test_missing_authoritative_sql_blocks_database_project_inference(fixture):
     analyzer, _ = api()
     root, evidence, baseline = fixture
-    (root / "migration.cs").write_text("void Up() { AddColumn(); }", encoding="utf-8")
+    (root / "db.sqlproj").write_text("<Project />", encoding="utf-8")
     git(root, "add", ".")
     git(root, "commit", "-qm", "missing SQL")
     evidence["target_sha"] = git(root, "rev-parse", "HEAD")
-    evidence["committed_changes"].append({"status": "A", "path": "migration.cs"})
+    evidence["committed_changes"].append({"status": "A", "path": "db.sqlproj"})
     result = analyzer.analyze_release_units(root, evidence, baseline, None)
     assert any(f["code"] == "missing_authoritative_sql" and f["blocking"] for f in result.findings)
 
