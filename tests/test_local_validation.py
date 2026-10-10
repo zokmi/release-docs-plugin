@@ -8,6 +8,7 @@ import sys
 import pytest
 
 ROOT = Path(__file__).parents[1]
+sys.path.insert(0, str(ROOT / "skills/release-docs/scripts"))
 SCRIPT = ROOT / "skills/release-docs/scripts/run_local_validation.py"
 spec = importlib.util.spec_from_file_location("run_local_validation", SCRIPT)
 module = importlib.util.module_from_spec(spec)
@@ -229,6 +230,89 @@ def _data_executor(**kwargs):
     return {"status": "passed", "exit_code": 0, **round_evidence,
             "checks": [kwargs["round_name"], "schema", "row count", "preserved data", "excluded scope", "unit result"],
             "data_checks": checks, "error_output_summary": ""}
+
+
+def _non_mutating_case(tmp_path):
+    artifact, baseline, fixture, manifest = _data_case(tmp_path)
+    sql = "CREATE TABLE dbo.NewTable (Id int);"
+    artifact.write_text(sql, encoding="utf-8")
+    fixture.write_text("-- disposable schema fixture; no formal rows", encoding="utf-8")
+    unit = {"unit_id": "new-table", "sql": sql, "phase": "DATA",
+            "source_path": "new.sql", "source_line": 1}
+    preservation = {"new-table": {"conclusion": "N/A",
+                                "reason": "new.sql:1: no existing row mutation"}}
+    manifest.write_text(json.dumps({"expected_preserved_data_summary": {"new-table": "N/A"},
+                                    "preservation": preservation}), encoding="utf-8")
+    return artifact, baseline, fixture, manifest, unit, preservation
+
+
+def _non_mutating_executor(**kwargs):
+    raw = _data_executor(**kwargs)
+    raw.pop("preserved_data_summary")
+    raw.pop("data_checks")
+    return raw
+
+
+def test_localdb_non_mutating_preservation_na_keeps_reason_without_inventing_results(tmp_path):
+    artifact, baseline, fixture, manifest, unit, preservation = _non_mutating_case(tmp_path)
+    result = module.run_local_validation(
+        artifact, server="(localdb)\\MSSQLLocalDB", database="test",
+        baseline_source=str(baseline), fixture_source=str(fixture), fixture_manifest=manifest,
+        data_units=[unit], executor=_non_mutating_executor,
+        adapter_provenance="fixture/1", provider_version="sql/1", tool_version="tool/1")
+    assert result["status"] == "passed"
+    assert result["data_impact"] == {"new-table": "non_mutating"}
+    assert result["preservation"] == preservation
+    assert result["expected_assertions"] == []
+    assert result["fixture_seed_rows"] == []
+    assert all(row["preservation"] == preservation and row["data_checks"] == []
+               and row["preserved_data_summary"] == {} for row in result["rounds"].values())
+
+
+@pytest.mark.parametrize("missing_preserved", [False, True])
+def test_localdb_mixed_preservation_requires_mutation_fixture_evidence(tmp_path, missing_preserved):
+    artifact, baseline, fixture, manifest = _data_case(tmp_path)
+    mutation_sql = artifact.read_text(encoding="utf-8")
+    schema_sql = "CREATE TABLE dbo.NewTable (Id int);"
+    artifact.write_text(schema_sql + "\n" + mutation_sql, encoding="utf-8")
+    units = [{"unit_id": "new-table", "sql": schema_sql},
+             {"unit_id": "customer-data", "sql": mutation_sql}]
+    if missing_preserved:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["assertions"] = [item for item in data["assertions"] if item["case"] != "preserved_data"]
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+    result = module.run_local_validation(
+        artifact, server="(localdb)\\MSSQLLocalDB", database="test",
+        baseline_source=str(baseline), fixture_source=str(fixture), fixture_manifest=manifest,
+        data_units=units, executor=_data_executor,
+        adapter_provenance="fixture/1", provider_version="sql/1", tool_version="tool/1")
+    assert result["data_impact"] == {"new-table": "non_mutating", "customer-data": "mutation"}
+    assert result["status"] == ("not_run" if missing_preserved else "passed")
+
+
+@pytest.mark.parametrize("damage", ["unknown", "mutation", "wrong_source", "blank_reason", "missing_na", "stale_body"])
+def test_localdb_preservation_na_requires_proven_impact_and_explicit_reason(tmp_path, damage):
+    artifact, baseline, fixture, manifest, unit, preservation = _non_mutating_case(tmp_path)
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    if damage in ("unknown", "mutation"):
+        unit["sql"] = "EXEC dbo.Custom;" if damage == "unknown" else "UPDATE dbo.Customer SET Flag=1;"
+        unit["data_impact"] = "non_mutating"
+        artifact.write_text(unit["sql"], encoding="utf-8")
+    elif damage == "stale_body":
+        artifact.write_text("UPDATE dbo.Customer SET Flag=1;", encoding="utf-8")
+    elif damage == "wrong_source":
+        data["preservation"]["new-table"]["reason"] = "other.sql:1: no existing row mutation"
+    elif damage == "blank_reason":
+        data["preservation"]["new-table"]["reason"] = " "
+    else:
+        data["expected_preserved_data_summary"] = {}
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    result = module.run_local_validation(
+        artifact, server="(localdb)\\MSSQLLocalDB", database="test",
+        baseline_source=str(baseline), fixture_source=str(fixture), fixture_manifest=manifest,
+        data_units=[unit], executor=_non_mutating_executor,
+        adapter_provenance="fixture/1", provider_version="sql/1", tool_version="tool/1")
+    assert result["status"] != "passed"
 
 
 def test_data_fixture_covers_existing_and_preserved_rows(tmp_path):

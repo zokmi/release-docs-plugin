@@ -104,18 +104,49 @@ def run_local_validation(
             manifest_data = {}
     if not isinstance(manifest_data, dict):
         manifest_data = {}
+    # Classify the mapped artifact bodies, rather than trusting caller labels.
+    sys.path.insert(0, str(Path(__file__).parents[2] / "release-docs-review/scripts"))
+    from semantic_review import classify_data_impact
+    from validate_release_output import _artifact_units, _non_mutating_preservation
+    sql = artifact.read_bytes().decode("utf-8-sig")
+    mapped, mapping_findings = _artifact_units(sql, sql_profile)
+    units = list(data_units)
+    if mapped and not mapping_findings:
+        supplied = {unit.get("unit_id"): unit for unit in units if isinstance(unit, dict)}
+        units = [{**supplied.get(mapping["unit_id"], {}), **mapping, "sql": body}
+                 for mapping, body in mapped]
+        bodies_match = True
+    else:
+        bodies = [unit.get("sql", unit.get("target_definition", {}).get("sql", ""))
+                  for unit in units if isinstance(unit, dict)
+                  and isinstance(unit.get("target_definition", {}), dict)]
+        bodies_match = (not mapped and len(bodies) == len(units) and bool(bodies)
+                        and all(isinstance(body, str) and body.strip() for body in bodies)
+                        and "\n".join(body.replace("\r\n", "\n").strip() for body in bodies)
+                        == sql.replace("\r\n", "\n").strip())
+    impacts = {unit["unit_id"]: classify_data_impact(unit) if bodies_match else "unknown"
+               for unit in units if isinstance(unit, dict) and isinstance(unit.get("unit_id"), str)}
+    preservation = manifest_data.get("preservation", {})
+    if not isinstance(preservation, dict):
+        preservation = {}
+    preservation = {**{unit["unit_id"]: unit["preservation"] for unit in units
+                       if isinstance(unit, dict) and unit.get("unit_id") and "preservation" in unit},
+                    **preservation}
+    data_units = [unit for unit in units if not isinstance(unit, dict)
+                  or impacts.get(unit.get("unit_id")) != "non_mutating"]
     expected_assertions = list(manifest_data.get("assertions", [])) if isinstance(manifest_data.get("assertions", []), list) else []
-    for unit in data_units:
+    for unit in units:
         if isinstance(unit, dict) and isinstance(unit.get("expected_assertions"), list):
             expected_assertions.extend({**item, "unit_id": unit.get("unit_id")}
                                        for item in unit["expected_assertions"] if isinstance(item, dict))
     preserved_summary = manifest_data.get("expected_preserved_data_summary", {})
     if not preserved_summary:
         preserved_summary = {unit["unit_id"]: unit["expected_preserved_data_summary"]
-                             for unit in data_units if isinstance(unit, dict)
+                             for unit in units if isinstance(unit, dict)
                              and unit.get("unit_id") and unit.get("expected_preserved_data_summary")}
     fixture_usage = manifest_data.get("usage", "") or "; ".join(
-        str(unit.get("fixture_usage", "")) for unit in data_units if isinstance(unit, dict))
+        str(unit.get("fixture_usage", "")) for unit in units if isinstance(unit, dict))
+    preservation_na = bodies_match and _non_mutating_preservation(units, preserved_summary, preservation)
     rounds = {
         name: _base_round(name, server=server, database=database,
                            baseline=baseline_source, fixture=fixture_source,
@@ -126,6 +157,8 @@ def run_local_validation(
                            artifact_sha256=digest)
         for name in ROUNDS
     }
+    for evidence in rounds.values():
+        evidence.update(data_impact=impacts, preservation=preservation)
     result: dict[str, Any] = {
         "schema_version": 1, "status": "not_run", "reason": "",
         "artifact_sha256": digest, "server": server, "database": database,
@@ -137,6 +170,7 @@ def run_local_validation(
         "fixture_manifest_sha256": manifest_sha256,
         "fixture_usage": fixture_usage,
         "expected_preserved_data_summary": preserved_summary,
+        "data_impact": impacts, "preservation": preservation,
         "expected_assertions": expected_assertions,
         "fixture_seed_rows": manifest_data.get("seed_rows", []),
         "rounds": rounds,
@@ -211,7 +245,6 @@ def run_local_validation(
         result["expected_assertions"] = expected_assertions
 
     failures: list[str] = []
-    sql = artifact.read_text(encoding="utf-8")
     committed_state = ""
     committed_database_id = ""
     seen_sessions: set[str] = set()
@@ -263,8 +296,9 @@ def run_local_validation(
                     evidence["status"] = "not_run"
                     failures.append(f"{name}:distinct_checks_pending")
                 seen_checks.add(checks_key)
-            if (not isinstance(preserved_summary, dict) or not preserved_summary
-                    or evidence["preserved_data_summary"] != preserved_summary):
+            if (not preservation_na and (not isinstance(preserved_summary, dict) or not preserved_summary
+                    or any(value == "N/A" for value in preserved_summary.values())
+                    or evidence["preserved_data_summary"] != preserved_summary)):
                 evidence["status"] = "not_run"
                 failures.append(f"{name}:preserved_data_pending")
             for source, expected_hash in ((artifact, digest), (baseline, baseline_sha256),

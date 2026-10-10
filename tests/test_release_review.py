@@ -490,6 +490,97 @@ def localdb_evidence(release):
             "rounds": rounds}
 
 
+def _na_localdb_evidence(release):
+    evidence = localdb_evidence(release)
+    source = json.loads((release[2] / "source_unit_metadata.json").read_text())
+    unit = source["units"][0]
+    uid = unit["unit_id"]
+    preservation = {uid: {"conclusion": "N/A", "reason":
+                         f"{unit['source_path']}:{unit['source_line']}: no existing row mutation"}}
+    evidence.update(data_impact={uid: "non_mutating"}, preservation=preservation)
+    for row in evidence["rounds"].values():
+        row.update(expected_preserved_data_summary={uid: "N/A"}, preservation=preservation)
+        row.pop("preserved_data_summary")
+    return evidence, source
+
+
+@pytest.mark.parametrize("phase", ["SCHEMA", "DATA"])
+def test_localdb_non_mutating_preservation_na_needs_no_formal_rows(release, phase):
+    evidence, source = _na_localdb_evidence(release)
+    source["units"][0]["phase"] = phase
+    assert api()._deployment({"localdb_validation": evidence}, evidence["artifact_sha256"],
+                             source, run=release[2]) == "通過"
+    assert api()._data_expectations(source, ()) == ({}, True)
+    if phase == "SCHEMA":
+        update_metadata(release, localdb_validation=evidence)
+        assert status(release, "deployment_validation_status") == "通過"
+        assert "missing_data_expectations" not in codes(release)
+        assert status(release, "static_sql_status") == "通過"
+
+
+def test_localdb_preservation_na_runner_and_review_use_mapped_artifact_units(release):
+    from run_local_validation import run_local_validation
+    from test_local_validation import _non_mutating_executor
+    evidence, source = _na_localdb_evidence(release)
+    manifest = Path(evidence["fixture_manifest"])
+    write_json(manifest, {"expected_preserved_data_summary": {"customer": "N/A"},
+                          "preservation": evidence["preservation"]})
+    result = run_local_validation(
+        release[2] / "assembly/01_部署SQL.sql", server="(localdb)\\release-test", database="test",
+        baseline_source=evidence["rounds"]["commit"]["baseline_source"],
+        fixture_source=evidence["fixture_source"], fixture_manifest=manifest,
+        executor=_non_mutating_executor, adapter_provenance="fixture/1",
+        provider_version="sql/1", tool_version="tool/1", command=["runner", "--isolated"])
+    assert result["status"] == "passed"
+    assert result["data_impact"] == {"customer": "non_mutating"}
+    update_metadata(release, localdb_validation=result)
+    assert status(release, "deployment_validation_status") == "通過"
+
+
+def test_localdb_mixed_preservation_cannot_skip_schema_phase_mutation(release):
+    evidence = localdb_evidence(release)
+    source = json.loads((release[2] / "source_unit_metadata.json").read_text())
+    mutation = {**source["units"][0], "unit_id": "backfill", "phase": "SCHEMA",
+                "sql": "UPDATE dbo.Customer SET Id=2 WHERE Id=1;", "data_impact": "non_mutating"}
+    source["units"].append(mutation)
+    assert api()._deployment({"localdb_validation": evidence}, evidence["artifact_sha256"],
+                             source, run=release[2]) == "待確認"
+
+
+@pytest.mark.parametrize("damage", ["unknown", "mutation", "blank_reason", "wrong_source", "missing_na",
+                                    "same_session", "same_database", "rerun_database", "rerun_state",
+                                    "duplicate_checks", "wrong_hash", "error_output", "provider"])
+def test_localdb_preservation_na_retains_round_and_identity_gates(release, damage):
+    evidence, source = _na_localdb_evidence(release)
+    row = evidence["rounds"]["commit"]
+    if damage in ("unknown", "mutation"):
+        source["units"][0]["sql"] = "EXEC dbo.Custom;" if damage == "unknown" else "UPDATE dbo.Customer SET Id=2;"
+    elif damage == "blank_reason":
+        row["preservation"]["customer"]["reason"] = " "
+    elif damage == "wrong_source":
+        row["preservation"]["customer"]["reason"] = "other.sql:1: no existing row mutation"
+    elif damage == "missing_na":
+        row.pop("expected_preserved_data_summary")
+    elif damage == "same_session":
+        evidence["rounds"]["rerun"]["session_id"] = row["session_id"]
+    elif damage == "same_database":
+        evidence["rounds"]["injected_failure"]["database_id"] = row["database_id"]
+    elif damage == "rerun_database":
+        evidence["rounds"]["rerun"]["database_id"] = "different-db"
+    elif damage == "rerun_state":
+        evidence["rounds"]["rerun"]["committed_state"] = "different-state"
+    elif damage == "duplicate_checks":
+        evidence["rounds"]["rerun"]["checks"] = row["checks"]
+    elif damage == "wrong_hash":
+        row["artifact_sha256"] = "0" * 64
+    elif damage == "error_output":
+        evidence["rounds"]["injected_failure"]["error_output_summary"] = ""
+    else:
+        row["provider_version"] = "unknown"
+    assert api()._deployment({"localdb_validation": evidence}, evidence["artifact_sha256"],
+                             source, run=release[2]) == "待確認"
+
+
 @pytest.mark.parametrize("damage", ["missing_fixture_hash", "changed_fixture", "changed_baseline", "wrong_round_hash"])
 def test_deployment_pass_requires_current_fixture_and_baseline_hashes(release, damage):
     evidence = localdb_evidence(release)
@@ -551,6 +642,7 @@ def test_data_unit_deployment_pass_requires_fixture_data_checks(release):
     source_path = release[2] / "source_unit_metadata.json"
     source = json.loads(source_path.read_text())
     source["units"][0]["phase"] = "DATA"
+    source["units"][0]["sql"] = "UPDATE dbo.Customer SET Id=2 WHERE Id=1;"
     write_json(source_path, source)
     update_metadata(release, localdb_validation=evidence)
     assert status(release, "deployment_validation_status") == "待確認"
@@ -562,6 +654,7 @@ def test_data_expectation_missing_before_or_after_blocks_sql_content(release):
     path = release[2] / "source_unit_metadata.json"
     source = json.loads(path.read_text())
     source["units"][0]["phase"] = "DATA"
+    source["units"][0]["sql"] = "UPDATE dbo.Customer SET Id=2 WHERE Id=1;"
     source["units"][0]["expected_assertions"] = [{"id": "changed", "before": "1"}]
     write_json(path, source)
     assert "missing_data_expectations" in codes(release)
@@ -572,6 +665,7 @@ def test_duplicate_data_expectation_ids_block_sql_content(release):
     path = release[2] / "source_unit_metadata.json"
     source = json.loads(path.read_text())
     source["units"][0]["phase"] = "DATA"
+    source["units"][0]["sql"] = "UPDATE dbo.Customer SET Id=2 WHERE Id=1;"
     assertion = {"id": "same", "seed_row_id": "Customer/1", "expected_by_round":
                  {name: {"before": "0", "after": "1"} for name in ("validate_only", "commit", "rerun", "injected_failure")}}
     source["units"][0]["expected_assertions"] = [assertion, dict(assertion)]
@@ -586,6 +680,7 @@ def test_complete_data_expectations_and_round_observations_can_validate_deployme
     source_path = release[2] / "source_unit_metadata.json"
     source = json.loads(source_path.read_text())
     source["units"][0]["phase"] = "DATA"
+    source["units"][0]["sql"] = "UPDATE dbo.Customer SET Id=2 WHERE Id=1;"
     source["units"][0]["expected_assertions"] = [source_assertion]
     write_json(source_path, source)
     evidence["expected_assertions"] = [{"unit_id": "customer", **source_assertion}]
@@ -616,6 +711,7 @@ def test_deployment_rounds_need_matching_observations_and_distinct_evidence(rele
         source_path = release[2] / "source_unit_metadata.json"
         source = json.loads(source_path.read_text())
         source["units"][0]["phase"] = "DATA"
+        source["units"][0]["sql"] = "UPDATE dbo.Customer SET Id=2 WHERE Id=1;"
         source["units"][0]["expected_assertions"] = evidence["expected_assertions"]
         write_json(source_path, source)
     elif damage == "wrong_round_hash":

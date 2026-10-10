@@ -92,14 +92,35 @@ def _summary(findings, deployment="待確認", semantic_complete=False):
 ROUND_NAMES = ("validate_only", "commit", "rerun", "injected_failure")
 
 
+def _non_mutating_preservation(units, summary, preservation):
+    """N/A is an explicit per-unit source review, never an actual data result."""
+    from semantic_review import classify_data_impact, _preservation
+    if (not isinstance(units, (list, tuple)) or not units
+            or any(not isinstance(unit, dict) or not isinstance(unit.get("unit_id"), str)
+                   or not unit["unit_id"] for unit in units)):
+        return False
+    ids = {unit["unit_id"] for unit in units}
+    return (len(ids) == len(units) and summary == {uid: "N/A" for uid in ids}
+            and isinstance(preservation, dict) and set(preservation) == ids
+            and all(classify_data_impact(unit) == "non_mutating"
+                    and isinstance(preservation[unit["unit_id"]], dict)
+                    and preservation[unit["unit_id"]].get("conclusion") == "N/A"
+                    and _preservation(preservation[unit["unit_id"]], unit, "non_mutating")
+                    for unit in units))
+
+
 def _data_expectations(source, exclusions):
+    from semantic_review import classify_data_impact
     excluded = {uid for item in exclusions for uid in item["unit_ids"]}
     units = source.get("units", [])
     if not isinstance(units, list):
         return {}, False
     expected = {}
     for unit in units:
-        if not isinstance(unit, dict) or unit.get("phase") != "DATA":
+        if not isinstance(unit, dict):
+            return {}, False
+        impact = classify_data_impact(unit)
+        if impact == "non_mutating" or (impact != "mutation" and unit.get("phase") != "DATA"):
             continue
         uid = unit.get("unit_id")
         if not isinstance(uid, str):
@@ -149,6 +170,8 @@ def _deployment(metadata, digest, source=None, exclusions=(), run=None):
     data_units, valid_expectations = _data_expectations(source, exclusions)
     if not valid_expectations:
         return "待確認"
+    excluded = {uid for item in exclusions for uid in item["unit_ids"]}
+    included = [unit for unit in source.get("units", []) if unit.get("unit_id") not in excluded]
     assertions = validation.get("expected_assertions")
     if data_units and (not isinstance(assertions, list) or not assertions
                        or any(not isinstance(item, dict) or item.get("unit_id") not in data_units
@@ -196,10 +219,13 @@ def _deployment(metadata, digest, source=None, exclusions=(), run=None):
                 or evidence.get("round") != name
                 or not isinstance(evidence.get("session_id"), str) or not evidence["session_id"]
                 or evidence["session_id"] in sessions
-                or not isinstance(evidence.get("database_id"), str) or not evidence["database_id"]
-                or not isinstance(evidence.get("expected_preserved_data_summary"), dict)
-                or not evidence["expected_preserved_data_summary"]
-                or evidence.get("preserved_data_summary") != evidence["expected_preserved_data_summary"]):
+                or not isinstance(evidence.get("database_id"), str) or not evidence["database_id"]):
+            return "待確認"
+        summary = evidence.get("expected_preserved_data_summary")
+        if (not _non_mutating_preservation(included, summary, evidence.get("preservation"))
+                and (not isinstance(summary, dict) or not summary
+                     or any(value == "N/A" for value in summary.values())
+                     or evidence.get("preserved_data_summary") != summary)):
             return "待確認"
         sessions.add(evidence["session_id"])
         databases[name] = evidence["database_id"]
