@@ -52,7 +52,8 @@ missing_try_catch transaction_count missing_implicit_transactions_off unconditio
 validate_only_rollback deploy_commit missing_throw transaction_scope error_rollback missing_error_context
 missing_transaction_action unmapped_sql invalid_exclusion_provenance
 invalid_runtime_mode sql_profile_mismatch invalid_sql_profile nonessential_set_statement
-business_data_validation validation_sql_defect
+business_data_validation validation_sql_defect validation_sql_pending
+transaction_validation_pending fixture_assertion_defect fixture_assertion_pending
 """.split())
 SQL_CORRECTNESS_CODES = REPORT_CODES - {
     "business_data_validation", "incomplete_deployment_evidence", "unsupported_deployment_pass_claim"
@@ -489,12 +490,16 @@ def _units(sql, evidence, exclusions, profile="framework"):
     expected = {u.get("unit_id"): u for u in source_units if u.get("unit_id") not in excluded}
     if len(expected) != len([u for u in source_units if u.get("unit_id") not in excluded]) or None in expected:
         findings.append(_finding("invalid_unit_evidence"))
-    normalized_source = [_finding(f["code"], f["blocking"], f.get("domain", "sql_correctness"),
-                                   f.get("status")) for f in source_findings]
+    normalized_source = [_finding(f["code"], f["blocking"],
+                                   f.get("domain") if isinstance(f.get("domain"), str) else "sql_correctness",
+                                   f.get("status") if f.get("status") in STATUSES else None)
+                         for f in source_findings]
     if any(f["blocking"] for f in normalized_source if f["domain"] != "business_data_validation"):
         findings.append(_finding("blocking_source_analysis"))
     if any(f["domain"] == "business_data_validation" for f in normalized_source):
         findings.append(_finding("business_data_validation", domain="business_data_validation"))
+    # Keep concrete, allowlisted SQL evidence without source prose or arbitrary codes.
+    findings.extend(f for f in normalized_source if f["code"] in SQL_CORRECTNESS_CODES)
     for unit in expected.values():
         dependencies = unit.get("depends_on")
         if not isinstance(dependencies, list):
@@ -711,7 +716,10 @@ def validate_release_output(output_dir, run_root, *, repo=None) -> list[Finding]
     result = _summary(findings, deployment, semantic_complete=semantic_complete)
     # Retain the independent static summary before lowering the final status.
     static = next(f for f in result if f["code"] == "static_sql_status")
-    result = _summary(findings + semantic_findings, deployment, semantic_complete=semantic_complete)
+    runtime = _report_runtime(source, exclusions, metadata, digest, run,
+                              identity_complete=_runtime_identity(findings))
+    result = _summary(findings + semantic_findings + _runtime_findings(runtime, deployment),
+                      deployment, semantic_complete=semantic_complete)
     return [static if f["code"] == "static_sql_status" else f for f in result]
 
 
@@ -746,7 +754,7 @@ def _validation_query_status(units, rounds):
     """
     statuses = []
     for name in ("validate_only", "commit", "rerun"):
-        checks = rounds[name].get("checks")
+        checks = rounds.get(name, {}).get("checks")
         results = checks.get("validation_queries") if isinstance(checks, dict) else None
         for unit in units:
             queries = unit.get("validation_queries")
@@ -780,15 +788,84 @@ def _validation_query_status(units, rounds):
     return max(statuses or ["待確認"], key=STATUSES.index)
 
 
-def _report_runtime(source, exclusions, metadata, digest, run):
-    """Reuse the four-round trust gate; never project raw runner values."""
+def _runtime_identity(findings):
+    """Source-analysis conclusions cannot erase otherwise valid execution identity."""
+    invalid = {
+        "missing_execution_artifact_evidence", "execution_artifact_mismatch", "unsafe_or_missing_execution_artifact",
+        "invalid_unit_evidence", "invalid_unit_mapping", "unexpected_or_duplicate_unit", "unit_mapping_mismatch",
+        "incomplete_unit_mapping", "unit_sql_hash_mismatch", "included_unit_mapping_mismatch",
+        "invalid_lifecycle_exclusions", "invalid_exclusion_provenance", "excluded_unit_in_sql",
+        "unmapped_sql", "sql_profile_mismatch", "invalid_sql_profile", "unsafe_review_path",
+    }
+    return not any(f["code"] in invalid for f in findings)
+
+
+def _result_rounds(metadata, digest, run):
+    """Authenticate executed check envelopes independently of aggregate success.
+
+    A failed round may retain a trustworthy negative check. Missing inputs,
+    unexecuted rounds, stale hashes and ambiguous sessions/databases cannot.
+    This does not establish rollback/commit success or replace _deployment.
+    """
+    validation = metadata.get("localdb_validation")
+    if (not isinstance(validation, dict) or validation.get("status") not in ("passed", "failed")
+            or validation.get("artifact_sha256") != digest
+            or not _current_evidence_hash(validation.get("fixture_source"), validation.get("fixture_sha256"), run)
+            or not isinstance(validation.get("fixture_manifest"), str)
+            or not validation["fixture_manifest"].lower().endswith(".json")
+            or not _current_evidence_hash(validation["fixture_manifest"], validation.get("fixture_manifest_sha256"), run)
+            or not isinstance(validation.get("rounds"), dict)):
+        return {}
+    rounds = validation["rounds"]
+    executed = {name: row for name, row in rounds.items() if name in ROUND_NAMES
+                and isinstance(row, dict) and row.get("status") in ("passed", "failed")}
+    trusted = {}
+    for name, row in executed.items():
+        if (row.get("round") != name or row.get("artifact_sha256") != digest
+                or type(row.get("exit_code")) is not int or row["exit_code"] < 0
+                or row["status"] == "passed" and row["exit_code"] != 0
+                or any(not isinstance(row.get(k), str) or not row[k].strip()
+                       for k in ("server", "database", "provider_version", "tool_version", "session_id", "database_id"))
+                or row["provider_version"] == "unknown" or row["tool_version"] == "unknown"
+                or not isinstance(row.get("command"), (str, list)) or not row["command"]
+                or not isinstance(row.get("checks"), (list, dict)) or not row["checks"]
+                or not isinstance(row.get("error_output_summary"), str)
+                or any(row.get(k) != validation[k] for k in
+                       ("fixture_source", "fixture_sha256", "fixture_manifest", "fixture_manifest_sha256"))
+                or not _current_evidence_hash(row.get("baseline_source"), row.get("baseline_sha256"), run)):
+            continue
+        if any(other != name and sibling.get("session_id") == row["session_id"]
+               for other, sibling in executed.items()):
+            continue
+        if any(other != name and
+               (({name, other} == {"commit", "rerun"} and sibling.get("database_id") != row["database_id"])
+                or ({name, other} != {"commit", "rerun"} and sibling.get("database_id") == row["database_id"]))
+               for other, sibling in executed.items()):
+            continue
+        trusted[name] = row
+    return trusted
+
+
+def _runtime_findings(runtime, deployment):
+    findings = []
+    for status, failed, pending in ((runtime[0], "validation_sql_defect", "validation_sql_pending"),
+                                     (runtime[1], "fixture_assertion_defect", "fixture_assertion_pending")):
+        if status in ("待確認", "未通過"):
+            findings.append(_finding(failed if status == "未通過" else pending, blocking=status == "未通過"))
+    if deployment != "通過":
+        findings.append(_finding("transaction_validation_pending", blocking=False))
+    return findings
+
+
+def _report_runtime(source, exclusions, metadata, digest, run, *, identity_complete=True):
+    """Share correctness conclusions between validator and report; never emit raw values."""
     deployment = _deployment(metadata, digest, source, exclusions, run)
     rounds = "\n".join("- " + name + "：" + ("通過" if deployment == "通過" else "待確認") for name in ROUND_NAMES)
-    if deployment != "通過":
+    if not identity_complete:
         return "待確認", "待確認", rounds
     excluded = {uid for item in exclusions for uid in item["unit_ids"]}
     units = [unit for unit in source["units"] if unit["unit_id"] not in excluded]
-    evidence = metadata["localdb_validation"]["rounds"]
+    evidence = _result_rounds(metadata, digest, run)
     statuses = []
     for unit in units:
         assertions = unit.get("expected_assertions", [])
@@ -801,13 +878,19 @@ def _report_runtime(source, exclusions, metadata, digest, run):
                     or not assertion["seed_row_id"] or not isinstance(assertion.get("expected_by_round"), dict)):
                 statuses.append("待確認")
                 continue
+            if sum(isinstance(item, dict) and item.get("id") == assertion["id"] for item in assertions) != 1:
+                statuses.append("待確認")
+                continue
             for name in ROUND_NAMES:
-                checks = evidence[name].get("data_checks")
+                checks = evidence.get(name, {}).get("data_checks")
                 matches = [row for row in checks if isinstance(row, dict)
                            and row.get("unit_id") == unit["unit_id"]
                            and row.get("id") == assertion.get("id")] if isinstance(checks, list) else []
                 expected = assertion.get("expected_by_round", {}).get(name)
-                if len(matches) != 1 or not isinstance(expected, dict):
+                if (len(matches) != 1 or not isinstance(expected, dict)
+                        or matches[0].get("seed_row_id") != assertion["seed_row_id"]
+                        or type(matches[0].get("passed")) is not bool
+                        or any(field not in matches[0] or field not in expected for field in ("before", "after"))):
                     statuses.append("待確認")
                 elif (matches[0].get("passed") is True
                       and matches[0].get("seed_row_id") == assertion.get("seed_row_id")
@@ -849,16 +932,14 @@ def write_review_report(run_root, findings, fingerprint, *, repo=None, output_di
         checked = validate_release_output(output_dir, run)
         fresh_findings = [f for f in checked if f["code"] not in ("semantic_review_pending", "sql_content_status")]
         current_identity = next(f["status"] for f in checked if f["code"] == "static_sql_status") == "通過"
-        if current_identity:
-            runtime = _report_runtime(source, exclusions, metadata, file_hash(Path(output_dir) / OPERATOR_FILES[1]), run)
+        runtime = _report_runtime(source, exclusions, metadata, file_hash(Path(output_dir) / OPERATOR_FILES[1]), run,
+                                  identity_complete=_runtime_identity(checked))
         semantic_findings = validate_semantic_review(
             read_json(run / 'semantic_review_record.json'), source,
             exclusions, current.sha256)
     except (ValueError, OSError, KeyError):
         semantic_findings = [_finding('semantic_review_pending', blocking=False)]
     findings = list(findings) + fresh_findings + semantic_findings
-    if runtime[0] == "未通過":
-        findings.append(_finding("validation_sql_defect"))
     report = plain_path(run / "05_版更審查報告.md")
     values = {"SQLSTATUS": _report_status(findings, "sql_correctness", "sql_content_status"),
               "DEPLOYSTATUS": _report_status(findings, "deployment_validation", "deployment_validation_status"),

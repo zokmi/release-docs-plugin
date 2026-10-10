@@ -164,6 +164,7 @@ def test_business_data_source_finding_does_not_lower_sql_status(release):
     source['findings'].append({'code': 'formal_rows_unavailable', 'domain': 'business_data_validation',
                                'blocking': True, 'status': '未通過'})
     write_json(path, source)
+    update_metadata(release, localdb_validation=report_query_evidence(release))
     record, _, _, fingerprint = record_for(release)
     record['unit_reviews'][0]['checks']['preservation']['conclusion'] = 'N/A'
     record['unresolved'] = [{'domain': 'business_data_validation', 'reason': '正式 before/after 不可取得'}]
@@ -1205,6 +1206,165 @@ def test_report_malformed_finding_identity_is_safe_and_non_executable(release):
                                  "blocking": True, "status": "SECRET_STATUS"}])
     assert "SECRET_" not in text
     assert "invalid_finding [sql_correctness；待確認；阻塞]" in text
+
+
+def complete_report_review(release):
+    from test_semantic_review import record_for
+    from semantic_review import write_semantic_review
+    record, _, _, fingerprint = record_for(release)
+    record["unresolved"] = [{"domain": "business_data_validation", "reason": "SECRET_FORMAL_ROWS_UNAVAILABLE"}]
+    write_semantic_review(release[2], record)
+    return fingerprint
+
+
+def assert_runtime_review(release, sql_status, query_status, deployment_status):
+    fingerprint = complete_report_review(release)
+    result = api().validate_release_output(release[1], release[2], repo=release[0])
+    assert next(f["status"] for f in result if f["code"] == "sql_content_status") == sql_status
+    assert next(f["status"] for f in result if f["code"] == "deployment_validation_status") == deployment_status
+    assert next(f["status"] for f in result if f["code"] == "static_sql_status") == "通過"
+    assert not any(f["code"] == "semantic_review_pending" for f in result)
+    business = [f for f in result if f["domain"] == "business_data_validation"]
+    assert business and all(not f["blocking"] for f in business)
+    text = api().write_review_report(release[2], result, fingerprint,
+                                    repo=release[0], output_dir=release[1]).read_text(encoding="utf-8")
+    assert "SQL 內容審核：" + sql_status in text
+    assert "validation SQL 執行：" + query_status in text
+    assert "部署驗證：" + deployment_status in text
+    assert "SECRET_" not in text and "SELECT 1" not in text
+    return result, text
+
+
+@pytest.mark.parametrize("missing", ["all_localdb", "commit_query", "failure_round", "fixture_identity"])
+def test_report_review_missing_runtime_correctness_prevents_sql_pass(release, missing):
+    evidence = report_query_evidence(release)
+    if missing == "commit_query":
+        del evidence["rounds"]["commit"]["checks"]["validation_queries"]
+    elif missing == "failure_round":
+        del evidence["rounds"]["injected_failure"]
+    elif missing == "fixture_identity":
+        evidence["fixture_manifest_sha256"] = "0" * 64
+    if missing != "all_localdb":
+        update_metadata(release, localdb_validation=evidence)
+    query_status = "通過" if missing == "failure_round" else "待確認"
+    deployment = "通過" if missing == "commit_query" else "待確認"
+    result, _ = assert_runtime_review(release, "待確認", query_status, deployment)
+    pending = [f for f in result if f["domain"] == "sql_correctness" and f["status"] == "待確認"]
+    assert pending and all(not f["blocking"] for f in pending)
+
+
+def test_report_review_query_defect_is_consistent_in_api_cli_and_report(release):
+    evidence = report_query_evidence(release)
+    evidence["rounds"]["commit"]["checks"]["validation_queries"][0]["actual"] = 2
+    update_metadata(release, localdb_validation=evidence)
+    result, _ = assert_runtime_review(release, "未通過", "未通過", "通過")
+    assert any(f["code"] == "validation_sql_defect" and f["domain"] == "sql_correctness" and f["blocking"] for f in result)
+    command = [sys.executable, "-B", str(REVIEW / "validate_release_output.py"),
+               "--repo", str(release[0]), "--output-dir", str(release[1]), "--run-root", str(release[2])]
+    cli = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert cli.returncode == 1
+    cli_result = json.loads(cli.stdout)
+    assert next(f["status"] for f in cli_result if f["code"] == "sql_content_status") == "未通過"
+    assert any(f["code"] == "validation_sql_defect" and f["blocking"] for f in cli_result)
+
+
+@pytest.mark.parametrize("damage", [None, "not_run", "round_hash", "source_hash", "baseline_hash", "session", "fixture_hash"])
+def test_report_review_failed_localdb_retains_only_trusted_negative_query(release, damage):
+    evidence = report_query_evidence(release)
+    evidence["status"] = "failed"
+    row = evidence["rounds"]["commit"]
+    row.update(status="failed", exit_code=1, error_output_summary="SECRET_EXPECTED_QUERY_FAILURE")
+    row["checks"]["validation_queries"][0]["actual"] = 2
+    if damage == "not_run":
+        row["status"] = "not_run"
+    elif damage == "round_hash":
+        row["artifact_sha256"] = "0" * 64
+    elif damage == "source_hash":
+        row["checks"]["validation_queries"][0]["source_hash"] = "0" * 64
+    elif damage == "baseline_hash":
+        row["baseline_sha256"] = "0" * 64
+    elif damage == "session":
+        row["session_id"] = evidence["rounds"]["validate_only"]["session_id"]
+    elif damage == "fixture_hash":
+        evidence["fixture_sha256"] = "0" * 64
+    update_metadata(release, localdb_validation=evidence)
+    state = "未通過" if damage is None else "待確認"
+    result, text = assert_runtime_review(release, state, state, "未通過")
+    assert (any(f["code"] == "validation_sql_defect" and f["blocking"] for f in result)) == (damage is None)
+    assert "- validate_only：未通過" not in text and "- rerun：未通過" not in text
+
+
+@pytest.mark.parametrize("damage, expected", [("actual", "未通過"), ("negative", "未通過"),
+                                             ("seed_identity", "待確認"), ("missing", "待確認")])
+def test_report_review_declared_fixture_assertion_contributes_sql_correctness(release, damage, expected):
+    evidence = report_query_evidence(release)
+    path = release[2] / "source_unit_metadata.json"
+    source = json.loads(path.read_text())
+    assertion = {"id": "SECRET_ASSERTION", "seed_row_id": "SECRET_SEED",
+                 "expected_by_round": {name: {"before": 1, "after": 1} for name in evidence["rounds"]}}
+    source["units"][0]["expected_assertions"] = [assertion]
+    write_json(path, source)
+    evidence["expected_assertions"] = [{"unit_id": "customer", **assertion}]
+    for row in evidence["rounds"].values():
+        row["data_checks"] = [{"unit_id": "customer", "id": assertion["id"], "seed_row_id": assertion["seed_row_id"],
+                               "passed": True, "before": 1, "after": 1}]
+    observed = evidence["rounds"]["commit"]["data_checks"][0]
+    if damage == "actual":
+        observed["after"] = 2
+    elif damage == "negative":
+        observed["passed"] = False
+    elif damage == "seed_identity":
+        observed["seed_row_id"] = "SECRET_DIFFERENT_SEED"
+    elif damage == "missing":
+        evidence["rounds"]["commit"]["data_checks"] = []
+    update_metadata(release, localdb_validation=evidence)
+    result, text = assert_runtime_review(release, expected, "通過", "通過")
+    assert "fixture assertion 查核：" + expected in text
+    fixture = [f for f in result if f["code"].startswith("fixture_assertion_")]
+    assert fixture and all(f["domain"] == "sql_correctness" for f in fixture)
+    assert any(f["blocking"] for f in fixture) == (expected == "未通過")
+
+
+@pytest.mark.parametrize("code, section", [("baseline_model_conflict", "schema／來源定義審查"),
+                                          ("partial_exclusion", "#5005 排除審查")])
+def test_report_review_concrete_source_findings_survive_actual_metadata(release, code, section):
+    path = release[2] / "source_unit_metadata.json"
+    source = json.loads(path.read_text())
+    source["findings"].extend([
+        {"code": code, "blocking": True, "domain": "business_data_validation", "reason": "SELECT SECRET_SCHEMA_VALUE"},
+        {"code": "SECRET_UNKNOWN_CODE", "blocking": True, "reason": "SECRET_REASON"},
+        {"code": "SECRET_BUSINESS_CODE", "blocking": True, "domain": "business_data_validation"},
+    ])
+    write_json(path, source)
+    update_metadata(release, localdb_validation=report_query_evidence(release))
+    fingerprint = complete_report_review(release)
+    result = api().validate_release_output(release[1], release[2], repo=release[0])
+    concrete = [f for f in result if f["code"] == code]
+    assert concrete and concrete[0]["domain"] == "sql_correctness" and concrete[0]["blocking"]
+    assert "SECRET_" not in repr(result)
+    text = api().write_review_report(release[2], result, fingerprint,
+                                    repo=release[0], output_dir=release[1]).read_text(encoding="utf-8")
+    assert section + "：未通過" in text
+    assert "- " + code + " [sql_correctness；未通過；阻塞]" in text
+    assert "SQL 內容審核：未通過" in text and "部署驗證：通過" in text
+    assert "- commit：通過" in text
+    assert "SECRET_" not in text and "SELECT " not in text
+
+
+def test_report_review_business_limits_and_non_mutating_na_keep_complete_sql_pass(release):
+    evidence, _ = _na_localdb_evidence(release)
+    path = release[2] / "source_unit_metadata.json"
+    source = json.loads(path.read_text())
+    source["findings"].append({"code": "formal_rows_unavailable", "domain": "business_data_validation",
+                               "blocking": True, "status": "未通過", "reason": "SECRET_FORMAL_VALUES"})
+    write_json(path, source)
+    queries = report_query_evidence(release)
+    for name, row in evidence["rounds"].items():
+        row["checks"] = queries["rounds"][name]["checks"]
+    update_metadata(release, localdb_validation=evidence)
+    result, text = assert_runtime_review(release, "通過", "通過", "通過")
+    assert "fixture assertion 查核：N/A" in text
+    assert not any(f["blocking"] for f in result)
 
 
 @pytest.mark.parametrize("damage", ["unknown_id", "missing_units", "missing_evidence", "wrong_hash",
