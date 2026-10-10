@@ -170,6 +170,42 @@ def test_unsafe_unit_is_blocked_before_writing(tmp_path, sql, code):
     assert not destination.parent.exists()
 
 
+@pytest.mark.parametrize("sql", [
+    "sys.sp_executesql N'COMMIT TRANSACTION';",
+    "[sys].[sp_executesql] N'COMMIT TRANSACTION';",
+    '"sys"."sp_executesql" N\'COMMIT TRANSACTION\';',
+    "dbo.UnknownProcedure @value = 1;",
+])
+def test_implicit_module_invocation_is_blocked(tmp_path, sql):
+    module = api()
+    output = tmp_path / "01_部署SQL.sql"
+    with pytest.raises(module.SQLContractError) as error:
+        module.assemble_deployment_sql([unit("implicit", "DATA", sql)], output)
+    assert "opaque_execution" in codes(error.value.findings)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("sql", [
+    "UPDATE OtherDatabase.dbo.T SET Id = 1;",
+    "INSERT INTO [OtherDatabase].[dbo].[T] (Id) VALUES (1);",
+    'DELETE FROM "OtherDatabase"."dbo"."T" WHERE Id = 1;',
+    "MERGE ServerName.OtherDatabase.dbo.T AS target USING dbo.Source AS src ON target.Id = src.Id WHEN MATCHED THEN UPDATE SET Id = src.Id;",
+    "SELECT 1 FROM OtherDatabase..T;",
+])
+def test_cross_database_references_are_blocked(tmp_path, sql):
+    module = api()
+    output = tmp_path / "01_部署SQL.sql"
+    with pytest.raises(module.SQLContractError) as error:
+        module.assemble_deployment_sql([unit("crossdb", "DATA", sql)], output)
+    assert "cross_database_reference" in codes(error.value.findings)
+    assert not output.exists()
+
+
+def test_schema_qualified_same_database_targets_are_allowed(tmp_path):
+    module, _, sql = assembled(tmp_path, units=[unit("same_db", "DATA", "UPDATE [dbo].[T] SET Id = 1;\nINSERT INTO dbo.T (Id) VALUES (2);")])
+    assert not module.validate_sql_contract(sql)
+
+
 def test_comments_and_literal_keywords_do_not_fake_or_break_contract(tmp_path):
     sql = "SELECT N'COMMIT TRANSACTION; GO; ALTER DATABASE x; ''escaped''';\n/* BEGIN TRAN; /* inner */ COMMIT; */\n-- RAISERROR(1, 1, 1);\nSELECT [COMMIT], \"ROLLBACK\" FROM dbo.T;"
     module, _, text = assembled(tmp_path, units=[unit("text", "DATA", sql)])

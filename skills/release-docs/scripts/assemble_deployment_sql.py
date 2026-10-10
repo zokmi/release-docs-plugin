@@ -16,6 +16,12 @@ Finding = dict
 _ID = re.compile(r"[A-Za-z_][A-Za-z0-9_.:-]{0,127}\Z")
 _HEX = re.compile(r"[0-9a-fA-F]{64}\Z")
 _ASCII_UPPER = str.maketrans("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+_SQL_NAME = r'(?:[A-Z_][A-Z0-9_$#]*|\[(?:\]\]|[^\]])+\]|"(?:""|[^"])+")'
+_STATEMENT_START = frozenset("""
+SELECT INSERT UPDATE DELETE MERGE CREATE ALTER DROP TRUNCATE IF BEGIN END
+DECLARE SET WITH THROW PRINT RAISERROR RETURN GOTO WAITFOR DBCC GRANT DENY
+REVOKE EXEC EXECUTE BACKUP RESTORE RECONFIGURE SAVE COMMIT ROLLBACK
+""".split())
 _CONTEXT = ("ReleaseId", "RawValidateOnly", "ValidateOnly", "Phase", "UnitId", "SourcePath",
             "SourceRevision", "SourceLine", "TransactionAction", "ErrorNumber",
             "ErrorSeverity", "ErrorState", "ErrorProcedure", "ErrorLine",
@@ -44,7 +50,7 @@ def _finding(code, **metadata):
     return {"code": code, "blocking": True, **metadata}
 
 
-def _lex(sql):
+def _lex(sql, keep_identifiers=False):
     """Mask comments, literals and quoted identifiers, preserving offsets/lines.
 
     Nested block comments and doubled quote delimiters follow SQL Server lexical
@@ -94,7 +100,8 @@ def _lex(sql):
                 else:
                     index += 1
             malformed |= not closed
-            mask(start, index)
+            if sql[start] == "'" or not keep_identifiers:
+                mask(start, index)
         else:
             index += 1
     # Unicode uppercasing can expand characters (e.g. ß -> SS), which would
@@ -120,6 +127,7 @@ def _set_options(code):
 
 def _hazards(sql, is_unit=False):
     code, malformed = _lex(sql)
+    names_code, _ = _lex(sql, keep_identifiers=True)
     findings = []
     checks = [
         ("batch_separator", r"^\s*GO\b[^\r\n]*$"),
@@ -138,6 +146,16 @@ def _hazards(sql, is_unit=False):
     for name, pattern in checks:
         if _matches(pattern, code):
             findings.append(_finding(name))
+    # SQL Server permits the first procedure call in a batch to omit EXEC.
+    # Preserve delimited identifiers here; the regular hazard lexer masks them.
+    first = re.match(r"\s*(?:;\s*)*(" + _SQL_NAME + r")", names_code)
+    if first and (first[1].startswith(("[", '"')) or first[1] not in _STATEMENT_START):
+        findings.append(_finding("opaque_execution"))
+    # One database is the release boundary. A third (or fourth) identifier
+    # component names another database/server; db..object is also outside it.
+    if (_matches(r"(?<![A-Z0-9_$#@])" + _SQL_NAME + r"\s*\.\s*" + _SQL_NAME + r"\s*\.\s*" + _SQL_NAME, names_code)
+            or _matches(r"(?<![A-Z0-9_$#@])" + _SQL_NAME + r"\s*\.\s*\.\s*" + _SQL_NAME, names_code)):
+        findings.append(_finding("cross_database_reference"))
     for options, state in _set_options(code):
         if "IMPLICIT_TRANSACTIONS" in options and state == "ON":
             findings.append(_finding("implicit_transactions_enabled"))

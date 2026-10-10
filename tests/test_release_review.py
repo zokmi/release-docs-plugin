@@ -138,6 +138,28 @@ def test_review_rejects_stale_controlled_unit_content(release):
     assert "unit_sql_hash_mismatch" in codes(release)
 
 
+def test_review_preserves_crlf_source_bytes_when_hashing(release):
+    from assemble_deployment_sql import _generated_units
+    sql_path = release[1] / "01_部署SQL.sql"
+    sql = sql_path.read_bytes().decode("utf-8")
+    generated, errors = _generated_units(sql)
+    assert not errors and len(generated) == 1
+    old_source = generated[0][1]
+    crlf_source = old_source.replace("\n", "\r\n")
+    old_hash = hashlib.sha256(old_source.encode("utf-8")).hexdigest()
+    new_hash = hashlib.sha256(crlf_source.encode("utf-8")).hexdigest()
+    sql = sql.replace("EXEC sys.sp_executesql N'" + old_source.replace("'", "''") + "';",
+                      "EXEC sys.sp_executesql N'" + crlf_source.replace("'", "''") + "';")
+    sql = sql.replace('"sql_hash": "' + old_hash + '"', '"sql_hash": "' + new_hash + '"')
+    source_path = release[2] / "source_unit_metadata.json"
+    metadata = json.loads(source_path.read_text(encoding="utf-8"))
+    metadata["units"][0]["sql_hash"] = new_hash
+    write_json(source_path, metadata)
+    replace_sql(release, sql)
+    assert "unit_sql_hash_mismatch" not in codes(release)
+    assert status(release, "sql_content_status") == "通過"
+
+
 @pytest.mark.parametrize("name", ["02_資料SQL.sql", "03_例外排除.json", "04_參數異動.md",
                                     "lifecycle_exclusion_manifest.json", "source_unit_metadata.json", "unknown.txt", "nested"])
 def test_undeclared_operator_files_and_directories_block_review(release, name):

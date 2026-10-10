@@ -43,6 +43,7 @@ rerun_risk included_unit_mapping_mismatch duplicate_column guide_exclusion_misma
 incomplete_deployment_evidence unsupported_deployment_pass_claim deployment_proved_sql_defect
 semantic_review_pending semantic_sql_defect invalid_finding
 batch_separator non_transactional_sql batch_only_sql early_exit database_switch opaque_execution
+cross_database_reference
 unit_transaction_control reserved_context_mutation implicit_transactions_enabled xact_abort_disabled
 execution_disabled malformed_sql_lexeme silent_catch raiserror_without_throw missing_xact_abort
 missing_try_catch transaction_count missing_implicit_transactions_off unconditional_transaction_start
@@ -387,7 +388,9 @@ def validate_release_output(output_dir, run_root) -> list[Finding]:
     if not sql_path.is_file() or not guide_path.is_file():
         return _summary(findings)
     try:
-        sql = sql_path.read_text(encoding="utf-8-sig")
+        # Path.read_text translates embedded CRLF to LF on Windows. Source SQL
+        # hashes cover the exact unit bytes, so preserve newlines while decoding.
+        sql = sql_path.read_bytes().decode("utf-8-sig")
         guide = guide_path.read_text(encoding="utf-8-sig")
     except (UnicodeError, OSError):
         return _summary(findings + [_finding("unreadable_operator_file")])
