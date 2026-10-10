@@ -292,12 +292,19 @@ def test_localdb_status_accepts_only_complete_current_artifact_evidence(tmp_path
     analysis, artifact, manifest = inputs(tmp_path)
     path = manifest.parent / "lifecycle_metadata.json"
     metadata = json.loads(path.read_text())
+    baseline = tmp_path / "baseline.sql"
+    fixture = tmp_path / "fixture.sql"
+    baseline.write_text("CREATE TABLE dbo.Existing (Id int);", encoding="utf-8")
+    fixture.write_text("INSERT INTO dbo.Existing VALUES (1);", encoding="utf-8")
     evidence = {"status": "passed", "exit_code": 0, "server": "(localdb)\\test",
                 "database": "disposable", "provider_version": "SQL Server test",
-                "tool_version": "runner test", "baseline_source": "old.sql", "fixture_source": "fixture.sql",
+                "tool_version": "runner test", "baseline_source": str(baseline),
+                "baseline_sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+                "fixture_source": str(fixture), "fixture_sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
                 "command": "isolated runner", "checks": ["all checks passed"],
                 "error_output_summary": ""}
     metadata["localdb_validation"] = {"status": "passed", "artifact_sha256": artifact.sha256,
+                                     "fixture_source": str(fixture), "fixture_sha256": evidence["fixture_sha256"],
                                      "rounds": {name: dict(evidence) for name in ("validate_only", "commit", "rerun", "injected_failure")}}
     metadata["localdb_validation"]["rounds"]["injected_failure"]["error_output_summary"] = "Expected THROW 51000, rollback and later-unit stop confirmed"
     path.write_text(json.dumps(metadata))
@@ -307,6 +314,37 @@ def test_localdb_status_accepts_only_complete_current_artifact_evidence(tmp_path
     path.write_text(json.dumps(metadata))
     module.render_release_documents(analysis, artifact, manifest, tmp_path / "stale")
     assert "LocalDB：待確認" in (tmp_path / "stale/00_上線指引.md").read_text(encoding="utf-8")
+
+
+def test_guide_requires_current_fixture_and_data_checks_for_data_units(tmp_path):
+    module = api()
+    analysis, artifact, manifest = inputs(tmp_path)
+    baseline = tmp_path / "baseline.sql"
+    fixture = tmp_path / "fixture.sql"
+    baseline.write_text("CREATE TABLE dbo.Existing (Id int);", encoding="utf-8")
+    fixture.write_text("INSERT INTO dbo.Existing VALUES (1);", encoding="utf-8")
+    path = manifest.parent / "lifecycle_metadata.json"
+    metadata = json.loads(path.read_text())
+    round_evidence = {"status": "passed", "exit_code": 0, "server": "(localdb)\\test", "database": "disposable",
+                      "provider_version": "SQL Server test", "tool_version": "runner test",
+                      "baseline_source": str(baseline), "baseline_sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+                      "fixture_source": str(fixture), "fixture_sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
+                      "command": "isolated runner", "checks": ["all checks passed"], "error_output_summary": ""}
+    rounds = {name: dict(round_evidence) for name in ("validate_only", "commit", "rerun", "injected_failure")}
+    rounds["injected_failure"]["error_output_summary"] = "Expected error rollback and stop"
+    metadata["localdb_validation"] = {"status": "passed", "artifact_sha256": artifact.sha256,
+                                      "fixture_source": str(fixture), "fixture_sha256": round_evidence["fixture_sha256"],
+                                      "rounds": rounds}
+    path.write_text(json.dumps(metadata), encoding="utf-8")
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / "current")
+    assert "LocalDB：通過" in (tmp_path / "current/00_上線指引.md").read_text(encoding="utf-8")
+    fixture.write_text("INSERT INTO dbo.Existing VALUES (2);", encoding="utf-8")
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / "changed")
+    assert "LocalDB：待確認" in (tmp_path / "changed/00_上線指引.md").read_text(encoding="utf-8")
+    fixture.write_text("INSERT INTO dbo.Existing VALUES (1);", encoding="utf-8")
+    analysis.units[0]["phase"] = "DATA"
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / "data")
+    assert "LocalDB：待確認" in (tmp_path / "data/00_上線指引.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("filename", ["01_部署SQL.sql", "lifecycle_exclusion_manifest.json"])

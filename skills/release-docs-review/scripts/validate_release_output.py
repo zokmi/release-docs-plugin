@@ -66,7 +66,7 @@ def _summary(findings, deployment="待確認"):
                                 domain="deployment_validation", status=deployment)]
 
 
-def _deployment(metadata, digest):
+def _deployment(metadata, digest, source=None, exclusions=()):
     validation = metadata.get("localdb_validation")
     if not isinstance(validation, dict):
         return "待確認"
@@ -74,8 +74,23 @@ def _deployment(metadata, digest):
         return "未通過"
     if validation.get("status") != "passed" or validation.get("artifact_sha256") != digest:
         return "待確認"
+    fixture = validation.get("fixture_source")
+    fixture_hash = validation.get("fixture_sha256")
+    if not _current_evidence_hash(fixture, fixture_hash):
+        return "待確認"
     rounds = validation.get("rounds")
     if not isinstance(rounds, dict):
+        return "待確認"
+    excluded = {uid for item in exclusions for uid in item.get("unit_ids", [])}
+    units = source.get("units", []) if isinstance(source, dict) else []
+    data_units = {unit.get("unit_id") for unit in units if isinstance(unit, dict)
+                  and unit.get("phase") == "DATA" and isinstance(unit.get("unit_id"), str)
+                  and unit.get("unit_id") not in excluded}
+    assertions = validation.get("expected_assertions")
+    if data_units and (not isinstance(assertions, list) or not assertions
+                       or any(not isinstance(item, dict) or item.get("unit_id") not in data_units
+                              or not isinstance(item.get("id"), str) or not item["id"] for item in assertions)
+                       or {item["unit_id"] for item in assertions} != data_units):
         return "待確認"
     text_fields = ("server", "database", "provider_version", "tool_version", "baseline_source", "fixture_source")
     for name in ("validate_only", "commit", "rerun", "injected_failure"):
@@ -90,7 +105,31 @@ def _deployment(metadata, digest):
                 or evidence.get("tool_version") in (None, "", "unknown")
                 or (name == "injected_failure" and not evidence["error_output_summary"].strip())):
             return "待確認"
+        if (evidence.get("fixture_source") != fixture
+                or evidence.get("fixture_sha256") != fixture_hash
+                or not _current_evidence_hash(evidence.get("baseline_source"), evidence.get("baseline_sha256"))):
+            return "待確認"
+        if data_units:
+            checks = evidence.get("data_checks")
+            observed = {(item.get("unit_id"), item.get("id")) for item in checks
+                        if isinstance(item, dict) and item.get("passed") is True
+                        and isinstance(item.get("unit_id"), str) and isinstance(item.get("id"), str)
+                        and "before" in item and "after" in item} if isinstance(checks, list) else set()
+            if not {(item["unit_id"], item["id"]) for item in assertions}.issubset(observed):
+                return "待確認"
     return "通過"
+
+
+def _current_evidence_hash(source, expected):
+    if not isinstance(source, str) or not source or not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+        return False
+    try:
+        path = plain_path(source)
+        if path.suffix.lower() not in (".sql", ".dacpac", ".json"):
+            return False
+        return file_hash(path) == expected
+    except (ValueError, OSError):
+        return False
 
 
 def _visible_sql(text):
@@ -410,7 +449,7 @@ def validate_release_output(output_dir, run_root) -> list[Finding]:
     section = re.search(r"^## 本次排除摘要\s*\n(.*?)(?=^## |\Z)", guide, re.M | re.S)
     if section is None or section.group(1).strip() != _projection(exclusions):
         findings.append(_finding("guide_exclusion_mismatch"))
-    deployment = _deployment(metadata, digest)
+    deployment = _deployment(metadata, digest, source, exclusions)
     validation = metadata.get("localdb_validation")
     if isinstance(validation, dict) and validation.get("status") == "passed" and deployment != "通過":
         findings.append(_finding("incomplete_deployment_evidence", blocking=False, domain="deployment_validation"))

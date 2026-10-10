@@ -250,13 +250,62 @@ def test_deliberate_sql_and_dependency_defects_are_blocking(release, defect, exp
 
 
 def localdb_evidence(release):
+    run = release[2]
+    baseline = run / "baseline.sql"
+    fixture = run / "fixture.sql"
+    baseline.write_text("CREATE TABLE dbo.Existing (Id int);\n", encoding="utf-8")
+    fixture.write_text("INSERT INTO dbo.Existing VALUES (1);\n", encoding="utf-8")
+    baseline_hash = hashlib.sha256(baseline.read_bytes()).hexdigest()
+    fixture_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    artifact_hash = hashlib.sha256((release[1] / "01_部署SQL.sql").read_bytes()).hexdigest()
     evidence = {"status": "passed", "exit_code": 0, "server": "(localdb)\\release-test",
                 "database": "disposable", "provider_version": "test provider", "tool_version": "test runner",
-                "baseline_source": "old.sql", "fixture_source": "fixture.sql", "command": ["runner", "--isolated"],
+                "baseline_source": str(baseline), "baseline_sha256": baseline_hash,
+                "fixture_source": str(fixture), "fixture_sha256": fixture_hash,
+                "command": ["runner", "--isolated"],
                 "error_output_summary": "", "checks": ["checks passed"]}
     rounds = {name: dict(evidence) for name in ("validate_only", "commit", "rerun", "injected_failure")}
     rounds["injected_failure"]["error_output_summary"] = "Expected failure rollback and stop confirmed"
-    return {"status": "passed", "artifact_sha256": hashlib.sha256((release[1] / "01_部署SQL.sql").read_bytes()).hexdigest(), "rounds": rounds}
+    return {"status": "passed", "artifact_sha256": artifact_hash,
+            "fixture_source": str(fixture), "fixture_sha256": fixture_hash, "rounds": rounds}
+
+
+@pytest.mark.parametrize("damage", ["missing_fixture_hash", "changed_fixture", "changed_baseline", "wrong_round_hash"])
+def test_deployment_pass_requires_current_fixture_and_baseline_hashes(release, damage):
+    evidence = localdb_evidence(release)
+    if damage == "missing_fixture_hash":
+        del evidence["fixture_sha256"]
+    elif damage == "changed_fixture":
+        Path(evidence["fixture_source"]).write_text("INSERT INTO dbo.Existing VALUES (2);\n")
+    elif damage == "changed_baseline":
+        Path(evidence["rounds"]["commit"]["baseline_source"]).write_text("SELECT 2;\n")
+    else:
+        evidence["rounds"]["commit"]["fixture_sha256"] = "0" * 64
+    update_metadata(release, localdb_validation=evidence)
+    assert status(release, "deployment_validation_status") == "待確認"
+    assert status(release, "sql_content_status") == "通過"
+
+
+def test_fingerprint_changes_when_fixture_or_localdb_evidence_changes(release):
+    evidence = localdb_evidence(release)
+    update_metadata(release, localdb_validation=evidence)
+    module = api("review_fingerprint")
+    first = module.review_fingerprint(*release)
+    Path(evidence["fixture_source"]).write_text("INSERT INTO dbo.Existing VALUES (2);\n")
+    assert first.sha256 != module.review_fingerprint(*release).sha256
+    second = module.review_fingerprint(*release)
+    write_json(release[2] / "localdb_validation.json", {"schema_version": 1, **evidence})
+    assert second.sha256 != module.review_fingerprint(*release).sha256
+
+
+def test_data_unit_deployment_pass_requires_fixture_data_checks(release):
+    evidence = localdb_evidence(release)
+    source_path = release[2] / "source_unit_metadata.json"
+    source = json.loads(source_path.read_text())
+    source["units"][0]["phase"] = "DATA"
+    write_json(source_path, source)
+    update_metadata(release, localdb_validation=evidence)
+    assert status(release, "deployment_validation_status") == "待確認"
 
 
 @pytest.mark.parametrize("damage", [None, "missing_round", "missing_field", "wrong_hash", "bad_exit", "error_summary", "empty_checks"])

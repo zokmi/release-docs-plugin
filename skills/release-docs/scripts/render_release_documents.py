@@ -141,15 +141,26 @@ def _exclusion_summary(exclusions):
     return "\n".join(blocks)
 
 
-def _status(metadata, artifact):
+def _status(metadata, artifact, data_ids=()):
     validation = metadata.get("localdb_validation")
     status = "未執行"
     if isinstance(validation, dict):
         status = "未執行" if validation.get("status") == "not_run" else "待確認"
         if validation.get("status") == "failed":
             status = "未通過"
-        if validation.get("status") == "passed" and validation.get("artifact_sha256") == artifact.sha256:
+        if (validation.get("status") == "passed" and validation.get("artifact_sha256") == artifact.sha256
+                and _current_evidence_hash(validation.get("fixture_source"), validation.get("fixture_sha256"))):
             rounds = validation.get("rounds", {})
+            assertions = validation.get("expected_assertions")
+            required = set()
+            if data_ids:
+                if isinstance(assertions, list) and assertions and all(
+                        isinstance(item, dict) and item.get("unit_id") in data_ids
+                        and isinstance(item.get("id"), str) and item["id"] for item in assertions) and {
+                            item["unit_id"] for item in assertions} == data_ids:
+                    required = {(item["unit_id"], item["id"]) for item in assertions}
+                else:
+                    rounds = {}
             fields = ("server", "database", "provider_version", "tool_version", "baseline_source",
                       "fixture_source", "command", "checks")
             if isinstance(rounds, dict) and all(
@@ -160,9 +171,27 @@ def _status(metadata, artifact):
                     and rounds[name].get("tool_version") not in ("unknown", "")
                     and (name != "injected_failure" or bool(rounds[name]["error_output_summary"].strip()))
                     and all(rounds[name].get(k) for k in fields)
+                    and rounds[name].get("fixture_source") == validation["fixture_source"]
+                    and rounds[name].get("fixture_sha256") == validation["fixture_sha256"]
+                    and _current_evidence_hash(rounds[name].get("baseline_source"), rounds[name].get("baseline_sha256"))
+                    and (not required or required.issubset({(item.get("unit_id"), item.get("id"))
+                         for item in (rounds[name].get("data_checks") if isinstance(rounds[name].get("data_checks"), list) else []) if isinstance(item, dict)
+                         and isinstance(item.get("unit_id"), str) and isinstance(item.get("id"), str)
+                         and item.get("passed") is True and "before" in item and "after" in item}))
                     for name in ("validate_only", "commit", "rerun", "injected_failure")):
                 status = "通過（隔離 evidence 已記錄）"
     return "SQL 內容審核：待確認（由獨立審核結果確認）。\n\nLocalDB：" + status + "。"
+
+
+def _current_evidence_hash(source, expected):
+    if (not isinstance(source, str) or not source or not isinstance(expected, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected)):
+        return False
+    try:
+        path = _plain_path(source)
+        return path.suffix.lower() in (".sql", ".dacpac", ".json") and path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == expected
+    except (ValueError, OSError):
+        return False
 
 
 def _parameters(changes):
@@ -244,7 +273,8 @@ def render_release_documents(analysis, deployment_artifact, lifecycle_record, ou
         "MODE": ("ValidateOnly=1（未設定 SESSION_CONTEXT(N'ReleaseDocs.ValidateOnly') 時）；"
                  "只有在同一新 session 執行 `EXEC sys.sp_set_session_context "
                  "@key = N'ReleaseDocs.ValidateOnly', @value = 0;` 才可提交"),
-        "STATUS": _status(metadata, deployment_artifact)})}
+        "STATUS": _status(metadata, deployment_artifact,
+                          {uid for uid, unit in expected.items() if unit.get("phase") == "DATA"})})}
     changes = getattr(analysis, "parameter_changes", [])
     parameters = _parameters(changes)
     if changes:
