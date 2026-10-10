@@ -83,7 +83,8 @@ def _preservation(check, unit, impact):
 
 
 def _review(value, conclusions=CONCLUSIONS):
-    return (isinstance(value, dict) and value.get('conclusion') in conclusions
+    return (isinstance(value, dict) and isinstance(value.get('conclusion'), str)
+            and value['conclusion'] in conclusions
             and isinstance(value.get('reason'), str) and bool(value['reason'].strip()))
 
 
@@ -92,10 +93,8 @@ def validate_semantic_review(record, source, exclusions, fingerprint_sha256):
             or not re.fullmatch(r'[0-9a-f]{64}', str(fingerprint_sha256))
             or record.get('evidence_fingerprint') != fingerprint_sha256
             or not isinstance(record.get('method'), str) or not record['method'].strip()
-            or record.get('conclusion') not in CONCLUSIONS
+            or not isinstance(record.get('conclusion'), str) or record['conclusion'] not in CONCLUSIONS
             or not isinstance(record.get('unresolved'), list)):
-        return [_finding()]
-    if not _review(record.get('scope_review')) or not _review(record.get('parameter_review')):
         return [_finding()]
     units = source.get('units')
     reviews = record.get('unit_reviews')
@@ -108,22 +107,35 @@ def validate_semantic_review(record, source, exclusions, fingerprint_sha256):
         return [_finding()]
     if len(ids) != len(set(ids)) or set(ids) != set(included):
         return [_finding()]
-    conclusions = [record['conclusion'], record['scope_review']['conclusion'], record['parameter_review']['conclusion']]
+    # Establish every unit's identity before trusting any failure in the record.
     for item in reviews:
         unit = included[item['unit_id']]
-        impact = classify_data_impact(unit)
-        if (any(item.get(k) != unit.get(k) or not isinstance(item.get(k), str) or not item[k]
-                for k in ('source_path', 'source_revision', 'source_hash'))
-                or item.get('conclusion') not in CONCLUSIONS
-                or not isinstance(item.get('checks'), dict) or set(item['checks']) != CHECKS
-                or not all(_review(check, CONCLUSIONS | {'N/A'} if name == 'preservation' else CONCLUSIONS)
-                           for name, check in item['checks'].items())):
+        if any(item.get(k) != unit.get(k) or not isinstance(item.get(k), str) or not item[k]
+               for k in ('source_path', 'source_revision', 'source_hash')):
             return [_finding()]
-        conclusions.append(item['conclusion'])
-        conclusions.extend('passed' if check['conclusion'] == 'N/A' else check['conclusion']
-                           for check in item['checks'].values())
-        # Preservation-specific incompleteness must not erase a trusted failure.
-        if impact == 'unknown' or not _preservation(item['checks']['preservation'], unit, impact):
+    # Malformed sibling checks are incomplete evidence, not grounds to erase a
+    # well-formed failed conclusion tied to the current evidence identity.
+    conclusions = [record['conclusion']]
+    for name in ('scope_review', 'parameter_review'):
+        check = record.get(name)
+        conclusions.append(check['conclusion'] if _review(check) else 'pending')
+    for item in reviews:
+        conclusion = item.get('conclusion')
+        conclusions.append(conclusion if isinstance(conclusion, str) and conclusion in CONCLUSIONS else 'pending')
+        checks = item.get('checks')
+        if not isinstance(checks, dict):
+            conclusions.append('pending')
+            continue
+        if set(checks) != CHECKS:
+            conclusions.append('pending')
+        for name in CHECKS:
+            check = checks.get(name)
+            allowed = CONCLUSIONS | {'N/A'} if name == 'preservation' else CONCLUSIONS
+            conclusions.append(('passed' if check['conclusion'] == 'N/A' else check['conclusion'])
+                               if _review(check, allowed) else 'pending')
+        unit = included[item['unit_id']]
+        impact = classify_data_impact(unit)
+        if impact == 'unknown' or not _preservation(checks.get('preservation'), unit, impact):
             conclusions.append('pending')
     if 'failed' in conclusions:
         return [_finding(failed=True)]

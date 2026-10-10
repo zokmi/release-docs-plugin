@@ -144,6 +144,93 @@ def test_review_fix_failed_definition_does_not_bypass_stale_preservation_identit
     assert result[0]['blocking'] is False
 
 
+def test_failed_definition_survives_malformed_preservation_sibling(release):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    record['unit_reviews'][0]['checks']['definition']['conclusion'] = 'failed'
+    for sibling in ({'conclusion': 'passed', 'reason': ''},
+                    {'conclusion': 'passed'},
+                    {'conclusion': '', 'reason': 'Compared source'},
+                    {'conclusion': [], 'reason': 'Compared source'}, None):
+        damaged = copy.deepcopy(record)
+        damaged['unit_reviews'][0]['checks']['preservation'] = sibling
+        assert validate_semantic_review(damaged, source, exclusions, fingerprint.sha256) == [
+            {'code': 'semantic_sql_defect', 'domain': 'sql_correctness',
+             'blocking': True, 'status': '未通過'}]
+
+
+def test_failed_preservation_survives_malformed_definition_sibling(release):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    record['unit_reviews'][0]['checks']['preservation'] = {
+        'conclusion': 'failed', 'reason': 'Fixture preservation assertion failed'}
+    for sibling in ({'conclusion': 'passed', 'reason': ''},
+                    {'conclusion': 'passed'},
+                    {'conclusion': '', 'reason': 'Compared source'},
+                    {'conclusion': [], 'reason': 'Compared source'}, None):
+        damaged = copy.deepcopy(record)
+        damaged['unit_reviews'][0]['checks']['definition'] = sibling
+        assert validate_semantic_review(damaged, source, exclusions, fingerprint.sha256) == [
+            {'code': 'semantic_sql_defect', 'domain': 'sql_correctness',
+             'blocking': True, 'status': '未通過'}]
+
+
+def test_preservation_failure_dominance_covers_trusted_record_conclusions(release):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    record['unit_reviews'][0]['checks']['preservation']['reason'] = ''
+    for location in ('record', 'unit', 'scope_review', 'parameter_review'):
+        damaged = copy.deepcopy(record)
+        target = (damaged if location == 'record' else damaged['unit_reviews'][0]
+                  if location == 'unit' else damaged[location])
+        target['conclusion'] = 'failed'
+        assert validate_semantic_review(damaged, source, exclusions, fingerprint.sha256) == [
+            {'code': 'semantic_sql_defect', 'domain': 'sql_correctness',
+             'blocking': True, 'status': '未通過'}]
+
+
+def test_preservation_failure_dominance_requires_all_current_identities(release):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    record['unit_reviews'][0]['checks']['definition']['conclusion'] = 'failed'
+    record['unit_reviews'][0]['checks']['preservation']['reason'] = ''
+    for damage in ('fingerprint', 'schema', 'method', 'coverage', 'source_hash', 'later_unit'):
+        damaged, current_source = copy.deepcopy(record), copy.deepcopy(source)
+        if damage == 'fingerprint':
+            damaged['evidence_fingerprint'] = '0' * 64
+        elif damage == 'schema':
+            damaged['schema_version'] = 2
+        elif damage == 'method':
+            damaged['method'] = ''
+        elif damage == 'coverage':
+            damaged['unit_reviews'] = []
+        elif damage == 'source_hash':
+            damaged['unit_reviews'][0]['source_hash'] = '0' * 64
+        else:
+            later_source = copy.deepcopy(next(u for u in source['units']
+                                             if u['unit_id'] == record['unit_reviews'][0]['unit_id']))
+            later_review = copy.deepcopy(record['unit_reviews'][0])
+            later_source['unit_id'] = later_review['unit_id'] = 'later-unit'
+            later_review['source_hash'] = '0' * 64
+            current_source['units'].append(later_source)
+            damaged['unit_reviews'].append(later_review)
+        assert validate_semantic_review(damaged, current_source, exclusions, fingerprint.sha256) == [
+            {'code': 'semantic_review_pending', 'domain': 'sql_correctness',
+             'blocking': False, 'status': '待確認'}]
+
+
+def test_malformed_preservation_without_trusted_failure_remains_pending(release):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    for sibling in ({'conclusion': 'passed', 'reason': ''},
+                    {'conclusion': [], 'reason': 'Compared source'}, None):
+        damaged = copy.deepcopy(record)
+        damaged['unit_reviews'][0]['checks']['preservation'] = sibling
+        assert validate_semantic_review(damaged, source, exclusions, fingerprint.sha256) == [
+            {'code': 'semantic_review_pending', 'domain': 'sql_correctness',
+             'blocking': False, 'status': '待確認'}]
+
+
 @pytest.mark.parametrize('sql', ['ALTER TABLE dbo.Customer DROP CONSTRAINT DF_Count;',
                                'ALTER TABLE [dbo].[Customer] DROP CONSTRAINT [DF_Count];'])
 def test_review_fix_direct_drop_constraint_preservation_accepts_na(release, sql):
