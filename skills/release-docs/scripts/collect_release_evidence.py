@@ -60,7 +60,7 @@ def collect_release_evidence(repo, base, target, diff_mode="direct"):
     try:
         root = git(repo, "rev-parse", "--show-toplevel").decode("utf-8").rstrip("\r\n")
     except EvidenceError as error:
-        raise EvidenceError("Path is not an accessible Git repository") from error
+        raise EvidenceError("Path is not a Git repository or is not accessible") from error
     base_sha = resolve_revision(root, base)
     target_sha = resolve_revision(root, target)
     diff_base_sha = base_sha
@@ -81,10 +81,18 @@ def collect_release_evidence(repo, base, target, diff_mode="direct"):
     ).split("\0")
     source_scope = {"revision": target_sha, "paths": [path for path in source_paths if path]}
     ef_detection = detect_entity_framework(Path(root), source_scope)
+    if diff_mode == "merge-base":
+        # Preserve the historical contract: base_sha is the effective diff base.
+        # Keep the caller-selected revision separately for auditability.
+        requested_base_sha = base_sha
+        base_sha = diff_base_sha
+    else:
+        requested_base_sha = base_sha
     return {
         "schema_version": 1,
         "repo_root": str(Path(root).resolve()),
         "base_sha": base_sha,
+        "requested_base_sha": requested_base_sha,
         "target_sha": target_sha,
         "diff_base_sha": diff_base_sha,
         "diff_mode": diff_mode,

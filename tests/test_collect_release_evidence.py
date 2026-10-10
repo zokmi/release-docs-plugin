@@ -67,6 +67,7 @@ def test_collects_nested_repo_unicode_paths_and_rename_delete_metadata(repo):
     assert Path(data["repo_root"]).resolve() == repo.resolve()
     assert data["schema_version"] == 1
     assert data["base_sha"] == base
+    assert data["requested_base_sha"] == base
     assert data["target_sha"] == target
     assert data["diff_mode"] == "direct"
     assert data["committed_changes"] == [
@@ -112,7 +113,8 @@ def test_merge_base_diff_excludes_base_only_branch_changes(repo):
         {"status": "A", "path": "target only.txt"},
     ]
     merged = evidence(repo, base, target, "merge-base")
-    assert merged["base_sha"] == base
+    assert merged["base_sha"] == ancestor
+    assert merged["requested_base_sha"] == base
     assert merged["diff_base_sha"] == ancestor
     assert merged["committed_changes"] == [{"status": "A", "path": "target only.txt"}]
 

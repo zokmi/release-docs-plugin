@@ -52,6 +52,7 @@ jobs:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
         run: python -X utf8 scripts/check_plugin_release.py --tag "$RELEASE_TAG"
         shell: bash
+      - run: python -m pip install pytest
       - run: python -X utf8 -m unittest discover -s tests -v
   release:
     needs: [validate, test]

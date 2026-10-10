@@ -156,3 +156,4 @@ git push origin v0.1.21
 每次產製使用不可覆寫的 `.release-docs/runs/<run-id>/` 並排除於 Git。成功交付及審查後，`finalize_lifecycle_run` 僅清除明確標記的 temporary／.tmp，保留永久 manifest、source metadata、review record 與 execution evidence。失敗或中斷保留七天，過期也只清理受控 temporary。操作目錄不可含 lifecycle JSON、原始工具日誌、暫存路徑或未宣告檔案。既有 `artifact_lifecycle.py` 屬舊版流程，不用它清除新流程的永久證據。
 
 
+
