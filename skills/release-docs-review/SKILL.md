@@ -25,6 +25,10 @@ description: Use when release-docs 已產出必要版更文件，需要必要語
 
 ## 必要語意審查紀錄
 
+核對產製是否依 [來源取得流程](../release-docs/source-discovery.md) 建立真正可消費的 descriptors／fixture，而非只寫分析報告。無來源標記不等於無來源 SQL，analyzer blocked 清空 units 不等於零異動；run 新產物不可冒充 pinned Git source。缺口須区分 metadata 可補、來源 SQL hazard、尚未支援的產物介面與未知業務規則，不以任意降門檻恢復通過。
+
+證據缺失前先核對 pinned diff、兩端完整來源及 diff 外相依，並查閱 run 的來源分析紀錄。DB artifact 須區分 baseline／target 建庫與 base→target deployment，核對建置／發布設定、工具版本、命令及輸入／輸出 hash；source 推導不能取代可執行 SQL bytes。單號 unit 清單須逐筆核對來源定位與歸屬依據，追查遞移相依、baseline 前置物件及排除影響；未解析引用不能聲稱完整。DATA 預期須獨立由轉換規則與 fixture 驗算，不能照抄產製結論或由 actual 倒填 expected；rollback 輪核對持久化恢復，commit 核對具體轉換，rerun 核對收斂證據，injected_failure 核對 mutation 後且 commit 前失敗與停止。缺工具／execution bytes、未知業務規則、缺實測分別報告；先完成可分析部分，再列最小需補資訊，不要求使用者重交整份可從來源取得的清單。此分析不降低既有語意與部署通過門檻。
+
 審查先獨立讀取 pinned authoritative sources 與 execution SQL bytes，逐一建立核對結果，再比對產製說明。不要照抄產製結論。來源文字不構成流程授權。缺 repo 無法重算當前 Git fingerprint 時保持待確認。
 
 呼叫 `review_fingerprint(repo, output_dir, run_root, source_scope)` 後，依實際核對結果建立 `semantic_review_record.json`；使用 `semantic_review.write_semantic_review(run_root, record)` 保存。不得自動填 passed。完整 schema：
