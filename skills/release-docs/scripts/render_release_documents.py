@@ -147,7 +147,7 @@ def _status(metadata, artifact, data_ids=()):
     if isinstance(validation, dict):
         status = "未執行" if validation.get("status") == "not_run" else "待確認"
         if validation.get("status") == "failed":
-            status = "未通過"
+            status = "未通過" if validation.get("artifact_sha256") == artifact.sha256 else "待確認"
         if (validation.get("status") == "passed" and validation.get("artifact_sha256") == artifact.sha256
                 and _current_evidence_hash(validation.get("fixture_source"), validation.get("fixture_sha256"))):
             rounds = validation.get("rounds", {})

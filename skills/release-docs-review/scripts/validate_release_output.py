@@ -40,6 +40,7 @@ missing_or_unordered_phases excluded_object_in_sql invalid_unit_mapping excluded
 unexpected_or_duplicate_unit unit_dependency_order unit_mapping_mismatch unit_phase_mismatch
 incomplete_unit_mapping missing_unit_context unit_context_mismatch unit_sql_hash_mismatch
 rerun_risk included_unit_mapping_mismatch duplicate_column guide_exclusion_mismatch
+missing_data_expectations
 incomplete_deployment_evidence unsupported_deployment_pass_claim deployment_proved_sql_defect
 semantic_review_pending semantic_sql_defect invalid_finding
 batch_separator non_transactional_sql batch_only_sql early_exit database_switch opaque_execution
@@ -66,34 +67,89 @@ def _summary(findings, deployment="待確認"):
                                 domain="deployment_validation", status=deployment)]
 
 
-def _deployment(metadata, digest, source=None, exclusions=()):
+ROUND_NAMES = ("validate_only", "commit", "rerun", "injected_failure")
+
+
+def _data_expectations(source, exclusions):
+    excluded = {uid for item in exclusions for uid in item["unit_ids"]}
+    units = source.get("units", [])
+    if not isinstance(units, list):
+        return {}, False
+    expected = {}
+    for unit in units:
+        if not isinstance(unit, dict) or unit.get("phase") != "DATA":
+            continue
+        uid = unit.get("unit_id")
+        if not isinstance(uid, str):
+            return {}, False
+        if uid in excluded:
+            continue
+        rows = unit.get("expected_assertions")
+        if not isinstance(rows, list) or not rows:
+            return {}, False
+        if (any(not isinstance(row, dict) or not isinstance(row.get("id"), str) for row in rows)
+                or len({row["id"] for row in rows}) != len(rows)):
+            return {}, False
+        expected[uid] = rows
+        for row in rows:
+            by_round = row.get("expected_by_round") if isinstance(row, dict) else None
+            if (not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]
+                    or not isinstance(row.get("seed_row_id"), str) or not row["seed_row_id"]
+                    or not isinstance(by_round, dict) or set(by_round) != set(ROUND_NAMES)
+                    or any(not isinstance(by_round[name], dict)
+                           or "before" not in by_round[name] or "after" not in by_round[name]
+                           for name in ROUND_NAMES)):
+                return {}, False
+    return expected, True
+
+
+def _deployment(metadata, digest, source=None, exclusions=(), run=None):
     validation = metadata.get("localdb_validation")
     if not isinstance(validation, dict):
         return "待確認"
+    if validation.get("artifact_sha256") != digest:
+        return "待確認"
     if validation.get("status") == "failed":
         return "未通過"
-    if validation.get("status") != "passed" or validation.get("artifact_sha256") != digest:
+    if validation.get("status") != "passed":
         return "待確認"
     fixture = validation.get("fixture_source")
     fixture_hash = validation.get("fixture_sha256")
-    if not _current_evidence_hash(fixture, fixture_hash):
+    if not _current_evidence_hash(fixture, fixture_hash, run):
         return "待確認"
     rounds = validation.get("rounds")
     if not isinstance(rounds, dict):
         return "待確認"
-    excluded = {uid for item in exclusions for uid in item.get("unit_ids", [])}
-    units = source.get("units", []) if isinstance(source, dict) else []
-    data_units = {unit.get("unit_id") for unit in units if isinstance(unit, dict)
-                  and unit.get("phase") == "DATA" and isinstance(unit.get("unit_id"), str)
-                  and unit.get("unit_id") not in excluded}
+    data_units, valid_expectations = _data_expectations(source, exclusions)
+    if not valid_expectations:
+        return "待確認"
     assertions = validation.get("expected_assertions")
     if data_units and (not isinstance(assertions, list) or not assertions
                        or any(not isinstance(item, dict) or item.get("unit_id") not in data_units
                               or not isinstance(item.get("id"), str) or not item["id"] for item in assertions)
-                       or {item["unit_id"] for item in assertions} != data_units):
+                       or {item["unit_id"] for item in assertions} != set(data_units)):
         return "待確認"
+    required = {(item["unit_id"], item["id"]): item for item in assertions} if data_units else {}
+    if data_units:
+        if len(required) != len(assertions):
+            return "待確認"
+        for uid, rows in data_units.items():
+            for row in rows:
+                actual = required.get((uid, row["id"]))
+                if (not isinstance(actual, dict) or any(actual.get(key) != row.get(key)
+                                                       for key in ("seed_row_id", "expected_by_round"))):
+                    return "待確認"
+        if any(not isinstance(item.get("seed_row_id"), str) or not item["seed_row_id"]
+               or not isinstance(item.get("expected_by_round"), dict)
+               or set(item["expected_by_round"]) != set(ROUND_NAMES)
+               or any(not isinstance(item["expected_by_round"].get(name), dict)
+                      or "before" not in item["expected_by_round"][name]
+                      or "after" not in item["expected_by_round"][name] for name in ROUND_NAMES)
+               for item in assertions):
+            return "待確認"
     text_fields = ("server", "database", "provider_version", "tool_version", "baseline_source", "fixture_source")
-    for name in ("validate_only", "commit", "rerun", "injected_failure"):
+    sessions, databases, check_sets = set(), {}, set()
+    for name in ROUND_NAMES:
         evidence = rounds.get(name)
         if (not isinstance(evidence, dict) or evidence.get("status") != "passed"
                 or type(evidence.get("exit_code")) is not int or evidence["exit_code"] != 0
@@ -107,25 +163,47 @@ def _deployment(metadata, digest, source=None, exclusions=()):
             return "待確認"
         if (evidence.get("fixture_source") != fixture
                 or evidence.get("fixture_sha256") != fixture_hash
-                or not _current_evidence_hash(evidence.get("baseline_source"), evidence.get("baseline_sha256"))):
+                or evidence.get("artifact_sha256") != digest
+                or not _current_evidence_hash(evidence.get("baseline_source"), evidence.get("baseline_sha256"), run)
+                or evidence.get("round") != name
+                or not isinstance(evidence.get("session_id"), str) or not evidence["session_id"]
+                or evidence["session_id"] in sessions
+                or not isinstance(evidence.get("database_id"), str) or not evidence["database_id"]
+                or not isinstance(evidence.get("expected_preserved_data_summary"), dict)
+                or not evidence["expected_preserved_data_summary"]
+                or evidence.get("preserved_data_summary") != evidence["expected_preserved_data_summary"]):
             return "待確認"
+        sessions.add(evidence["session_id"])
+        databases[name] = evidence["database_id"]
+        checks_key = json.dumps(evidence["checks"], sort_keys=True, ensure_ascii=True)
+        if checks_key in check_sets:
+            return "待確認"
+        check_sets.add(checks_key)
         if data_units:
             checks = evidence.get("data_checks")
-            observed = {(item.get("unit_id"), item.get("id")) for item in checks
-                        if isinstance(item, dict) and item.get("passed") is True
-                        and isinstance(item.get("unit_id"), str) and isinstance(item.get("id"), str)
-                        and "before" in item and "after" in item} if isinstance(checks, list) else set()
-            if not {(item["unit_id"], item["id"]) for item in assertions}.issubset(observed):
+            observed = {(item.get("unit_id"), item.get("id")): item for item in checks
+                        if isinstance(item, dict) and isinstance(item.get("unit_id"), str)
+                        and isinstance(item.get("id"), str)} if isinstance(checks, list) else {}
+            if any((key not in observed or observed[key].get("passed") is not True
+                    or observed[key].get("seed_row_id") != expectation["seed_row_id"]
+                    or any(observed[key].get(field) != expectation["expected_by_round"][name][field]
+                           for field in ("before", "after"))) for key, expectation in required.items()):
                 return "待確認"
+    if (databases["rerun"] != databases["commit"]
+            or len({databases["validate_only"], databases["commit"], databases["injected_failure"]}) != 3
+            or not isinstance(rounds["commit"].get("committed_state"), str)
+            or not rounds["commit"]["committed_state"]
+            or rounds["rerun"].get("committed_state") != rounds["commit"]["committed_state"]):
+        return "待確認"
     return "通過"
 
 
-def _current_evidence_hash(source, expected):
+def _current_evidence_hash(source, expected, run):
     if not isinstance(source, str) or not source or not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
         return False
     try:
         path = plain_path(source)
-        if path.suffix.lower() not in (".sql", ".dacpac", ".json"):
+        if run is None or not path.is_relative_to(run) or path.suffix.lower() not in (".sql", ".dacpac", ".json"):
             return False
         return file_hash(path) == expected
     except (ValueError, OSError):
@@ -446,16 +524,20 @@ def validate_release_output(output_dir, run_root) -> list[Finding]:
     if _unmapped_sql(sql):
         findings.append(_finding("unmapped_sql"))
     findings.extend(_units(sql, source, exclusions))
+    _, valid_data_expectations = _data_expectations(source, exclusions)
+    if not valid_data_expectations:
+        findings.append(_finding("missing_data_expectations"))
     section = re.search(r"^## 本次排除摘要\s*\n(.*?)(?=^## |\Z)", guide, re.M | re.S)
     if section is None or section.group(1).strip() != _projection(exclusions):
         findings.append(_finding("guide_exclusion_mismatch"))
-    deployment = _deployment(metadata, digest, source, exclusions)
+    deployment = _deployment(metadata, digest, source, exclusions, run)
     validation = metadata.get("localdb_validation")
     if isinstance(validation, dict) and validation.get("status") == "passed" and deployment != "通過":
         findings.append(_finding("incomplete_deployment_evidence", blocking=False, domain="deployment_validation"))
     if re.search(r"LocalDB\s*[：:]\s*通過", guide) and deployment != "通過":
         findings.append(_finding("unsupported_deployment_pass_claim", blocking=True, domain="deployment_validation"))
-    if isinstance(validation, dict) and validation.get("status") == "failed" and validation.get("sql_defect") is True:
+    if (isinstance(validation, dict) and validation.get("status") == "failed"
+            and validation.get("artifact_sha256") == digest and validation.get("sql_defect") is True):
         findings.append(_finding("deployment_proved_sql_defect"))
     # Deduplicate codes while keeping stable order and separate status records.
     findings = list({(f["domain"], f["code"]): f for f in findings}.values())

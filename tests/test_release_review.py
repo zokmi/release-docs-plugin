@@ -264,7 +264,15 @@ def localdb_evidence(release):
                 "fixture_source": str(fixture), "fixture_sha256": fixture_hash,
                 "command": ["runner", "--isolated"],
                 "error_output_summary": "", "checks": ["checks passed"]}
-    rounds = {name: dict(evidence) for name in ("validate_only", "commit", "rerun", "injected_failure")}
+    rounds = {}
+    for index, name in enumerate(("validate_only", "commit", "rerun", "injected_failure")):
+        rounds[name] = {**evidence, "round": name, "artifact_sha256": artifact_hash,
+                        "session_id": f"session-{index}",
+                        "database_id": f"db-{index if name != 'rerun' else 1}",
+                        "expected_preserved_data_summary": {"dbo.Existing": "Id=1"},
+                        "preserved_data_summary": {"dbo.Existing": "Id=1"},
+                        "checks": [f"{name} checks"],
+                        "committed_state": "state-1" if name in ("commit", "rerun") else ""}
     rounds["injected_failure"]["error_output_summary"] = "Expected failure rollback and stop confirmed"
     return {"status": "passed", "artifact_sha256": artifact_hash,
             "fixture_source": str(fixture), "fixture_sha256": fixture_hash, "rounds": rounds}
@@ -306,6 +314,128 @@ def test_data_unit_deployment_pass_requires_fixture_data_checks(release):
     write_json(source_path, source)
     update_metadata(release, localdb_validation=evidence)
     assert status(release, "deployment_validation_status") == "待確認"
+    assert "missing_data_expectations" in codes(release)
+    assert status(release, "sql_content_status") == "未通過"
+
+
+def test_data_expectation_missing_before_or_after_blocks_sql_content(release):
+    path = release[2] / "source_unit_metadata.json"
+    source = json.loads(path.read_text())
+    source["units"][0]["phase"] = "DATA"
+    source["units"][0]["expected_assertions"] = [{"id": "changed", "before": "1"}]
+    write_json(path, source)
+    assert "missing_data_expectations" in codes(release)
+    assert status(release, "sql_content_status") == "未通過"
+
+
+def test_duplicate_data_expectation_ids_block_sql_content(release):
+    path = release[2] / "source_unit_metadata.json"
+    source = json.loads(path.read_text())
+    source["units"][0]["phase"] = "DATA"
+    assertion = {"id": "same", "seed_row_id": "Customer/1", "expected_by_round":
+                 {name: {"before": "0", "after": "1"} for name in ("validate_only", "commit", "rerun", "injected_failure")}}
+    source["units"][0]["expected_assertions"] = [assertion, dict(assertion)]
+    write_json(path, source)
+    assert "missing_data_expectations" in codes(release)
+
+
+def test_complete_data_expectations_and_round_observations_can_validate_deployment(release):
+    evidence = localdb_evidence(release)
+    per_round = {name: {"before": "0", "after": "1"} for name in evidence["rounds"]}
+    source_assertion = {"id": "changed", "seed_row_id": "Customer/1", "expected_by_round": per_round}
+    source_path = release[2] / "source_unit_metadata.json"
+    source = json.loads(source_path.read_text())
+    source["units"][0]["phase"] = "DATA"
+    source["units"][0]["expected_assertions"] = [source_assertion]
+    write_json(source_path, source)
+    evidence["expected_assertions"] = [{"unit_id": "customer", **source_assertion}]
+    for row in evidence["rounds"].values():
+        row["data_checks"] = [{"unit_id": "customer", "id": "changed", "seed_row_id": "Customer/1",
+                               "passed": True, "before": "0", "after": "1"}]
+    update_metadata(release, localdb_validation=evidence)
+    assert status(release, "deployment_validation_status") == "通過"
+
+
+@pytest.mark.parametrize("damage", ["wrong_observation", "wrong_round_hash", "same_session", "same_database", "missing_preserved", "wrong_preserved", "duplicate_checks"])
+def test_deployment_rounds_need_matching_observations_and_distinct_evidence(release, damage):
+    evidence = localdb_evidence(release)
+    artifact_hash = evidence["artifact_sha256"]
+    for index, name in enumerate(("validate_only", "commit", "rerun", "injected_failure")):
+        row = evidence["rounds"][name]
+        row.update(artifact_sha256=artifact_hash, database_id=f"db-{index if name != 'rerun' else 1}",
+                   session_id=f"session-{index}", round=name,
+                   expected_preserved_data_summary={"dbo.Customer": "unchanged"},
+                   checks=[f"{name} checked"])
+    evidence["rounds"]["commit"]["committed_state"] = "committed-1"
+    evidence["rounds"]["rerun"]["committed_state"] = "committed-1"
+    if damage == "wrong_observation":
+        evidence["expected_assertions"] = [{"unit_id": "customer", "id": "changed", "seed_row_id": "Customer/1", "expected_by_round":
+                                            {name: {"before": "0", "after": "1"} for name in evidence["rounds"]}}]
+        for row in evidence["rounds"].values():
+            row["data_checks"] = [{"unit_id": "customer", "id": "changed", "seed_row_id": "Customer/1", "passed": True, "before": "0", "after": "2"}]
+        source_path = release[2] / "source_unit_metadata.json"
+        source = json.loads(source_path.read_text())
+        source["units"][0]["phase"] = "DATA"
+        source["units"][0]["expected_assertions"] = evidence["expected_assertions"]
+        write_json(source_path, source)
+    elif damage == "wrong_round_hash":
+        evidence["rounds"]["commit"]["artifact_sha256"] = "0" * 64
+    elif damage == "same_session":
+        evidence["rounds"]["rerun"]["session_id"] = "session-1"
+    elif damage == "same_database":
+        evidence["rounds"]["injected_failure"]["database_id"] = "db-1"
+    elif damage == "missing_preserved":
+        del evidence["rounds"]["commit"]["expected_preserved_data_summary"]
+    elif damage == "wrong_preserved":
+        evidence["rounds"]["commit"]["preserved_data_summary"] = {"dbo.Existing": "Id=2"}
+    else:
+        evidence["rounds"]["commit"]["checks"] = ["validate_only checked"]
+    update_metadata(release, localdb_validation=evidence)
+    assert status(release, "deployment_validation_status") == "待確認"
+
+
+def test_stale_failed_localdb_evidence_cannot_poison_current_sql(release):
+    update_metadata(release, localdb_validation={"status": "failed", "sql_defect": True,
+                                                  "artifact_sha256": "0" * 64})
+    assert status(release, "deployment_validation_status") == "待確認"
+    assert status(release, "sql_content_status") == "通過"
+    assert "deployment_proved_sql_defect" not in codes(release)
+
+
+def test_fingerprint_rejects_external_fixture_and_mismatched_scope(release, tmp_path):
+    module = api("review_fingerprint")
+    outside = tmp_path / "external.sql"
+    outside.write_text("PASSWORD=DO_NOT_READ", encoding="utf-8")
+    evidence = localdb_evidence(release)
+    evidence["fixture_source"] = str(outside)
+    update_metadata(release, localdb_validation=evidence)
+    with pytest.raises(ValueError, match="validation evidence path"):
+        module.review_fingerprint(*release)
+    assert "DO_NOT_READ" not in repr(module)
+    del evidence["fixture_source"]
+    update_metadata(release, localdb_validation=evidence)
+    with pytest.raises(ValueError, match="Source scope"):
+        module.review_fingerprint(release[0], release[1], release[2],
+                                  {**release[3], "target_sha": "0" * 40})
+    with pytest.raises(ValueError, match="Source scope"):
+        module.review_fingerprint(release[0], release[1], release[2],
+                                  {**release[3], "diff_mode": "direct"})
+
+
+def test_fingerprint_rejects_external_execution_and_baseline_files(release, tmp_path):
+    module = api("review_fingerprint")
+    outside = tmp_path / "01_部署SQL.sql"
+    outside.write_text("PASSWORD=DO_NOT_READ", encoding="utf-8")
+    update_metadata(release, execution_artifact={"path": str(outside), "sha256": "0" * 64})
+    with pytest.raises(ValueError, match="Execution artifact"):
+        module.review_fingerprint(*release)
+    update_metadata(release, execution_artifact={"path": "assembly/01_部署SQL.sql", "sha256": "0" * 64})
+    source_path = release[2] / "source_unit_metadata.json"
+    source = json.loads(source_path.read_text())
+    source["baseline"]["source_path"] = str(outside)
+    write_json(source_path, source)
+    with pytest.raises(ValueError, match="Baseline"):
+        module.review_fingerprint(*release)
 
 
 @pytest.mark.parametrize("damage", [None, "missing_round", "missing_field", "wrong_hash", "bad_exit", "error_summary", "empty_checks"])
@@ -336,10 +466,11 @@ def test_guide_claiming_localdb_pass_without_evidence_is_rejected(release):
 
 
 def test_deployment_failure_does_not_prove_sql_defect_without_evidence(release):
-    update_metadata(release, localdb_validation={"status": "failed", "sql_defect": False})
+    digest = hashlib.sha256((release[1] / "01_部署SQL.sql").read_bytes()).hexdigest()
+    update_metadata(release, localdb_validation={"status": "failed", "sql_defect": False, "artifact_sha256": digest})
     assert status(release, "deployment_validation_status") == "未通過"
     assert status(release, "sql_content_status") == "通過"
-    update_metadata(release, localdb_validation={"status": "failed", "sql_defect": True})
+    update_metadata(release, localdb_validation={"status": "failed", "sql_defect": True, "artifact_sha256": digest})
     assert status(release, "sql_content_status") == "未通過"
 
 
@@ -359,6 +490,12 @@ def test_fingerprint_changes_for_every_covered_source_or_output(release, surface
         git(repo, "add", "customer.sql")
         git(repo, "commit", "-qm", "source change")
         scope = {**scope, "target_sha": git(repo, "rev-parse", "HEAD")}
+        with pytest.raises(ValueError, match="Source scope"):
+            module.review_fingerprint(repo, output, run, scope)
+        source_path = run / "source_unit_metadata.json"
+        source = json.loads(source_path.read_text())
+        source["source_scope"] = scope
+        write_json(source_path, source)
     else:
         with paths[surface].open("ab") as stream:
             stream.write(b"\n ")

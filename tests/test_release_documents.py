@@ -347,6 +347,18 @@ def test_guide_requires_current_fixture_and_data_checks_for_data_units(tmp_path)
     assert "LocalDB：待確認" in (tmp_path / "data/00_上線指引.md").read_text(encoding="utf-8")
 
 
+def test_guide_treats_stale_failed_localdb_evidence_as_pending(tmp_path):
+    module = api()
+    analysis, artifact, manifest = inputs(tmp_path)
+    path = manifest.parent / "lifecycle_metadata.json"
+    metadata = json.loads(path.read_text())
+    metadata["localdb_validation"] = {"status": "failed", "artifact_sha256": "0" * 64}
+    path.write_text(json.dumps(metadata), encoding="utf-8")
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / "operator")
+    guide = (tmp_path / "operator/00_上線指引.md").read_text(encoding="utf-8")
+    assert "LocalDB：待確認" in guide
+
+
 @pytest.mark.parametrize("filename", ["01_部署SQL.sql", "lifecycle_exclusion_manifest.json"])
 def test_linked_input_files_are_rejected(tmp_path, filename):
     module = api()

@@ -82,6 +82,8 @@ def execution_path(run, metadata):
     path = plain_path(path)
     if path.name != "01_部署SQL.sql":
         raise ValueError("Execution artifact must use the unified SQL filename")
+    if not path.is_relative_to(run):
+        raise ValueError("Execution artifact must stay inside lifecycle run")
     return path
 
 
@@ -110,6 +112,10 @@ def review_fingerprint(repo, output_dir, run_root, source_scope) -> FingerprintR
     metadata = read_json(run / "lifecycle_metadata.json")
     sources = read_json(run / "source_unit_metadata.json")
     read_json(run / "lifecycle_exclusion_manifest.json")
+    stored_scope = sources.get("source_scope")
+    if (not isinstance(source_scope, dict) or not isinstance(stored_scope, dict)
+            or source_scope != stored_scope):
+        raise ValueError("Source scope differs from lifecycle evidence")
     components = {}
     for name in OPERATOR_FILES:
         path = plain_path(output / name)
@@ -139,8 +145,11 @@ def review_fingerprint(repo, output_dir, run_root, source_scope) -> FingerprintR
             if not path.is_absolute():
                 path = run / path
             path = plain_path(path)
-            if path.suffix.lower() not in (".sql", ".dacpac", ".json"):
-                raise ValueError("Validation evidence must be a fixture or schema file")
+            if (not path.is_relative_to(run)
+                    or path.suffix.lower() not in (".sql", ".dacpac", ".json")
+                    or (key == "fixture_manifest" and path.suffix.lower() != ".json")
+                    or (key != "fixture_manifest" and path.suffix.lower() == ".json")):
+                raise ValueError("Invalid validation evidence path")
             components["validation/" + key] = file_hash(path)
     artifact_path = execution_path(run, metadata)
     components["execution_artifact"] = file_hash(artifact_path) if artifact_path else "missing"
@@ -149,7 +158,8 @@ def review_fingerprint(repo, output_dir, run_root, source_scope) -> FingerprintR
         path = Path(baseline["source_path"])
         if not path.is_absolute():
             path = repo / path
-        if path.suffix.lower() not in (".sql", ".dacpac"):
+        path = plain_path(path)
+        if not path.is_relative_to(repo) or path.suffix.lower() not in (".sql", ".dacpac"):
             raise ValueError("Baseline content hashing is restricted to database schema")
         components["source/baseline"] = file_hash(path)
     if not isinstance(source_scope, dict):
