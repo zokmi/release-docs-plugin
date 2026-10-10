@@ -125,6 +125,39 @@ def test_valid_operator_contract_has_separate_static_and_deployment_statuses(rel
     assert not any(f["blocking"] for f in findings(release))
 
 
+def test_review_uses_database_tool_minimal_lifecycle_profile(release):
+    """A minimal artifact must not be checked against the legacy wrapper contract."""
+    _, output, run, _ = release
+    source = (release[0] / "customer.sql").read_text(encoding="utf-8")
+    metadata = json.loads((run / "source_unit_metadata.json").read_text(encoding="utf-8"))
+    unit = next(item for item in metadata["units"] if item["unit_id"] == "customer")
+    mapping = {key: unit[key] for key in ("unit_id", "phase", "source_path", "source_revision",
+                                          "source_hash", "sql_hash", "source_line", "depends_on")}
+    mapping["source_end_line"] = unit["source_line"] + len(source.splitlines()) - 1
+    sql = ("-- Unified deployment: database tool owns transaction and session settings.\n\n"
+           "-- PHASE: SCHEMA\n-- UNIT: " + json.dumps(mapping, sort_keys=True) + "\n" + source
+           + "-- END UNIT: customer\n")
+    replace_sql(release, sql)
+    update_metadata(release, execution_artifact={"path": "assembly/01_部署SQL.sql",
+                                                  "sha256": hashlib.sha256(sql.encode()).hexdigest(),
+                                                  "sql_profile": "database_tool_minimal"})
+    result = findings(release)
+    codes_found = {item["code"] for item in result}
+    assert "invalid_runtime_mode" not in codes_found
+    assert "missing_try_catch" not in codes_found
+    assert status(release, "static_sql_status") == "通過"
+
+
+def test_review_blocks_mismatched_localdb_sql_profile(release):
+    update_metadata(release, execution_artifact={"path": "assembly/01_部署SQL.sql",
+                                                  "sha256": hashlib.sha256(
+                                                      (release[1] / "01_部署SQL.sql").read_bytes()).hexdigest(),
+                                                  "sql_profile": "framework"},
+                    localdb_validation={"schema_version": 1, "status": "passed",
+                                        "sql_profile": "database_tool_minimal"})
+    assert "sql_profile_mismatch" in codes(release)
+
+
 def test_review_distinguishes_generated_execution_from_opaque_source(release):
     sql = (release[1] / "01_部署SQL.sql").read_text(encoding="utf-8")
     assert "EXEC sys.sp_executesql N'" in sql

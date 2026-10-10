@@ -50,7 +50,7 @@ execution_disabled malformed_sql_lexeme silent_catch raiserror_without_throw mis
 missing_try_catch transaction_count missing_implicit_transactions_off unconditional_transaction_start
 validate_only_rollback deploy_commit missing_throw transaction_scope error_rollback missing_error_context
 missing_transaction_action unmapped_sql invalid_exclusion_provenance
-invalid_runtime_mode
+invalid_runtime_mode sql_profile_mismatch invalid_sql_profile
 """.split())
 
 
@@ -276,9 +276,66 @@ def _rerun_risk(body):
     return any(re.search(mutation, code) and not re.search(guard, code) for mutation, guard in guards)
 
 
-def _unmapped_sql(sql):
+def _minimal_units(sql):
+    """Parse comment-delimited units emitted by database_tool_minimal."""
+    findings, parsed, current_phase, seen = [], [], None, set()
+    lines = sql.splitlines(keepends=True)
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        phase = re.fullmatch(r"-- PHASE: ([^\r\n]+)\r?\n?", line)
+        if phase:
+            current_phase = phase.group(1)
+            index += 1
+            continue
+        if line.startswith("-- Unified deployment:") or not line.strip():
+            index += 1
+            continue
+        if not line.startswith("-- UNIT: "):
+            findings.append(_finding("unmapped_sql"))
+            index += 1
+            continue
+        try:
+            mapping = json.loads(line[len("-- UNIT: "):].strip())
+            required = {"unit_id", "phase", "source_path", "source_revision", "source_hash",
+                        "sql_hash", "source_line", "source_end_line", "depends_on"}
+            if (not isinstance(mapping, dict) or not required.issubset(mapping)
+                    or set(mapping) - required - {"provider_kind"}
+                    or mapping["phase"] != current_phase or mapping["unit_id"] in seen):
+                raise ValueError()
+        except (ValueError, TypeError, json.JSONDecodeError):
+            findings.append(_finding("invalid_unit_mapping"))
+            index += 1
+            continue
+        index += 1
+        body = []
+        terminator = "-- END UNIT: " + mapping["unit_id"] + "\n"
+        while index < len(lines) and lines[index] != terminator:
+            body.append(lines[index])
+            index += 1
+        if index >= len(lines):
+            findings.append(_finding("unmapped_sql"))
+            break
+        source = "".join(body)
+        if hashlib.sha256(source.encode("utf-8")).hexdigest() != mapping.get("sql_hash"):
+            findings.append(_finding("unit_sql_hash_mismatch", unit_id=mapping["unit_id"]))
+        if mapping.get("source_end_line") != mapping.get("source_line", 0) + len(source.splitlines()) - 1:
+            findings.append(_finding("unit_sql_hash_mismatch", unit_id=mapping["unit_id"]))
+        if any(dep not in seen for dep in mapping.get("depends_on", [])):
+            findings.append(_finding("unit_dependency_order"))
+        parsed.append((mapping, source))
+        seen.add(mapping["unit_id"])
+        index += 1
+    return parsed, findings
+
+
+def _artifact_units(sql, profile="framework"):
+    return _minimal_units(sql) if profile == "database_tool_minimal" else _generated_units(sql)
+
+
+def _unmapped_sql(sql, profile="framework"):
     """Require the exact assembler frame and account for every source batch."""
-    return bool(_generated_units(sql)[1])
+    return bool(_artifact_units(sql, profile)[1])
 
 
 def _exclusion_provenance(source_units, evidence, exclusions):
@@ -345,7 +402,7 @@ def _exclusion_provenance(source_units, evidence, exclusions):
     return []
 
 
-def _units(sql, evidence, exclusions):
+def _units(sql, evidence, exclusions, profile="framework"):
     findings = []
     source_findings = evidence.get("findings")
     if (not isinstance(source_findings, list)
@@ -379,10 +436,10 @@ def _units(sql, evidence, exclusions):
         elif set(dependencies) - set(expected):
             findings.append(_finding("unresolved_dependency"))
     phase_positions = [sql.find("-- PHASE: " + phase) for phase in PHASES]
-    if any(p < 0 for p in phase_positions) or phase_positions != sorted(phase_positions):
+    if profile == "framework" and (any(p < 0 for p in phase_positions) or phase_positions != sorted(phase_positions)):
         findings.append(_finding("missing_or_unordered_phases"))
     seen = set()
-    generated, generated_findings = _generated_units(sql)
+    generated, generated_findings = _artifact_units(sql, profile)
     generated_by_id = {mapping["unit_id"]: source for mapping, source in generated}
     if generated_findings:
         findings.extend(_finding(item["code"]) for item in generated_findings)
@@ -418,7 +475,7 @@ def _units(sql, evidence, exclusions):
         if any(mapping.get(k) != unit.get(k) for k in fields):
             findings.append(_finding("unit_mapping_mismatch"))
         preceding = [phase for phase, position in zip(PHASES, phase_positions) if 0 <= position < match.start()]
-        if not preceding or preceding[-1] != unit["phase"]:
+        if profile == "framework" and (not preceding or preceding[-1] != unit["phase"]):
             findings.append(_finding("unit_phase_mismatch"))
         body = generated_by_id.get(uid)
         if body is None:
@@ -435,6 +492,21 @@ def _units(sql, evidence, exclusions):
     if len(additions) != len(set(additions)):
         findings.append(_finding("duplicate_column"))
     return findings
+
+
+def _resolve_sql_profile(metadata):
+    artifact = metadata.get("execution_artifact")
+    artifact_profile = artifact.get("sql_profile") if isinstance(artifact, dict) else None
+    lifecycle_profile = metadata.get("sql_profile")
+    validation = metadata.get("localdb_validation")
+    validation_profile = validation.get("sql_profile") if isinstance(validation, dict) else None
+    profiles = [p for p in (artifact_profile, lifecycle_profile, validation_profile) if p is not None]
+    if any(p not in ("framework", "database_tool_minimal") for p in profiles):
+        return "framework", [_finding("invalid_sql_profile")]
+    if len(set(profiles)) > 1:
+        return profiles[0], [_finding("sql_profile_mismatch")]
+    # Legacy lifecycle records did not persist the profile and were framework artifacts.
+    return (profiles[0] if profiles else "framework"), []
 
 
 def validate_release_output(output_dir, run_root, *, repo=None) -> list[Finding]:
@@ -479,6 +551,8 @@ def validate_release_output(output_dir, run_root, *, repo=None) -> list[Finding]
             if isinstance(localdb, dict) and localdb.get("schema_version") == 1:
                 metadata = dict(metadata)
                 metadata["localdb_validation"] = localdb
+    sql_profile, profile_findings = _resolve_sql_profile(metadata)
+    findings.extend(profile_findings)
     source = documents["source_unit_metadata.json"]
     exclusions = documents["lifecycle_exclusion_manifest.json"].get("exclusions")
     valid = isinstance(exclusions, list)
@@ -533,10 +607,10 @@ def validate_release_output(output_dir, run_root, *, repo=None) -> list[Finding]
             findings.append(_finding("execution_artifact_mismatch"))
     except (ValueError, OSError):
         findings.append(_finding("unsafe_or_missing_execution_artifact"))
-    findings.extend(_finding(f["code"]) for f in validate_sql_contract(sql))
-    if _unmapped_sql(sql):
+    findings.extend(_finding(f["code"]) for f in validate_sql_contract(sql, profile=sql_profile))
+    if _unmapped_sql(sql, sql_profile):
         findings.append(_finding("unmapped_sql"))
-    findings.extend(_units(sql, source, exclusions))
+    findings.extend(_units(sql, source, exclusions, sql_profile))
     _, valid_data_expectations = _data_expectations(source, exclusions)
     if not valid_data_expectations:
         findings.append(_finding("missing_data_expectations"))
