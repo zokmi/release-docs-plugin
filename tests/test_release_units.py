@@ -91,6 +91,37 @@ def test_snapshot_extra_schema_blocks_ef_units(tmp_path, addition):
     assert "baseline_model_conflict" in {f["code"] for f in result.findings}
 
 
+@pytest.mark.parametrize("snapshot_property,migration_nullable,blocked", [
+    ('b.Property<string>("Code");', "false", True),
+    ('b.Property<string>("Code").IsRequired();', "true", True),
+    ('b.Property<string>("Code");', "true", False),
+    ('b.Property<string>("Code").IsRequired();', "false", False),
+])
+def test_snapshot_nullable_shape_controls_ef_sql(tmp_path, snapshot_property, migration_nullable, blocked):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    snapshot = root / "AppDbContextModelSnapshot.cs"
+    snapshot.write_text(snapshot.read_text(encoding="utf-8").replace(
+        'b.HasKey("Id");', snapshot_property + '\n            b.HasKey("Id");'), encoding="utf-8")
+    migration = root / "20260101000000_AddWidget.cs"
+    migration.write_text(migration.read_text(encoding="utf-8").replace(
+        'Id = table.Column<int>(type: "int", nullable: false) },',
+        'Id = table.Column<int>(type: "int", nullable: false), '
+        f'Code = table.Column<string>(type: "nvarchar(max)", nullable: {migration_nullable}) }},'),
+        encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "nullable mismatch")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    if blocked:
+        assert result.blocked and not result.units
+        assert "baseline_model_conflict" in {finding["code"] for finding in result.findings}
+    else:
+        assert not result.blocked, result.findings
+        assert any(unit["objects"] == ["dbo.Widgets"] for unit in result.units)
+
+
 @pytest.mark.parametrize("source_change", [
     lambda source: source.replace('migrationBuilder.CreateTable(', 'AddAuditColumn();\n        migrationBuilder.CreateTable('),
     lambda source: source.replace('migrationBuilder.CreateTable(', 'if (false)\n            migrationBuilder.CreateTable('),

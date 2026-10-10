@@ -307,18 +307,33 @@ def test_localdb_status_accepts_only_complete_current_artifact_evidence(tmp_path
                 "artifact_sha256": artifact.sha256,
                 "command": "isolated runner", "checks": ["all checks passed"],
                 "error_output_summary": ""}
+    preserved = {"dbo.Existing": "Id=1"}
     rounds = {name: dict(evidence, database_id={"validate_only": "db-v", "commit": "db-c", "rerun": "db-c", "injected_failure": "db-f"}[name],
                          session_id="session-" + name,
+                         checks=[name + " verified"], preserved_data_summary=preserved,
                          committed_state="committed-handle" if name in ("commit", "rerun") else "")
               for name in ("validate_only", "commit", "rerun", "injected_failure")}
     metadata["localdb_validation"] = {"status": "passed", "artifact_sha256": artifact.sha256,
                                      "fixture_source": str(fixture), "fixture_sha256": evidence["fixture_sha256"],
                                      "fixture_manifest": str(fixture_manifest), "fixture_manifest_sha256": evidence["fixture_manifest_sha256"],
+                                     "expected_preserved_data_summary": preserved,
                                      "rounds": rounds}
     metadata["localdb_validation"]["rounds"]["injected_failure"]["error_output_summary"] = "Expected THROW 51000, rollback and later-unit stop confirmed"
     path.write_text(json.dumps(metadata))
     module.render_release_documents(analysis, artifact, manifest, tmp_path / "complete")
     assert "LocalDB：通過" in (tmp_path / "complete/00_上線指引.md").read_text(encoding="utf-8")
+    for damage in ("missing_preserved", "wrong_preserved", "duplicate_checks"):
+        altered = json.loads(json.dumps(metadata))
+        if damage == "missing_preserved":
+            altered["localdb_validation"]["rounds"]["commit"].pop("preserved_data_summary")
+        elif damage == "wrong_preserved":
+            altered["localdb_validation"]["rounds"]["commit"]["preserved_data_summary"] = {"dbo.Existing": "Id=2"}
+        else:
+            altered["localdb_validation"]["rounds"]["commit"]["checks"] = ["validate_only verified"]
+        path.write_text(json.dumps(altered), encoding="utf-8")
+        output = tmp_path / damage
+        module.render_release_documents(analysis, artifact, manifest, output)
+        assert "LocalDB：待確認" in (output / "00_上線指引.md").read_text(encoding="utf-8")
     metadata["localdb_validation"]["artifact_sha256"] = "f" * 64
     path.write_text(json.dumps(metadata))
     module.render_release_documents(analysis, artifact, manifest, tmp_path / "stale")
@@ -357,14 +372,17 @@ def test_guide_requires_current_fixture_and_data_checks_for_data_units(tmp_path)
                       "fixture_manifest": str(fixture_manifest), "fixture_manifest_sha256": hashlib.sha256(fixture_manifest.read_bytes()).hexdigest(),
                       "artifact_sha256": artifact.sha256,
                       "command": "isolated runner", "checks": ["all checks passed"], "error_output_summary": ""}
+    preserved = {"dbo.Existing": "Id=1"}
     rounds = {name: dict(round_evidence, database_id={"validate_only": "db-v", "commit": "db-c", "rerun": "db-c", "injected_failure": "db-f"}[name],
                          session_id="session-" + name,
+                         checks=[name + " verified"], preserved_data_summary=preserved,
                          committed_state="committed-handle" if name in ("commit", "rerun") else "")
               for name in ("validate_only", "commit", "rerun", "injected_failure")}
     rounds["injected_failure"]["error_output_summary"] = "Expected error rollback and stop"
     metadata["localdb_validation"] = {"status": "passed", "artifact_sha256": artifact.sha256,
                                       "fixture_source": str(fixture), "fixture_sha256": round_evidence["fixture_sha256"],
                                       "fixture_manifest": str(fixture_manifest), "fixture_manifest_sha256": round_evidence["fixture_manifest_sha256"],
+                                      "expected_preserved_data_summary": preserved,
                                       "rounds": rounds}
     path.write_text(json.dumps(metadata), encoding="utf-8")
     module.render_release_documents(analysis, artifact, manifest, tmp_path / "current")

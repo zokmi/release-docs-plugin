@@ -164,6 +164,7 @@ def _status(metadata, artifact, data_ids=()):
                     rounds = {}
             fields = ("server", "database", "provider_version", "tool_version", "baseline_source",
                       "fixture_source", "command", "checks")
+            preserved = validation.get("expected_preserved_data_summary")
             if (isinstance(rounds, dict) and all(
                     isinstance(rounds.get(name), dict) and rounds[name].get("status") == "passed"
                     and type(rounds[name].get("exit_code")) is int and rounds[name]["exit_code"] == 0
@@ -172,6 +173,9 @@ def _status(metadata, artifact, data_ids=()):
                     and rounds[name].get("tool_version") not in ("unknown", "")
                     and (name != "injected_failure" or bool(rounds[name]["error_output_summary"].strip()))
                     and all(rounds[name].get(k) for k in fields)
+                    and isinstance(rounds[name].get("checks"), (list, dict))
+                    and isinstance(preserved, dict) and bool(preserved)
+                    and rounds[name].get("preserved_data_summary") == preserved
                     and rounds[name].get("fixture_source") == validation["fixture_source"]
                     and rounds[name].get("fixture_sha256") == validation["fixture_sha256"]
                     and rounds[name].get("fixture_manifest") == validation["fixture_manifest"]
@@ -183,6 +187,8 @@ def _status(metadata, artifact, data_ids=()):
                          and isinstance(item.get("unit_id"), str) and isinstance(item.get("id"), str)
                          and item.get("passed") is True and "before" in item and "after" in item}))
                     for name in ("validate_only", "commit", "rerun", "injected_failure"))
+                    and len({json.dumps(rounds[name]["checks"], sort_keys=True, ensure_ascii=True)
+                             for name in ("validate_only", "commit", "rerun", "injected_failure")}) == 4
                     and _valid_round_identity(rounds)):
                 status = "通過（隔離 evidence 已記錄）"
     return "SQL 內容審核：待確認（由獨立審核結果確認）。\n\nLocalDB：" + status + "。"

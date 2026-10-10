@@ -255,19 +255,26 @@ def _snapshot_schema(source):
         if body[position:match.start()].strip():
             raise ValueError("Unsupported model snapshot")
         var = re.escape(match.group("var"))
+        property_pattern = (var + r'\.Property<(?P<kind>int|long|bool|string)(?P<optional>\?)?>'
+                            r'\(\s*"(?P<name>\w+)"\s*\)(?P<required>\.IsRequired\(\))?\s*;')
         mapping = re.fullmatch(
-            r'\s*(?P<properties>(?:' + var + r'\.Property<(?:int|long|bool|string)>\(\s*"\w+"\s*\)\s*;\s*)+)'
+            r'\s*(?P<properties>(?:' + property_pattern + r'\s*)+)'
             + var + r'\.HasKey\(\s*"(?P<key>\w+)"\s*\)\s*;\s*'
             + var + r'\.ToTable\(\s*"(?P<table>\w+)"\s*\)\s*;\s*',
             match.group("body"), re.S)
         if not mapping:
             raise ValueError("Unsupported model snapshot")
-        properties = re.findall(var + r'\.Property<(int|long|bool|string)>\(\s*"(\w+)"\s*\)\s*;', mapping.group("properties"))
+        properties = list(re.finditer(property_pattern, mapping.group("properties")))
         types = {"int": "int", "long": "bigint", "bool": "bit", "string": "nvarchar(max)"}
-        columns = tuple((name, types[kind]) for kind, name in properties)
+        if any(prop.group("optional") and prop.group("required") for prop in properties):
+            raise ValueError("Unsupported model snapshot")
+        columns = tuple((prop.group("name"), types[prop.group("kind")],
+                         bool(prop.group("optional")) or
+                         (prop.group("kind") == "string" and not prop.group("required")))
+                        for prop in properties)
         table = mapping.group("table")
-        if (table in tables or len({name for name, _ in columns}) != len(columns)
-                or mapping.group("key") not in {name for name, _ in columns}):
+        if (table in tables or len({name for name, _, _ in columns}) != len(columns)
+                or mapping.group("key") not in {name for name, _, _ in columns}):
             raise ValueError("Unsupported model snapshot")
         tables[table] = (columns, mapping.group("key"))
         position = match.end()
@@ -545,7 +552,7 @@ def _analyze_ef(result, repo, evidence, baseline_text, detection):
                 obj = f"dbo.{table}"
                 last_table = (table, f"ef.{Path(path).stem}.table",
                               {name: typ for name, typ, _ in columns})
-                migration_schema[table] = (tuple((name, typ) for name, typ, _ in columns), pk)
+                migration_schema[table] = (tuple((name, typ, nullable == "true") for name, typ, nullable in columns), pk)
                 result.units.append(_ef_unit(metadata, last_table[1], obj, sql, line, issues=issues,
                                              exists_query=f"SELECT OBJECT_ID(N'{obj}', N'U')",
                                              definition_query=f"SELECT name, system_type_id, is_nullable FROM sys.columns WHERE object_id = OBJECT_ID(N'{obj}')"))
