@@ -171,6 +171,28 @@ def test_changed_ef_context_without_executable_unit_blocks(tmp_path):
     assert "missing_authoritative_sql" in {f["code"] for f in result.findings}
 
 
+def test_unrelated_application_changes_do_not_block_ef_units(tmp_path):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    unrelated = {
+        "Greeting.cs": "public class Greeting { public string Text => \"Hello\"; }",
+        "client.csproj": '<Project Sdk="Microsoft.NET.Sdk"></Project>',
+        "client.config": "<configuration><appSettings /></configuration>",
+        "client.json": '{"theme": "blue"}',
+    }
+    for path, contents in unrelated.items():
+        (root / path).write_text(contents, encoding="utf-8")
+        evidence["committed_changes"].append({"status": "A", "path": path})
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "unrelated application changes")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert not result.blocked, result.findings
+    assert len(result.units) == 2
+    assert not {item["source_path"] for item in result.sources} & set(unrelated)
+
+
 def test_stale_detection_revision_blocks(tmp_path):
     analyzer, _ = api()
     root, evidence, baseline, detection = ef_case(tmp_path)

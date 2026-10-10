@@ -17,6 +17,10 @@ PHASES = ("SCHEMA", "REPAIR", "DATA", "VALIDATION")
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_.:-]*\Z")
 OBJECT = re.compile(r"[A-Za-z_][A-Za-z0-9_.\[\]]*\Z")
 ISSUE = re.compile(r"#[0-9]+\Z")
+EF_SOURCE_MARKERS = re.compile(
+    rb"\b(?:DbContext|DbMigration|ModelSnapshot|migrationBuilder|OnModelCreating|OnConfiguring|"
+    rb"AddDbContext|UseSqlServer|GetConnectionString|connectionStrings|ConnectionStrings|"
+    rb"EntityFramework|Microsoft\.EntityFrameworkCore|SqlServer)\b", re.I)
 
 
 @dataclass
@@ -78,6 +82,22 @@ def _kind(path):
     if "migration" in lower or "modelsnapshot" in lower:
         return "migration"
     return None
+
+
+def _ef_source_candidate(repo, evidence, change, detected_paths):
+    path = _safe_path(change["path"])
+    if path in detected_paths:
+        return True
+    if not path.lower().endswith((".cs", ".csproj", ".config", ".json")):
+        return False
+    for revision in (evidence.get("base_sha"), evidence.get("target_sha")):
+        try:
+            _, raw = _read_revision(repo, revision, path)
+        except (ValueError, TypeError):
+            continue
+        if EF_SOURCE_MARKERS.search(raw):
+            return True
+    return False
 
 
 def _strings(descriptor, key, pattern):
@@ -417,8 +437,11 @@ def analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, *, 
             _finding(result, "missing_authoritative_sql", path)
         else:
             covered.update(_safe_path(p) for p in descriptor.get("covers", []))
+    detected_paths = ({record["path"] for record in ef_detection.evidence}
+                      if ef_detection is not None and not result.blocked else set())
     candidates = {_safe_path(c["path"]): c for c in evidence.get("committed_changes", [])
-                  if _kind(c["path"]) or (ef_detection is not None and c["path"].lower().endswith((".cs", ".csproj", ".config", ".json")))}
+                  if _kind(c["path"]) or (ef_detection is not None and
+                                          _ef_source_candidate(repo, evidence, c, detected_paths))}
     for path in explicit:
         candidates.setdefault(path, {"path": path, "status": "A"})
     for path, change in sorted(candidates.items()):
