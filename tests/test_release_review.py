@@ -1030,6 +1030,183 @@ def test_report_merging_sql_defect_preserves_successful_deployment_evidence(rele
     assert "部署驗證：通過" in text
 
 
+def report_text(release, extra=()):
+    fingerprint = api("review_fingerprint").review_fingerprint(*release)
+    result = api().validate_release_output(release[1], release[2], repo=release[0])
+    return api().write_review_report(release[2], result + list(extra), fingerprint,
+                                     repo=release[0], output_dir=release[1]).read_text(encoding="utf-8")
+
+
+def report_query_evidence(release):
+    evidence = localdb_evidence(release)
+    source = json.loads((release[2] / "source_unit_metadata.json").read_text())
+    unit = source["units"][0]
+    query = unit["validation_queries"][0]
+    result = {key: unit[key] for key in ("unit_id", "source_path", "source_revision", "source_hash")}
+    result.update(query_sha256=hashlib.sha256(query["query"].encode()).hexdigest(),
+                  expected=query["expected"], actual=query["expected"], passed=True)
+    for name, row in evidence["rounds"].items():
+        row["checks"] = {"transaction": name + " checked", "validation_queries": [dict(result)]}
+    return evidence
+
+
+def test_report_has_six_evidence_sections_and_domain_separated_findings(release):
+    text = report_text(release, [
+        {"code": "business_data_validation", "domain": "business_data_validation", "blocking": True,
+         "status": "未通過", "reason": "SECRET_FORMAL_ROW"},
+        {"code": "opaque_execution", "domain": "business_data_validation", "blocking": True},
+    ])
+    for heading in ("SQL 正確性驗證結果", "validation SQL 執行結果", "LocalDB 四輪交易結果",
+                    "正式 schema 對照結果", "#5005 排除結果", "非阻塞性的正式資料／業務資料驗證限制"):
+        assert "## " + heading in text
+    assert "- opaque_execution [sql_correctness；未通過；阻塞]" in text
+    assert "- business_data_validation [business_data_validation；待確認；非阻塞]" in text
+    assert "SECRET_FORMAL_ROW" not in text
+    assert "SQL 內容審核：未通過" in text
+
+
+@pytest.mark.parametrize("damage, expected", [
+    (None, "通過"), ("missing", "待確認"), ("static_only", "待確認"),
+    ("wrong_query", "待確認"), ("wrong_source", "待確認"), ("duplicate", "待確認"),
+    ("wrong_expected", "待確認"), ("wrong_actual", "未通過"), ("false_passed", "未通過"),
+    ("wrong_artifact", "待確認"), ("missing_round", "待確認"),
+    ("injected_queries_not_run", "通過"),
+])
+def test_report_validation_sql_maps_only_current_executed_results(release, damage, expected):
+    evidence = report_query_evidence(release)
+    row = evidence["rounds"]["commit"]
+    result = row["checks"]["validation_queries"][0]
+    if damage == "missing":
+        del row["checks"]["validation_queries"]
+    elif damage == "static_only":
+        row["checks"] = ["validation SQL passed"]
+    elif damage == "wrong_query":
+        result["query_sha256"] = "0" * 64
+    elif damage == "wrong_source":
+        result["source_hash"] = "0" * 64
+    elif damage == "duplicate":
+        row["checks"]["validation_queries"].append(dict(result))
+    elif damage == "wrong_expected":
+        result["expected"] = 2
+    elif damage == "wrong_actual":
+        result["actual"] = 2
+    elif damage == "false_passed":
+        result["passed"] = False
+    elif damage == "wrong_artifact":
+        evidence["artifact_sha256"] = "0" * 64
+    elif damage == "missing_round":
+        del evidence["rounds"]["rerun"]
+    elif damage == "injected_queries_not_run":
+        del evidence["rounds"]["injected_failure"]["checks"]["validation_queries"]
+    update_metadata(release, localdb_validation=evidence)
+    text = report_text(release)
+    assert "validation SQL 執行：" + expected in text
+    assert "SELECT 1" not in text
+    assert "session-" not in text and "db-1" not in text
+
+
+def test_report_business_limitations_preserve_sql_and_localdb_success(release):
+    from test_semantic_review import record_for
+    from semantic_review import write_semantic_review
+    update_metadata(release, localdb_validation=report_query_evidence(release))
+    record, _, _, _ = record_for(release)
+    record["unresolved"] = [{"domain": "business_data_validation", "reason": "SECRET_PRODUCTION_VALUES"}]
+    write_semantic_review(release[2], record)
+    text = report_text(release)
+    assert "SQL 內容審核：通過" in text
+    assert "部署驗證：通過" in text
+    assert "validation SQL 執行：通過" in text
+    assert "business_data_validation；待確認；非阻塞" in text
+    assert "- semantic_review_pending" not in text and "SECRET_PRODUCTION_VALUES" not in text
+    for name in ("validate_only", "commit", "rerun", "injected_failure"):
+        assert "- " + name + "：通過" in text
+
+
+def test_report_schema_and_5005_findings_are_not_hidden_by_business_domain(release):
+    text = report_text(release, [
+        {"code": "baseline_model_conflict", "domain": "business_data_validation", "blocking": True},
+        {"code": "excluded_object_in_sql", "domain": "business_data_validation", "blocking": True},
+    ])
+    assert "schema／來源定義審查：未通過" in text
+    assert "#5005 排除審查：未通過" in text
+    assert "- baseline_model_conflict [sql_correctness；未通過；阻塞]" in text
+
+
+def test_report_validation_assertions_show_results_without_raw_values(release):
+    evidence = report_query_evidence(release)
+    path = release[2] / "source_unit_metadata.json"
+    source = json.loads(path.read_text())
+    assertion = {"id": "SECRET_ASSERTION_ID", "seed_row_id": "SECRET_ROW_ID",
+                 "expected_by_round": {name: {"before": "SECRET_BEFORE", "after": "SECRET_AFTER"}
+                                       for name in evidence["rounds"]}}
+    source["units"][0]["expected_assertions"] = [assertion]
+    write_json(path, source)
+    evidence["expected_assertions"] = [{"unit_id": "customer", **assertion}]
+    for row in evidence["rounds"].values():
+        row["data_checks"] = [{"unit_id": "customer", "id": assertion["id"],
+                               "seed_row_id": assertion["seed_row_id"], "passed": True,
+                               "before": "SECRET_BEFORE", "after": "SECRET_AFTER"}]
+    update_metadata(release, localdb_validation=evidence)
+    text = report_text(release)
+    assert "fixture assertion 查核：通過" in text
+    assert "SECRET_" not in text
+
+
+@pytest.mark.parametrize("assertions", [None, [None], [{"id": "unsafe", "expected_by_round": None}]])
+def test_report_malformed_non_mutating_assertions_remain_pending(release, assertions):
+    evidence = report_query_evidence(release)
+    path = release[2] / "source_unit_metadata.json"
+    source = json.loads(path.read_text())
+    source["units"][0]["expected_assertions"] = assertions
+    write_json(path, source)
+    update_metadata(release, localdb_validation=evidence)
+    assert "fixture assertion 查核：待確認" in report_text(release)
+
+
+def test_report_overall_localdb_failure_does_not_fabricate_four_failed_rounds(release):
+    evidence = report_query_evidence(release)
+    evidence["status"] = "failed"
+    update_metadata(release, localdb_validation=evidence)
+    text = report_text(release)
+    assert "部署驗證：未通過" in text
+    assert "- validate_only：未通過" not in text
+    assert "- commit：未通過" not in text
+
+
+def test_report_semantic_sql_failure_keeps_independent_current_localdb_results(release):
+    from test_semantic_review import record_for
+    from semantic_review import write_semantic_review
+    update_metadata(release, localdb_validation=report_query_evidence(release))
+    record, _, _, _ = record_for(release)
+    record["unit_reviews"][0]["checks"]["definition"]["conclusion"] = "failed"
+    write_semantic_review(release[2], record)
+    text = report_text(release)
+    assert "SQL 內容審核：未通過" in text
+    assert "部署驗證：通過" in text
+    assert "- commit：通過" in text
+
+
+def test_report_query_defect_lowers_only_sql_correctness(release):
+    from test_semantic_review import record_for
+    from semantic_review import write_semantic_review
+    evidence = report_query_evidence(release)
+    evidence["rounds"]["commit"]["checks"]["validation_queries"][0]["actual"] = 2
+    update_metadata(release, localdb_validation=evidence)
+    record, _, _, _ = record_for(release)
+    write_semantic_review(release[2], record)
+    text = report_text(release)
+    assert "SQL 內容審核：未通過" in text
+    assert "部署驗證：通過" in text
+    assert "validation_sql_defect [sql_correctness；未通過；阻塞]" in text
+
+
+def test_report_malformed_finding_identity_is_safe_and_non_executable(release):
+    text = report_text(release, [{"code": ["SECRET_MALFORMED"], "domain": ["SECRET_DOMAIN"],
+                                 "blocking": True, "status": "SECRET_STATUS"}])
+    assert "SECRET_" not in text
+    assert "invalid_finding [sql_correctness；待確認；阻塞]" in text
+
+
 @pytest.mark.parametrize("damage", ["unknown_id", "missing_units", "missing_evidence", "wrong_hash",
                                     "wrong_revision", "wrong_objects", "wrong_issues", "wrong_dependency",
                                     "wrong_evidence", "missing_impact", "missing_source_unit"])

@@ -52,7 +52,7 @@ missing_try_catch transaction_count missing_implicit_transactions_off unconditio
 validate_only_rollback deploy_commit missing_throw transaction_scope error_rollback missing_error_context
 missing_transaction_action unmapped_sql invalid_exclusion_provenance
 invalid_runtime_mode sql_profile_mismatch invalid_sql_profile nonessential_set_statement
-business_data_validation
+business_data_validation validation_sql_defect
 """.split())
 SQL_CORRECTNESS_CODES = REPORT_CODES - {
     "business_data_validation", "incomplete_deployment_evidence", "unsupported_deployment_pass_claim"
@@ -737,10 +737,103 @@ def _report_status(findings, domain, summary_code):
     return status
 
 
+def _validation_query_status(units, rounds):
+    """Project structured runner checks; prose/static definitions cannot pass.
+
+    Each checks.validation_queries result binds the unit's source identity and
+    exact UTF-8 query hash to expected/actual JSON values and a boolean passed.
+    The existing runner preserves structured checks without executing here.
+    """
+    statuses = []
+    for name in ("validate_only", "commit", "rerun"):
+        checks = rounds[name].get("checks")
+        results = checks.get("validation_queries") if isinstance(checks, dict) else None
+        for unit in units:
+            queries = unit.get("validation_queries")
+            if not isinstance(queries, list) or not queries:
+                statuses.append("待確認")
+                continue
+            for query in queries:
+                if (not isinstance(query, dict) or not isinstance(query.get("query"), str)
+                        or not query["query"].strip() or "expected" not in query):
+                    statuses.append("待確認")
+                    continue
+                digest = hashlib.sha256(query["query"].encode("utf-8")).hexdigest()
+                matches = [r for r in results if isinstance(r, dict)
+                           and r.get("unit_id") == unit.get("unit_id")
+                           and r.get("query_sha256") == digest] if isinstance(results, list) else []
+                if len(matches) != 1:
+                    statuses.append("待確認")
+                    continue
+                result = matches[0]
+                if (any(not isinstance(unit.get(k), str) or not unit[k]
+                        or result.get(k) != unit[k]
+                        for k in ("source_path", "source_revision", "source_hash"))
+                        or "expected" not in result or "actual" not in result
+                        or type(result.get("passed")) is not bool
+                        or json.dumps(result["expected"], sort_keys=True) != json.dumps(query["expected"], sort_keys=True)):
+                    statuses.append("待確認")
+                    continue
+                statuses.append("通過" if result["passed"] and
+                                json.dumps(result["actual"], sort_keys=True) == json.dumps(query["expected"], sort_keys=True)
+                                else "未通過")
+    return max(statuses or ["待確認"], key=STATUSES.index)
+
+
+def _report_runtime(source, exclusions, metadata, digest, run):
+    """Reuse the four-round trust gate; never project raw runner values."""
+    deployment = _deployment(metadata, digest, source, exclusions, run)
+    rounds = "\n".join("- " + name + "：" + ("通過" if deployment == "通過" else "待確認") for name in ROUND_NAMES)
+    if deployment != "通過":
+        return "待確認", "待確認", rounds
+    excluded = {uid for item in exclusions for uid in item["unit_ids"]}
+    units = [unit for unit in source["units"] if unit["unit_id"] not in excluded]
+    evidence = metadata["localdb_validation"]["rounds"]
+    statuses = []
+    for unit in units:
+        assertions = unit.get("expected_assertions", [])
+        if not isinstance(assertions, list):
+            statuses.append("待確認")
+            continue
+        for assertion in assertions:
+            if (not isinstance(assertion, dict) or not isinstance(assertion.get("id"), str)
+                    or not assertion["id"] or not isinstance(assertion.get("seed_row_id"), str)
+                    or not assertion["seed_row_id"] or not isinstance(assertion.get("expected_by_round"), dict)):
+                statuses.append("待確認")
+                continue
+            for name in ROUND_NAMES:
+                checks = evidence[name].get("data_checks")
+                matches = [row for row in checks if isinstance(row, dict)
+                           and row.get("unit_id") == unit["unit_id"]
+                           and row.get("id") == assertion.get("id")] if isinstance(checks, list) else []
+                expected = assertion.get("expected_by_round", {}).get(name)
+                if len(matches) != 1 or not isinstance(expected, dict):
+                    statuses.append("待確認")
+                elif (matches[0].get("passed") is True
+                      and matches[0].get("seed_row_id") == assertion.get("seed_row_id")
+                      and all(field in matches[0] and field in expected
+                              and json.dumps(matches[0][field], sort_keys=True) == json.dumps(expected[field], sort_keys=True)
+                              for field in ("before", "after"))):
+                    statuses.append("通過")
+                else:
+                    statuses.append("未通過")
+    assertions = max(statuses, key=STATUSES.index) if statuses else "N/A（未宣告 fixture assertions；未產生資料列結果）"
+    return _validation_query_status(units, evidence), assertions, rounds
+
+
+def _report_section_status(findings, codes, complete=False):
+    selected = [f for f in findings if isinstance(f, dict) and isinstance(f.get("code"), str) and f["code"] in codes]
+    return _report_status([_finding("sql_content_status", status="通過" if complete else "待確認")]
+                          + selected, "sql_correctness", "sql_content_status")
+
+
 def write_review_report(run_root, findings, fingerprint, *, repo=None, output_dir=None):
     """Write review evidence only in lifecycle; include codes, never source prose."""
     run = lifecycle_root(run_root)
     from semantic_review import validate_semantic_review
+    current_identity = False
+    fresh_findings = []
+    runtime = ("待確認", "待確認", "\n".join("- " + name + "：待確認" for name in ROUND_NAMES))
     try:
         if repo is None or output_dir is None:
             raise ValueError('Current evidence identity is required for a passing report')
@@ -748,16 +841,37 @@ def write_review_report(run_root, findings, fingerprint, *, repo=None, output_di
         current = _fingerprint.review_fingerprint(repo, output_dir, run, source['source_scope'])
         if current.sha256 != fingerprint.sha256:
             raise ValueError('Stale review fingerprint')
+        exclusions = read_json(run / 'lifecycle_exclusion_manifest.json')['exclusions']
+        metadata = read_json(run / 'lifecycle_metadata.json')
+        if "localdb_validation" not in metadata and (run / 'localdb_validation.json').is_file():
+            metadata = {**metadata, "localdb_validation": read_json(run / 'localdb_validation.json')}
+        # Recheck source mapping/contracts before trusting per-query evidence.
+        checked = validate_release_output(output_dir, run)
+        fresh_findings = [f for f in checked if f["code"] not in ("semantic_review_pending", "sql_content_status")]
+        current_identity = next(f["status"] for f in checked if f["code"] == "static_sql_status") == "通過"
+        if current_identity:
+            runtime = _report_runtime(source, exclusions, metadata, file_hash(Path(output_dir) / OPERATOR_FILES[1]), run)
         semantic_findings = validate_semantic_review(
             read_json(run / 'semantic_review_record.json'), source,
-            read_json(run / 'lifecycle_exclusion_manifest.json')['exclusions'], current.sha256)
+            exclusions, current.sha256)
     except (ValueError, OSError, KeyError):
         semantic_findings = [_finding('semantic_review_pending', blocking=False)]
-    findings = list(findings) + semantic_findings
+    findings = list(findings) + fresh_findings + semantic_findings
+    if runtime[0] == "未通過":
+        findings.append(_finding("validation_sql_defect"))
     report = plain_path(run / "05_版更審查報告.md")
     values = {"SQLSTATUS": _report_status(findings, "sql_correctness", "sql_content_status"),
               "DEPLOYSTATUS": _report_status(findings, "deployment_validation", "deployment_validation_status"),
-              "FINGERPRINT": fingerprint.sha256, "FINDINGS": ""}
+              "FINGERPRINT": fingerprint.sha256,
+              "VALIDATIONSTATUS": runtime[0], "ASSERTIONSTATUS": runtime[1], "ROUNDS": runtime[2]}
+    semantic_complete = current_identity and not any(f["domain"] == "sql_correctness" for f in semantic_findings)
+    values["SCHEMASTATUS"] = _report_section_status(findings, {
+        "baseline_model_conflict", "missing_baseline_schema", "duplicate_column", "model_drift_without_migration",
+        "missing_model_snapshot", "unsupported_migration_definition"}, semantic_complete)
+    values["EXCLUSIONSTATUS"] = _report_section_status(findings, {
+        "invalid_lifecycle_exclusions", "invalid_exclusion_provenance", "excluded_object_in_sql",
+        "excluded_unit_in_sql", "excluded_dependency", "guide_exclusion_mismatch",
+        "unresolved_exclusion", "partial_exclusion"}, current_identity)
     semantic_path = plain_path(run / "semantic_review_record.json")
     values["SEMANTICHASH"] = file_hash(semantic_path) if semantic_path.is_file() else "missing"
     for key in ("SQLSTATUS", "DEPLOYSTATUS"):
@@ -765,13 +879,22 @@ def write_review_report(run_root, findings, fingerprint, *, repo=None, output_di
             values[key] = "待確認"
     if not re.fullmatch(r"[0-9a-f]{64}", fingerprint.sha256):
         raise ValueError("Invalid fingerprint record")
-    lines = []
+    lines = {domain: [] for domain in ("sql_correctness", "deployment_validation", "business_data_validation")}
     for finding in findings:
         code = finding.get("code") if isinstance(finding, dict) else None
         if code not in ("static_sql_status", "sql_content_status", "deployment_validation_status"):
-            safe = code if isinstance(code, str) and code in REPORT_CODES else "invalid_finding"
-            lines.append("- " + safe)
-    values["FINDINGS"] = "\n".join(lines) or "無靜態阻擋項目；部署驗證依獨立證據判定。"
+            safe = code if isinstance(code, str) and code in REPORT_CODES | SQL_CORRECTNESS_CODES else "invalid_finding"
+            normalized = _finding(safe, finding.get("blocking") is True if isinstance(finding, dict) else True,
+                                  finding.get("domain", "sql_correctness") if isinstance(finding, dict) else "sql_correctness",
+                                  finding.get("status") if isinstance(finding, dict) else None)
+            domain = normalized["domain"] if isinstance(normalized["domain"], str) and normalized["domain"] in lines else "sql_correctness"
+            state = normalized["status"] if normalized["status"] in STATUSES else "待確認"
+            line = "- " + safe + " [" + domain + "；" + state + "；" + ("阻塞" if normalized["blocking"] else "非阻塞") + "]"
+            if line not in lines[domain]:
+                lines[domain].append(line)
+    for key, domain in (("SQLFINDINGS", "sql_correctness"), ("DEPLOYFINDINGS", "deployment_validation"),
+                        ("BUSINESSFINDINGS", "business_data_validation")):
+        values[key] = "\n".join(lines[domain]) or "無此 domain 的審查發現；不代表未取得的證據已通過。"
     template = (Path(__file__).parents[1] / "assets/05_版更審查報告.md").read_text(encoding="utf-8")
     report.write_text(re.sub(r"\{\{([A-Z]+)\}\}", lambda m: values[m[1]], template), encoding="utf-8")
     return report

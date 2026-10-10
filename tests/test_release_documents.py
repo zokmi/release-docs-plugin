@@ -69,6 +69,28 @@ def test_output_has_only_operator_files_and_preserves_sql_bytes(tmp_path):
     assert inventory.files["01_部署SQL.sql"] == artifact.sha256
 
 
+def test_review_report_keeps_internal_evidence_out_of_operator_delivery(tmp_path):
+    from types import SimpleNamespace
+    import importlib.util
+    review_path = SCRIPTS.parents[1] / "release-docs-review/scripts/validate_release_output.py"
+    spec = importlib.util.spec_from_file_location("task3_document_review", review_path)
+    review = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(review)
+    _, artifact, manifest, output, _ = render(tmp_path)
+    run = manifest.parent
+    evidence_bytes = {p.name: p.read_bytes() for p in run.iterdir() if p.is_file()}
+    operator_bytes = {p.name: p.read_bytes() for p in output.iterdir()}
+    text = review.write_review_report(run, [], SimpleNamespace(sha256="a" * 64)).read_text(encoding="utf-8")
+    assert "## SQL 正確性驗證結果" in text
+    assert "## 非阻塞性的正式資料／業務資料驗證限制" in text
+    assert "validation SQL 執行：待確認" in text
+    assert {p.name: p.read_bytes() for p in output.iterdir()} == operator_bytes
+    assert (output / "01_部署SQL.sql").read_bytes() == artifact.path.read_bytes()
+    assert all((run / name).read_bytes() == data for name, data in evidence_bytes.items())
+    for forbidden in ("internal-graph-node", "source_hash", "dependency_impact", "CREATE TABLE", "baseline/old.sql"):
+        assert forbidden not in text
+
+
 def test_guide_projects_structure_and_lifecycle_scope_without_internal_evidence(tmp_path):
     _, _, _, output, _ = render(tmp_path)
     text = (output / "00_上線指引.md").read_text(encoding="utf-8")
