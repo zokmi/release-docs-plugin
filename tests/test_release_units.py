@@ -19,6 +19,8 @@ def ef_case(tmp_path, *, migration=True, snapshot=True, base_migration=False):
     git(root, "config", "user.email", "fixture@example.invalid")
     baseline = root / "baseline.sql"
     baseline.write_text("CREATE TABLE dbo.Existing (Id int NOT NULL);", encoding="utf-8")
+    for name in ("efcore_project.csproj", "efcore_context.cs"):
+        (root / name).write_bytes((EF_FIXTURES / name).read_bytes())
     if base_migration:
         (root / "20250101000000_Old.cs").write_text("public class Old : Migration { protected override void Up(MigrationBuilder b) { } }", encoding="utf-8")
     git(root, "add", ".")
@@ -26,7 +28,7 @@ def ef_case(tmp_path, *, migration=True, snapshot=True, base_migration=False):
     base = git(root, "rev-parse", "HEAD")
     if base_migration:
         (root / "20250101000000_Old.cs").unlink()
-    names = ["efcore_project.csproj", "efcore_context.cs"]
+    names = []
     if migration:
         names += ["20260101000000_AddWidget.cs", "20260101000000_AddWidget.Designer.cs"]
     if snapshot:
@@ -34,15 +36,24 @@ def ef_case(tmp_path, *, migration=True, snapshot=True, base_migration=False):
     for name in names:
         (root / name).write_bytes((EF_FIXTURES / name).read_bytes())
     git(root, "add", ".")
-    git(root, "commit", "-qm", "target")
+    git(root, "commit", "--allow-empty", "-qm", "target")
     target = git(root, "rev-parse", "HEAD")
     from detect_entity_framework import EFDetection
     detection = EFDetection(framework="EF Core", version="8.0.4", provider="SQL Server",
                             contexts=["AppDbContext"], database_identity="server=.;database=app",
                             migration_paths=["20260101000000_AddWidget.cs"] if migration else [],
                             blocking=False)
+    detection.evidence = [{"path": name, "revision": target,
+                           "sha256": hashlib.sha256(subprocess.run(["git", "-C", str(root), "show", target + ":" + name], capture_output=True, check=True).stdout).hexdigest()}
+                          for name in ["efcore_project.csproj", "efcore_context.cs", *names]]
     changes = [{"status": "A", "path": n} for n in names]
     return root, {"base_sha": base, "target_sha": target, "committed_changes": changes}, baseline, detection
+
+
+def refresh_detection(root, evidence, detection):
+    detection.evidence = [{"path": item["path"], "revision": evidence["target_sha"],
+                           "sha256": hashlib.sha256(subprocess.run(["git", "-C", str(root), "show", evidence["target_sha"] + ":" + item["path"]], capture_output=True, check=True).stdout).hexdigest()}
+                          for item in detection.evidence]
 
 
 def test_derives_units_from_ef_migration_operations(tmp_path):
@@ -65,12 +76,17 @@ def test_derives_ef6_create_table_without_ignoring_column_definition(tmp_path):
     git(root, "add", ".")
     git(root, "commit", "-qm", "ef6 migration")
     evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
     detection.framework = "EF6"
     detection.migration_paths = ["20260101000000_AddWidgetEf6.cs"]
+    detection.evidence = [{"path": p, "revision": evidence["target_sha"],
+                           "sha256": hashlib.sha256(subprocess.run(["git", "-C", str(root), "show", evidence["target_sha"] + ":" + p], capture_output=True, check=True).stdout).hexdigest()}
+                          for p in ("efcore_project.csproj", "efcore_context.cs", "20260101000000_AddWidgetEf6.cs",
+                                    "20260101000000_AddWidgetEf6.Designer.cs")]
     result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
     assert not result.blocked, result.findings
     assert len(result.units) == 1
-    assert "[Id] int NOT NULL" in result.units[0]["target_definition"]
+    assert "[Id] int NOT NULL" in result.units[0]["target_definition"]["sql"]
 
 
 def test_unsupported_ef_operation_never_yields_partial_units(tmp_path):
@@ -81,6 +97,7 @@ def test_unsupported_ef_operation_never_yields_partial_units(tmp_path):
     git(root, "add", ".")
     git(root, "commit", "-qm", "opaque operation")
     evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
     result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
     assert result.blocked and not result.units
     assert "unsupported_migration_operation" in {f["code"] for f in result.findings}
@@ -94,9 +111,156 @@ def test_ef_index_options_cannot_be_silently_dropped(tmp_path):
     git(root, "add", ".")
     git(root, "commit", "-qm", "unique index")
     evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
     result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
     assert result.blocked and not result.units
     assert "unsupported_migration_operation" in {f["code"] for f in result.findings}
+
+
+def test_mixed_ef_and_uncovered_sql_blocks(tmp_path):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    (root / "patch.sql").write_text("ALTER TABLE dbo.Existing ADD Code int;", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "extra sql")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    evidence["committed_changes"].append({"status": "A", "path": "patch.sql"})
+    detection.evidence = [{"path": p, "revision": evidence["target_sha"],
+                           "sha256": hashlib.sha256(subprocess.run(["git", "-C", str(root), "show", evidence["target_sha"] + ":" + p], capture_output=True, check=True).stdout).hexdigest()}
+                          for p in ("efcore_project.csproj", "efcore_context.cs", "20260101000000_AddWidget.cs",
+                                    "20260101000000_AddWidget.Designer.cs", "AppDbContextModelSnapshot.cs")]
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert result.blocked and not result.units
+    assert "missing_authoritative_sql" in {f["code"] for f in result.findings}
+
+
+def test_mixed_ef_and_complete_sql_preserves_both_units(tmp_path):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    sql = "CREATE TABLE dbo.Extra (Id int NOT NULL);"
+    declaration = {"unit_id": "extra", "phase": "SCHEMA", "complete": True,
+                   "objects": ["dbo.Extra"], "depends_on": [],
+                   "preconditions": [{"query": "SELECT 1", "expected": 1}],
+                   "target_definition": {"sql": sql},
+                   "skip_condition": {"query": "SELECT 1", "expected": 1},
+                   "stop_condition": {"query": "SELECT 0", "expected": 1},
+                   "validation_queries": [{"query": "SELECT 1", "expected": 1}]}
+    (root / "patch.sql").write_text("-- release-unit: " + json.dumps(declaration) + "\n" + sql, encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "complete extra sql")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    evidence["committed_changes"].append({"status": "A", "path": "patch.sql"})
+    refresh_detection(root, evidence, detection)
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert not result.blocked, result.findings
+    assert {unit["unit_id"] for unit in result.units} == {"extra", "ef.20260101000000_AddWidget.table", "ef.20260101000000_AddWidget.index"}
+
+
+def test_changed_ef_context_without_executable_unit_blocks(tmp_path):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    path = root / "efcore_context.cs"
+    path.write_text(path.read_text() + "\n// changed mapping\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "context change")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    evidence["committed_changes"].append({"status": "M", "path": "efcore_context.cs"})
+    refresh_detection(root, evidence, detection)
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert result.blocked and not result.units
+    assert "missing_authoritative_sql" in {f["code"] for f in result.findings}
+
+
+def test_stale_detection_revision_blocks(tmp_path):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    detection.evidence = [{"path": "20260101000000_AddWidget.cs", "revision": evidence["base_sha"], "sha256": "0" * 64}]
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert result.blocked and not result.units
+    assert "stale_ef_detection" in {f["code"] for f in result.findings}
+
+
+def test_unlisted_target_migration_blocks(tmp_path):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    (root / "20260102000000_Extra.cs").write_text("public class Extra : Migration { protected override void Up(MigrationBuilder b) { b.RenameTable(name: \"Widgets\", newName: \"Renamed\"); } }", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "unlisted migration")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    evidence["committed_changes"].append({"status": "A", "path": "20260102000000_Extra.cs"})
+    refresh_detection(root, evidence, detection)
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert result.blocked and not result.units
+    assert "incomplete_migration_chain" in {f["code"] for f in result.findings}
+
+
+def test_composite_primary_key_blocks_incomplete_sql(tmp_path):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    path = root / "20260101000000_AddWidget.cs"
+    path.write_text(path.read_text().replace("x => x.Id);", "x => new { x.Id, x.Code });"), encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "composite key")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert result.blocked and not result.units
+    assert "unsupported_migration_operation" in {f["code"] for f in result.findings}
+
+
+def test_ef6_unknown_operation_blocks(tmp_path):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path, migration=False, snapshot=False)
+    source = (EF_FIXTURES / "20260101000000_AddWidgetEf6.cs").read_text()
+    (root / "20260101000000_AddWidgetEf6.cs").write_text(source.replace("    }\n}", '        RenameTable("dbo.Widgets", "dbo.Renamed");\n    }\n}'), encoding="utf-8")
+    (root / "20260101000000_AddWidgetEf6.Designer.cs").write_bytes((EF_FIXTURES / "20260101000000_AddWidgetEf6.Designer.cs").read_bytes())
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "ef6 rename")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
+    detection.framework = "EF6"
+    detection.migration_paths = ["20260101000000_AddWidgetEf6.cs"]
+    detection.evidence = [{"path": p, "revision": evidence["target_sha"],
+                           "sha256": hashlib.sha256(subprocess.run(["git", "-C", str(root), "show", evidence["target_sha"] + ":" + p], capture_output=True, check=True).stdout).hexdigest()}
+                          for p in ("efcore_project.csproj", "efcore_context.cs", "20260101000000_AddWidgetEf6.cs",
+                                    "20260101000000_AddWidgetEf6.Designer.cs")]
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert result.blocked and not result.units
+    assert "unsupported_migration_operation" in {f["code"] for f in result.findings}
+
+
+@pytest.mark.parametrize("replacement", ['"objects": []', '"preconditions": "SELECT 1"', '"stop_condition": ["ok"]'])
+def test_rejects_unstructured_unit_fields(fixture, replacement):
+    analyzer, _ = api()
+    root, evidence, baseline = fixture
+    path = root / "sql/table.sql"
+    text = path.read_text()
+    if replacement.startswith('"objects"'):
+        text = text.replace('"objects": ["dbo.Core"]', replacement)
+    elif replacement.startswith('"preconditions"'):
+        text = text.replace('"preconditions": [{"query": "SELECT 1", "expected": 1}]', replacement)
+    else:
+        text = text.replace('"stop_condition": {"query": "SELECT 0", "expected": 1}', replacement)
+    path.write_text(text, encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "invalid unit")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    result = analyzer.analyze_release_units(root, evidence, baseline, None)
+    assert result.blocked and not result.units
+    assert "incomplete_unit" in {f["code"] for f in result.findings}
+
+
+def test_unsafe_source_sql_blocks_before_return(fixture):
+    analyzer, _ = api()
+    root, evidence, baseline = fixture
+    path = root / "sql/table.sql"
+    path.write_text(path.read_text() + "\nGO\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "batch separator")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    result = analyzer.analyze_release_units(root, evidence, baseline, None)
+    assert result.blocked and not result.units
+    assert "batch_separator" in {f["code"] for f in result.findings}
 
 
 def test_blocks_model_drift_without_migration(tmp_path):
@@ -119,7 +283,7 @@ def test_requires_complete_unit_conditions_and_validation(fixture):
     analyzer, _ = api()
     root, evidence, baseline = fixture
     path = root / "sql/table.sql"
-    path.write_text(path.read_text().replace('"validation_queries": ["SELECT 1"]', '"validation_queries": []'), encoding="utf-8")
+    path.write_text(path.read_text().replace('"validation_queries": [{"query": "SELECT 1", "expected": 1}]', '"validation_queries": []'), encoding="utf-8")
     git(root, "add", ".")
     git(root, "commit", "-qm", "incomplete")
     evidence["target_sha"] = git(root, "rev-parse", "HEAD")
@@ -186,9 +350,11 @@ def fixture(tmp_path):
         (root / "sql").mkdir(exist_ok=True)
         declaration = {"unit_id": unit, "phase": phase, "depends_on": deps,
                        "issues": issues, "objects": ["dbo.Core"], "complete": True,
-                       "preconditions": ["SELECT 1"], "target_definition": sql,
-                       "skip_condition": "definition matches", "stop_condition": "definition conflicts",
-                       "validation_queries": ["SELECT 1"]}
+                       "preconditions": [{"query": "SELECT 1", "expected": 1}],
+                       "target_definition": {"sql": sql},
+                       "skip_condition": {"query": "SELECT 1", "expected": 1},
+                       "stop_condition": {"query": "SELECT 0", "expected": 1},
+                       "validation_queries": [{"query": "SELECT 1", "expected": 1}]}
         (root / path).write_text("-- release-unit: " + json.dumps(declaration) + "\n" + sql,
                                 encoding="utf-8")
         changes.append({"status": "A", "path": path})
@@ -304,9 +470,12 @@ def test_explicit_deployment_artifact_covers_project_and_migration_without_infer
     evidence["target_sha"] = git(root, "rev-parse", "HEAD")
     evidence["execution_units"] = [{"unit_id": "mapped", "phase": "VALIDATION", "complete": True,
                                     "source_path": "deployment.sql", "covers": ["db.sqlproj", "snapshot.dacpac", "migration.cs"],
-                                    "preconditions": ["SELECT 1"], "target_definition": "SELECT 1",
-                                    "skip_condition": "already validated", "stop_condition": "validation fails",
-                                    "validation_queries": ["SELECT 1"],
+                                    "objects": ["dbo.Core"],
+                                    "preconditions": [{"query": "SELECT 1", "expected": 1}],
+                                    "target_definition": {"sql": "SELECT 1; -- DEPLOYMENT_SECRET"},
+                                    "skip_condition": {"query": "SELECT 1", "expected": 1},
+                                    "stop_condition": {"query": "SELECT 0", "expected": 1},
+                                    "validation_queries": [{"query": "SELECT 1", "expected": 1}],
                                     "token": "IGNORED_SECRET"}]
     result = analyzer.analyze_release_units(root, evidence, baseline, None)
     assert not result.blocked

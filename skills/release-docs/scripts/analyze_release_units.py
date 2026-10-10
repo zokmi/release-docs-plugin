@@ -11,6 +11,7 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+from assemble_deployment_sql import _hazards
 
 PHASES = ("SCHEMA", "REPAIR", "DATA", "VALIDATION")
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_.:-]*\Z")
@@ -96,13 +97,26 @@ def _unit(descriptor, metadata, sql, source_line):
     required = ("preconditions", "target_definition", "skip_condition", "stop_condition", "validation_queries")
     if any(not descriptor.get(key) for key in required):
         raise ValueError("Incomplete unit conditions")
-    if any(not isinstance(descriptor[key], list) or not all(isinstance(v, str) and v.strip() for v in descriptor[key])
+    objects = _strings(descriptor, "objects", OBJECT)
+    if not objects:
+        raise ValueError("Incomplete unit objects")
+    def check_query(item):
+        return (isinstance(item, dict) and set(item) == {"query", "expected"}
+                and isinstance(item["query"], str) and bool(item["query"].strip())
+                and type(item["expected"]) in (str, int, bool) and item["expected"] != "")
+    if any(not isinstance(descriptor[key], list) or not descriptor[key]
+           or not all(check_query(v) for v in descriptor[key])
            for key in ("preconditions", "validation_queries")):
         raise ValueError("Incomplete unit queries")
+    if (not isinstance(descriptor["target_definition"], dict)
+        or descriptor["target_definition"] != {"sql": sql}
+        or not check_query(descriptor["skip_condition"])
+        or not check_query(descriptor["stop_condition"])):
+        raise ValueError("Incomplete unit conditions")
     return {"unit_id": unit_id, "phase": phase, "complete": True,
             "depends_on": _strings(descriptor, "depends_on", IDENTIFIER),
             "issues": _strings(descriptor, "issues", ISSUE),
-            "objects": _strings(descriptor, "objects", OBJECT),
+            "objects": objects,
             **{key: descriptor[key] for key in required},
             "source_path": metadata["source_path"],
             "source_revision": metadata["source_revision"],
@@ -209,10 +223,12 @@ def _up_body(source):
 def _ef_unit(metadata, unit_id, obj, sql, line, *, depends_on=(), issues=(), exists_query, definition_query):
     descriptor = {"unit_id": unit_id, "phase": "SCHEMA", "complete": True,
                   "objects": [obj], "depends_on": list(depends_on), "issues": list(issues),
-                  "preconditions": [definition_query], "target_definition": sql,
-                  "skip_condition": f"{obj} exists with the exact target definition",
-                  "stop_condition": f"{obj} exists with an incompatible definition or dependency",
-                  "validation_queries": [definition_query, exists_query]}
+                  "preconditions": [{"query": definition_query, "expected": "target_definition"}],
+                  "target_definition": {"sql": sql},
+                  "skip_condition": {"query": definition_query, "expected": "target_definition"},
+                  "stop_condition": {"query": definition_query, "expected": "incompatible_definition"},
+                  "validation_queries": [{"query": definition_query, "expected": "target_definition"},
+                                         {"query": exists_query, "expected": "present"}]}
     unit = _unit(descriptor, metadata, sql, line)
     unit["migration_path"] = metadata["source_path"]
     return unit
@@ -227,6 +243,28 @@ def _analyze_ef(result, repo, evidence, baseline_text, detection):
         base_paths, target_paths = _tree_paths(repo, base), _tree_paths(repo, target)
     except ValueError:
         _finding(result, "missing_pinned_source_scope")
+        return
+    try:
+        target_sha = _read_revision(repo, target, next(iter(sorted(target_paths))))[0] if target_paths else None
+        if not target_sha or not detection.evidence:
+            raise ValueError("No pinned detector evidence")
+        for record in detection.evidence:
+            path = _safe_path(record["path"])
+            if record.get("revision") != target_sha or path not in target_paths:
+                raise ValueError("Stale detector evidence")
+            _, raw = _read_revision(repo, target_sha, path)
+            if record.get("sha256") != hashlib.sha256(raw).hexdigest():
+                raise ValueError("Detector hash mismatch")
+        actual_migrations = set()
+        for path in sorted(p for p in target_paths if p.lower().endswith(".cs") and not p.lower().endswith(".designer.cs")):
+            _, raw = _read_revision(repo, target_sha, path)
+            if re.search(r'\bclass\s+\w+\s*:\s*(?:DbMigration|Migration)\b', raw.decode("utf-8", errors="replace")):
+                actual_migrations.add(path)
+        if actual_migrations != set(detection.migration_paths):
+            _finding(result, "incomplete_migration_chain")
+            return
+    except (ValueError, KeyError, TypeError):
+        _finding(result, "stale_ef_detection")
         return
     migration_paths = set(detection.migration_paths)
     if not migration_paths <= target_paths:
@@ -283,7 +321,8 @@ def _analyze_ef(result, repo, evidence, baseline_text, detection):
         issues = evidence.get("migration_issues", {}).get(path, [])
         if detection.framework == "EF6":
             statements = re.findall(r'\bCreateTable\(\s*"dbo\.(\w+)"\s*,\s*\w+\s*=>\s*new\s*\{([\s\S]*?)\}\s*\)\.PrimaryKey\(\s*\w+\s*=>\s*\w+\.(\w+)\s*\)\s*;', body)
-            if len(statements) != 1 or len(re.findall(r'\b(?:CreateTable|AddColumn|CreateIndex|AddForeignKey|Sql)\s*\(', body)) != 1:
+            residual = re.sub(r'\bCreateTable\(\s*"dbo\.\w+"\s*,\s*\w+\s*=>\s*new\s*\{[\s\S]*?\}\s*\)\.PrimaryKey\(\s*\w+\s*=>\s*\w+\.\w+\s*\)\s*;', '', body, count=1)
+            if len(statements) != 1 or residual.strip():
                 _finding(result, "unsupported_migration_operation", path)
                 return
             table, column_body, pk = statements[0]
@@ -314,6 +353,7 @@ def _analyze_ef(result, repo, evidence, baseline_text, detection):
                 columns = re.findall(r'(\w+)\s*=\s*table\.Column<\w+>\(\s*type\s*:\s*"([\w()]+)"\s*,\s*nullable\s*:\s*(true|false)', chunk)
                 pk = re.search(r'table\.PrimaryKey\(\s*"(\w+)"\s*,\s*\w+\s*=>\s*\w+\.(\w+)', chunk)
                 if (not name_match or not columns or not pk
+                    or re.search(r'table\.PrimaryKey\(\s*"\w+"\s*,\s*\w+\s*=>\s*new\s*\{', chunk)
                     or len(columns) != len(re.findall(r'table\.Column\s*<', chunk))
                     or re.search(r'\b(?:schema|defaultValue|defaultValueSql|computedColumnSql|comment|collation)\s*:|\.Annotation\s*\(|table\.(?:ForeignKey|UniqueConstraint|CheckConstraint)\s*\(', chunk)):
                     _finding(result, "unsupported_migration_operation", path)
@@ -358,15 +398,13 @@ def analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, *, 
         baseline_text = ""
         _finding(result, "missing_baseline_schema")
     result.source_scope = {k: evidence[k] for k in ("base_sha", "target_sha") if k in evidence}
+    ef_covered = set()
     if ef_detection is not None:
         _analyze_ef(result, repo, evidence, baseline_text, ef_detection)
-        _order(result)
-        _exclude(result, exclusion_intent)
-        if result.blocked:
-            result.units.clear()
-        else:
-            result.analysis_confidence = "high"
-        return result
+        if not result.blocked:
+            ef_covered.update(ef_detection.migration_paths)
+            ef_covered.update(p[:-3] + ".Designer.cs" for p in ef_detection.migration_paths)
+            ef_covered.update(p for p in _tree_paths(repo, evidence["target_sha"]) if p.endswith("ModelSnapshot.cs"))
     explicit = {}
     covered = set()
     for descriptor in evidence.get("execution_units", []):
@@ -379,7 +417,8 @@ def analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, *, 
             _finding(result, "missing_authoritative_sql", path)
         else:
             covered.update(_safe_path(p) for p in descriptor.get("covers", []))
-    candidates = { _safe_path(c["path"]): c for c in evidence.get("committed_changes", []) if _kind(c["path"]) }
+    candidates = {_safe_path(c["path"]): c for c in evidence.get("committed_changes", [])
+                  if _kind(c["path"]) or (ef_detection is not None and c["path"].lower().endswith((".cs", ".csproj", ".config", ".json")))}
     for path in explicit:
         candidates.setdefault(path, {"path": path, "status": "A"})
     for path, change in sorted(candidates.items()):
@@ -398,7 +437,7 @@ def analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, *, 
             _finding(result, "deleted_source_requires_execution_artifact", path)
             continue
         if kind != "sql":
-            if path not in covered:
+            if path not in covered and path not in ef_covered:
                 _finding(result, "missing_authoritative_sql", path)
             continue
         try:
@@ -407,7 +446,8 @@ def analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, *, 
             if descriptor is None:
                 first, separator, sql = text.partition("\n")
                 if not first.startswith("-- release-unit: ") or not separator:
-                    raise ValueError("Missing complete unit declaration")
+                    _finding(result, "missing_authoritative_sql", path)
+                    continue
                 descriptor = json.loads(first[len("-- release-unit: "):])
                 source_line = 2
             else:
@@ -415,6 +455,8 @@ def analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, *, 
                 source_line = 1
             if "-- release-unit: " in sql:
                 raise ValueError("Partial source artifact")
+            for hazard in _hazards(sql.replace("\r\n", "\n"), is_unit=True):
+                _finding(result, hazard["code"], path)
             result.units.append(_unit(descriptor, metadata, sql, source_line))
         except (ValueError, TypeError, AttributeError) as error:
             _finding(result, "incomplete_unit" if "unit" in str(error).lower() else "missing_authoritative_sql", path)
