@@ -18,8 +18,12 @@ def _sha(data):
 def _safe_run_file(run_root, relative):
     if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
         raise ValueError("Derived source path must be run-relative")
-    path = (Path(run_root) / relative).resolve()
-    root = Path(run_root).resolve()
+    raw_root = Path(run_root)
+    raw_path = raw_root / relative
+    root = raw_root.resolve()
+    if any(is_linked_path(p) for p in (raw_root, *raw_path.parents, raw_path)):
+        raise ValueError("Derived source path is unsafe")
+    path = raw_path.resolve()
     if not path.is_relative_to(root) or any(is_linked_path(p) for p in (root, path, *path.parents)):
         raise ValueError("Derived source path is unsafe")
     return path
@@ -28,7 +32,7 @@ def _safe_run_file(run_root, relative):
 def register_derived_source(run_root, sql_bytes, provenance):
     if not isinstance(sql_bytes, bytes) or not isinstance(provenance, dict):
         raise ValueError("Invalid derived source")
-    required = ("scope", "baseline_sha256", "inputs", "method", "tool", "mapping")
+    required = ("scope", "baseline_sha256", "baseline_path", "inputs", "method", "tool", "mapping")
     if any(key not in provenance for key in required):
         raise ValueError("Incomplete derived provenance")
     root = Path(run_root).resolve()
@@ -36,11 +40,11 @@ def register_derived_source(run_root, sql_bytes, provenance):
         raise ValueError("Derived source must be inside lifecycle run")
     relative = "evidence/derived-execution.sql"
     path = _safe_run_file(root, relative)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists() and path.read_bytes() != sql_bytes:
-        raise ValueError("Derived source is immutable")
-    if not path.exists():
-        path.write_bytes(sql_bytes)
+    baseline = _safe_run_file(root, provenance["baseline_path"])
+    if not baseline.is_file() or not re.fullmatch(r"[0-9a-f]{64}", str(provenance["baseline_sha256"])):
+        raise ValueError("Incomplete baseline provenance")
+    if _sha(baseline.read_bytes()) != provenance["baseline_sha256"]:
+        raise ValueError("Baseline hash mismatch")
     inputs = provenance["inputs"]
     if not isinstance(inputs, list) or not inputs or any(
         not isinstance(item, dict) or not all(item.get(k) for k in ("path", "revision", "sha256"))
@@ -58,6 +62,11 @@ def register_derived_source(run_root, sql_bytes, provenance):
     encoded = json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8")
     if metadata.exists() and metadata.read_bytes() != encoded:
         raise ValueError("Derived provenance is immutable")
+    if path.exists() and path.read_bytes() != sql_bytes:
+        raise ValueError("Derived source is immutable")
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(sql_bytes)
     if not metadata.exists():
         metadata.write_bytes(encoded)
     return record
@@ -84,7 +93,14 @@ def verify_source(repo, run_root, source, scope):
             raise ValueError("Derived scope mismatch")
         if provenance.get("scope", {}).get("target_sha") != scope.get("target_sha"):
             raise ValueError("Derived scope mismatch")
-        if not provenance.get("inputs") or not provenance.get("mapping"):
+        baseline = _safe_run_file(run_root, provenance.get("baseline_path", ""))
+        if (not re.fullmatch(r"[0-9a-f]{64}", str(provenance.get("baseline_sha256", "")))
+                or _sha(baseline.read_bytes()) != provenance.get("baseline_sha256")
+                or not provenance.get("inputs") or not provenance.get("mapping")
+                or any(not isinstance(item, dict)
+                       or not re.fullmatch(r"[0-9a-fA-F]{40,64}", str(item.get("revision", "")))
+                       or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))
+                       for item in provenance["inputs"])):
             raise ValueError("Incomplete derived provenance")
     if _sha(raw) != source.get("sha256"):
         raise ValueError("Source hash mismatch")

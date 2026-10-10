@@ -239,8 +239,17 @@ def _change_tables(analysis, excluded):
     """Render auditable structure/data effect tables from explicit descriptors."""
     structure = ["| 物件／欄位 | 異動類型 | 異動前 → 異動後 | 目的與功能影響 | 資料保留／相依注意事項 | 來源定位 |",
                  "| --- | --- | --- | --- | --- | --- |"]
-    for change in getattr(analysis, "structure_changes", []) or []:
-        if change.get("unit_id") in excluded:
+    included = {unit["unit_id"] for unit in analysis.units if unit["unit_id"] not in excluded}
+    structure_changes = list(getattr(analysis, "structure_changes", []) or [])
+    data_changes = list(getattr(analysis, "data_changes", []) or [])
+    for unit in analysis.units:
+        if unit["unit_id"] in included:
+            structure_changes.extend({**change, "unit_id": unit["unit_id"]}
+                                     for change in unit.get("structure_changes", []))
+            data_changes.extend({**change, "unit_id": unit["unit_id"]}
+                                for change in unit.get("data_changes", []))
+    for change in structure_changes:
+        if change.get("unit_id") not in included:
             continue
         structure.append("| " + " | ".join(_text(change.get(key, "待確認")) for key in (
             "name", "kind", "before_after", "impact", "preservation", "source_location")) + " |")
@@ -248,9 +257,8 @@ def _change_tables(analysis, excluded):
         structure.append("| 待確認 | 待確認 | 待確認 | 尚未取得可核對的結構異動描述 | 待確認 | 待確認 |")
     data = ["| 資料對象 | 操作與觸發條件 | 異動前 → 預期異動後 | 保留／清除範圍與風險 | 部署後查核 | 來源定位 |",
             "| --- | --- | --- | --- | --- | --- |"]
-    descriptors = getattr(analysis, "data_changes", []) or []
-    for change in descriptors:
-        if change.get("unit_id") in excluded:
+    for change in data_changes:
+        if change.get("unit_id") not in included:
             continue
         data.append("| " + " | ".join(_text(change.get(key, "待確認")) for key in (
             "object", "operation_condition", "before_after", "preservation", "validation", "source_location")) + " |")

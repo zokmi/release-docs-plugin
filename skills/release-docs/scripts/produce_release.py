@@ -13,6 +13,7 @@ from lifecycle_store import write_lifecycle_run
 from parameter_metadata import sanitize_parameter_changes
 from render_release_documents import render_release_documents, _plain_path, KINDS, OutputInventory
 from run_local_validation import run_local_validation
+from derived_sources import verify_source
 
 
 class ProductionError(ValueError):
@@ -87,8 +88,11 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
                     or Path(path).is_absolute() or '..' in Path(path).parts
                     or unit.get('source_revision') not in (scope['base_sha'], scope['target_sha'])):
                 raise ValueError('Unpinned source unit')
-            raw = subprocess.run(['git', '-C', str(repo), 'show', unit['source_revision'] + ':' + path],
-                                 capture_output=True, check=True).stdout
+            if unit.get('source_type') == 'derived_artifact':
+                raw = verify_source(repo, run, unit, scope)
+            else:
+                raw = subprocess.run(['git', '-C', str(repo), 'show', unit['source_revision'] + ':' + path],
+                                     capture_output=True, check=True).stdout
             if hashlib.sha256(raw).hexdigest() != unit.get('source_hash'):
                 raise ValueError('Source hash mismatch')
         clean.parameter_changes = sanitize_parameter_changes(clean.parameter_changes)

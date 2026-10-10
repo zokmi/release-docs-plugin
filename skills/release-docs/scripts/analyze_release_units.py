@@ -143,6 +143,8 @@ def _unit(descriptor, metadata, sql, source_line):
             "source_path": metadata["source_path"],
             "source_revision": metadata["source_revision"],
             "source_hash": metadata["source_hash"], "source_line": source_line,
+            "source_type": metadata.get("source_type", "pinned_git"),
+            "provenance": metadata.get("provenance"),
             "covered_sources": sorted(_safe_path(p) for p in descriptor.get("covers", [])),
             "sql_hash": hashlib.sha256(sql.encode("utf-8")).hexdigest(), "sql": sql}
 
