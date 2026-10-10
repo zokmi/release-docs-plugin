@@ -1,15 +1,75 @@
 """Validate an explicit source review against current, non-circular evidence identity."""
 import json
 import re
-from validate_release_output import lifecycle_root, plain_path
+from validate_release_output import (_approved_provider_body, _finding as domain_finding,
+                                     lifecycle_root, plain_path)
+from assemble_deployment_sql import _lex
 
 CHECKS = {'definition', 'preconditions', 'rerun', 'dependencies', 'preservation'}
 CONCLUSIONS = {'passed', 'pending', 'failed'}
 
 
 def _finding(code='semantic_review_pending', failed=False):
-    return {'code': 'semantic_sql_defect' if failed else code, 'domain': 'sql_content',
-            'blocking': failed, 'status': '未通過' if failed else '待確認'}
+    return domain_finding('semantic_sql_defect' if failed else code, blocking=failed)
+
+
+def classify_data_impact(unit: dict) -> str:
+    """Classify pinned execution SQL; names, phases and unproved labels are not evidence."""
+    if not isinstance(unit, dict):
+        return 'unknown'
+    definition = unit.get('target_definition')
+    sql = unit.get('sql', definition.get('sql') if isinstance(definition, dict) else None)
+    if not isinstance(sql, str) or not sql.strip():
+        return 'unknown'
+    code, malformed = _lex(sql)
+    if malformed:
+        return 'unknown'
+    # FK referential actions describe a constraint, not a current row mutation.
+    code = re.sub(r'\bON\s+(?:DELETE|UPDATE)\s+(?:CASCADE|NO\s+ACTION|SET\s+(?:NULL|DEFAULT))\b', '', code)
+    if (re.search(r'\b(?:UPDATE|DELETE|MERGE|TRUNCATE)\b|\bDROP\s+TABLE\b', code)
+            or re.search(r'\bALTER\s+TABLE\b[^;]*(?:\b(?:ALTER|DROP)\s+COLUMN\b|\bWITH\s+VALUES\b)', code)):
+        return 'mutation'
+    provider = _approved_provider_body(unit, sql)
+    if re.search(r'\bEXEC(?:UTE)?\b', code):
+        if not provider:
+            return 'unknown'
+        code = re.sub(r'\bEXEC(?:UTE)?\b[^;\n]*(?:;|$)', '', code, flags=re.M)
+    if re.search(r'\b(?:INSERT|INTO|BULK|DBCC|BACKUP|RESTORE|GRANT|REVOKE|DENY|OPENROWSET|OPENQUERY)\b', code):
+        return 'unknown'
+    for statement in code.split(';'):
+        leader = re.match(r'\s*([A-Z_]+)', statement)
+        if leader and leader[1] not in {'CREATE', 'ALTER', 'SELECT', 'IF', 'BEGIN', 'END',
+                                       'ELSE', 'DECLARE', 'SET', 'THROW', 'PRINT'}:
+            return 'unknown'
+    operations = list(re.finditer(r'\b(?:CREATE|ALTER|DROP)\b', code))
+    for operation in operations:
+        tail = code[operation.start():]
+        if not re.match(r'(?:CREATE\s+(?:TABLE\b|(?:UNIQUE\s+)?(?:CLUSTERED\s+|NONCLUSTERED\s+)?INDEX\b)'
+                        r'|ALTER\s+TABLE\b[^;]*?\b(?:ADD|DROP\s+CONSTRAINT)\b)', tail):
+            return 'unknown'
+    return 'non_mutating' if operations or provider or re.search(r'\bSELECT\b', code) else 'unknown'
+
+
+def _no_existing_row_mutation(reason):
+    return bool(re.search(r'無既有資料列異動|no existing (?:persistent )?rows? mutations?'
+                          r'|does not modify existing (?:persistent )?rows',
+                          reason.replace('-', ' '), re.I))
+
+
+def _preservation(check, unit, impact):
+    if not isinstance(check, dict) or not isinstance(check.get('reason'), str) or not check['reason'].strip():
+        return False
+    conclusion, reason = check.get('conclusion'), check['reason']
+    if impact == 'non_mutating' and conclusion in ('passed', 'N/A'):
+        path, line = unit.get('source_path'), unit.get('source_line')
+        located = (isinstance(path, str) and type(line) is int and line > 0
+                   and re.search(re.escape(f'{path}:{line}') + r'(?!\d)', reason))
+        provider = unit.get('provider_kind')
+        described = (isinstance(provider, str) and provider in reason
+                     and 'provider' in reason.lower())
+        return _no_existing_row_mutation(reason) and (located or described)
+    return _review(check) and not (impact == 'mutation' and (
+        _no_existing_row_mutation(reason) or re.search(r'\bN/A\b', reason, re.I)))
 
 
 def _review(value):
@@ -41,19 +101,31 @@ def validate_semantic_review(record, source, exclusions, fingerprint_sha256):
     conclusions = [record['conclusion'], record['scope_review']['conclusion'], record['parameter_review']['conclusion']]
     for item in reviews:
         unit = included[item['unit_id']]
+        impact = classify_data_impact(unit)
         if (any(item.get(k) != unit.get(k) or not isinstance(item.get(k), str) or not item[k]
                 for k in ('source_path', 'source_revision', 'source_hash'))
                 or item.get('conclusion') not in CONCLUSIONS
                 or not isinstance(item.get('checks'), dict) or set(item['checks']) != CHECKS
-                or not all(_review(check) for check in item['checks'].values())):
+                or not all(_review(check) for name, check in item['checks'].items() if name != 'preservation')
+                or not _preservation(item['checks']['preservation'], unit, impact)):
             return [_finding()]
         conclusions.append(item['conclusion'])
-        conclusions.extend(check['conclusion'] for check in item['checks'].values())
+        conclusions.extend('passed' if check['conclusion'] == 'N/A' else check['conclusion']
+                           for check in item['checks'].values())
+        if impact == 'unknown':
+            conclusions.append('pending')
     if 'failed' in conclusions:
         return [_finding(failed=True)]
-    if record['unresolved'] or 'pending' in conclusions:
-        return [_finding()]
-    return []
+    business = [entry for entry in record['unresolved'] if isinstance(entry, dict)
+                and entry.get('domain') == 'business_data_validation'
+                and isinstance(entry.get('reason'), str) and entry['reason'].strip()
+                and isinstance(entry.get('code', 'business_data_validation'), str)
+                and domain_finding(entry.get('code', 'business_data_validation'),
+                                   domain=entry['domain'])['domain'] == 'business_data_validation']
+    findings = [domain_finding('business_data_validation', domain='business_data_validation')] if business else []
+    if len(business) != len(record['unresolved']) or 'pending' in conclusions:
+        findings.append(_finding())
+    return findings
 
 
 def write_semantic_review(run_root, record):

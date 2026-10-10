@@ -26,8 +26,139 @@ def record_for(release):
             item = {key: unit[key] for key in ('unit_id', 'source_path', 'source_revision', 'source_hash')}
             item.update(conclusion='passed', checks={name: {'conclusion': 'passed', 'reason': 'Compared pinned definition and source conditions'}
                         for name in ('definition', 'preconditions', 'rerun', 'dependencies', 'preservation')})
+            item['checks']['preservation']['reason'] = (
+                f"無既有資料列異動；來源 {unit['source_path']}:{unit['source_line']}")
             record['unit_reviews'].append(item)
     return record, source, exclusions, fingerprint
+
+
+@pytest.mark.parametrize('conclusion', ['passed', 'N/A'])
+def test_non_mutating_preservation_accepts_explicit_reason(release, conclusion):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    record['unit_reviews'][0]['checks']['preservation']['conclusion'] = conclusion
+    assert validate_semantic_review(record, source, exclusions, fingerprint.sha256) == []
+
+
+@pytest.mark.parametrize('reason', ['', 'Compared pinned definition',
+                                  '無既有資料列異動', '來源 customer.sql:1',
+                                  '無既有資料列異動；來源 customer.sql:12345'])
+def test_non_mutating_preservation_requires_explanation_and_source(release, reason):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    record['unit_reviews'][0]['checks']['preservation']['reason'] = reason
+    result = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
+    assert result and result[0]['domain'] == 'sql_correctness'
+    assert result[0]['status'] == '待確認'
+
+
+@pytest.mark.parametrize('sql', ['UPDATE dbo.Customer SET Id = 2;',
+                               'DELETE FROM dbo.Customer;',
+                               'MERGE dbo.Customer AS t USING dbo.Other AS s ON t.Id = s.Id '
+                               'WHEN MATCHED THEN UPDATE SET Id = s.Id;'])
+@pytest.mark.parametrize('damage', ['missing', 'N/A'])
+def test_mutation_preservation_missing_evidence_cannot_pass(release, sql, damage):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    source['units'][0]['target_definition']['sql'] = sql
+    checks = record['unit_reviews'][0]['checks']
+    if damage == 'missing':
+        del checks['preservation']
+    else:
+        checks['preservation']['conclusion'] = 'N/A'
+    result = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
+    assert result and result[0]['domain'] == 'sql_correctness'
+    assert result[0]['status'] != '通過'
+
+
+def test_mutation_preservation_retains_normal_review_evidence(release):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    source['units'][0]['target_definition']['sql'] = 'UPDATE dbo.Customer SET Id = 2;'
+    record['unit_reviews'][0]['checks']['preservation']['reason'] = (
+        'Compared fixture before/after with expected assertions and preserved-data summary')
+    assert validate_semantic_review(record, source, exclusions, fingerprint.sha256) == []
+
+
+def test_mutation_preservation_cannot_claim_no_existing_row_mutation(release):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    source['units'][0]['target_definition']['sql'] = 'UPDATE dbo.Customer SET Id = 2;'
+    result = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
+    assert result and result[0]['status'] == '待確認'
+
+
+@pytest.mark.parametrize('sql', [None, 'EXEC dbo.UnknownProcedure;', 'INSERT INTO dbo.Customer VALUES (1);'])
+def test_unknown_data_impact_preservation_remains_pending(release, sql):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    source['units'][0]['target_definition'] = {'sql': sql}
+    result = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
+    assert result and result[0]['domain'] == 'sql_correctness'
+    assert result[0]['status'] == '待確認'
+
+
+@pytest.mark.parametrize('unit, expected', [
+    ({'target_definition': {'sql': 'CREATE TABLE dbo.T (Id int);'}}, 'non_mutating'),
+    ({'target_definition': {'sql': 'ALTER TABLE dbo.T ADD Name nvarchar(20) NULL;'}}, 'non_mutating'),
+    ({'sql': 'CREATE UNIQUE INDEX IX_T ON dbo.T (Id);'}, 'non_mutating'),
+    ({'sql': 'ALTER TABLE dbo.T ADD CONSTRAINT FK_T FOREIGN KEY (Id) REFERENCES dbo.P (Id) '
+             'ON DELETE CASCADE ON UPDATE CASCADE;'}, 'non_mutating'),
+    ({'sql': "-- UPDATE dbo.T\nSELECT 'DELETE FROM dbo.T', [UPDATE] FROM dbo.T;"}, 'non_mutating'),
+    ({'sql': 'UPDATE [dbo].[T] SET Id = 2;'}, 'mutation'),
+    ({'sql': 'TRUNCATE TABLE dbo.T;'}, 'mutation'),
+    ({'sql': 'ALTER TABLE dbo.T DROP COLUMN Name;'}, 'mutation'),
+    ({'sql': 'ALTER TABLE dbo.T ALTER COLUMN Id bigint;'}, 'mutation'),
+    ({'sql': 'ALTER TABLE dbo.T ADD Count int DEFAULT 0 WITH VALUES;'}, 'mutation'),
+    ({'source_path': 'create-index.sql', 'phase': 'SCHEMA', 'data_impact': 'non_mutating'}, 'unknown'),
+    ({'sql': 'SELECT * INTO dbo.Copy FROM dbo.T;'}, 'unknown'),
+    ({'sql': "EXEC sys.sp_executesql N'UPDATE dbo.T SET Id = 2';"}, 'unknown'),
+    ({'sql': 'CREATE TABLE dbo.T (Id int); EXEC dbo.UnknownProcedure;'}, 'unknown'),
+    ({'sql': 'SELECT 1; RECONFIGURE;'}, 'unknown'),
+    ({'sql': '/* unfinished'}, 'unknown'),
+    ({'provider_kind': 'metadata'}, 'unknown'),
+    ({'provider_kind': 'metadata', 'sql': "EXEC sys.sp_addextendedproperty N'MS_Description', N'UPDATE';"}, 'non_mutating'),
+    ({'provider_kind': 'metadata', 'sql': "EXEC sys.sp_addextendedproperty N'MS_Description', N'text'; UPDATE dbo.T SET Id = 2;"}, 'mutation'),
+    ({'provider_kind': 'metadata', 'sql': 'EXEC dbo.UnknownProcedure;'}, 'unknown'),
+])
+def test_data_impact_domain_uses_authoritative_sql(unit, expected):
+    assert api('semantic_review').classify_data_impact(unit) == expected
+
+
+def test_dynamic_ddl_provider_domain_needs_recognized_execution_body():
+    from metadata_provider import render_dynamic_drop_constraint_provider
+    unit = {'provider_kind': 'dynamic_ddl', 'sql': render_dynamic_drop_constraint_provider()}
+    assert api('semantic_review').classify_data_impact(unit) == 'non_mutating'
+    unit['sql'] = 'EXEC sys.sp_executesql @Unknown;'
+    assert api('semantic_review').classify_data_impact(unit) == 'unknown'
+
+
+def test_unknown_preservation_keeps_failed_sql_review_blocking(release):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    source['units'][0]['target_definition'] = {}
+    record['unit_reviews'][0]['checks']['definition']['conclusion'] = 'failed'
+    result = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
+    assert result[0]['domain'] == 'sql_correctness'
+    assert result[0]['blocking'] is True
+
+
+def test_business_data_unresolved_does_not_make_semantic_review_pending(release):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    record['unresolved'] = [{'domain': 'business_data_validation', 'reason': '正式資料列不可取得'}]
+    result = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
+    assert result == [{'code': 'business_data_validation', 'domain': 'business_data_validation',
+                       'blocking': False, 'status': '待確認'}]
+
+
+@pytest.mark.parametrize('code', [[], 'semantic_sql_defect', 'baseline_model_conflict'])
+def test_business_data_unresolved_cannot_hide_invalid_or_sql_evidence(release, code):
+    from semantic_review import validate_semantic_review
+    record, source, exclusions, fingerprint = record_for(release)
+    record['unresolved'] = [{'domain': 'business_data_validation', 'reason': 'unresolved', 'code': code}]
+    result = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
+    assert any(f['domain'] == 'sql_correctness' and f['status'] == '待確認' for f in result)
 
 
 def test_static_success_without_semantic_record_is_pending(release):

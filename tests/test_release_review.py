@@ -125,6 +125,83 @@ def test_valid_operator_contract_has_separate_static_and_deployment_statuses(rel
     assert not any(f["blocking"] for f in findings(release))
 
 
+@pytest.mark.parametrize('state', ['待確認', '未通過'])
+def test_business_data_domain_cannot_block_sql_summary(state):
+    module = api()
+    business = module._finding('business_data_validation', blocking=True,
+                               domain='business_data_validation', status=state)
+    result = module._summary([business], semantic_complete=True)
+    assert result[0]['blocking'] is False
+    assert result[0]['status'] == '待確認'
+    assert next(f['status'] for f in result if f['code'] == 'sql_content_status') == '通過'
+    assert next(f['status'] for f in result if f['code'] == 'static_sql_status') == '通過'
+
+
+def test_business_data_domain_normalizes_supplied_findings():
+    supplied = {'code': 'business_data_validation', 'blocking': True,
+                'domain': 'business_data_validation', 'status': '未通過'}
+    result = api()._summary([supplied], semantic_complete=True)
+    assert result[0]['blocking'] is False
+    assert result[0]['status'] == '待確認'
+    assert supplied['blocking'] is True
+
+
+@pytest.mark.parametrize('domain', ['sql_correctness', 'sql_content', 'business_data_validation'])
+def test_sql_defects_stay_in_sql_correctness_domain(domain):
+    module = api()
+    finding = module._finding('opaque_execution', domain=domain)
+    assert finding['domain'] == 'sql_correctness'
+    result = module._summary([finding], semantic_complete=True)
+    assert next(f['status'] for f in result if f['code'] == 'sql_content_status') == '未通過'
+
+
+def test_business_data_source_finding_does_not_lower_sql_status(release):
+    from test_semantic_review import record_for
+    from semantic_review import write_semantic_review
+    path = release[2] / 'source_unit_metadata.json'
+    source = json.loads(path.read_text())
+    source['findings'].append({'code': 'formal_rows_unavailable', 'domain': 'business_data_validation',
+                               'blocking': True, 'status': '未通過'})
+    write_json(path, source)
+    record, _, _, fingerprint = record_for(release)
+    record['unit_reviews'][0]['checks']['preservation']['conclusion'] = 'N/A'
+    record['unresolved'] = [{'domain': 'business_data_validation', 'reason': '正式 before/after 不可取得'}]
+    write_semantic_review(release[2], record)
+    result = api().validate_release_output(release[1], release[2], repo=release[0])
+    assert next(f['status'] for f in result if f['code'] == 'sql_content_status') == '通過'
+    business = [f for f in result if f['domain'] == 'business_data_validation']
+    assert business and all(f['blocking'] is False for f in business)
+    assert not any(f['code'] == 'semantic_review_pending' for f in result)
+    report = api().write_review_report(release[2], result, fingerprint,
+                                      repo=release[0], output_dir=release[1])
+    assert 'SQL 內容審核：通過' in report.read_text(encoding='utf-8')
+
+
+def test_business_data_domain_cannot_hide_source_schema_conflict(release):
+    path = release[2] / 'source_unit_metadata.json'
+    source = json.loads(path.read_text())
+    source['findings'].append({'code': 'baseline_model_conflict', 'domain': 'business_data_validation',
+                               'blocking': True})
+    write_json(path, source)
+    result = findings(release)
+    assert any(f['code'] == 'blocking_source_analysis' and f['blocking'] for f in result)
+    assert next(f['status'] for f in result if f['code'] == 'sql_content_status') == '未通過'
+
+
+@pytest.mark.parametrize('code', ['semantic_sql_defect', 'opaque_execution'])
+def test_business_data_domain_cannot_hide_sql_defect_in_report(code):
+    result = [{'code': 'sql_content_status', 'domain': 'sql_correctness', 'status': '通過'},
+              {'code': code, 'domain': 'business_data_validation', 'blocking': True}]
+    assert api()._report_status(result, 'sql_correctness', 'sql_content_status') == '未通過'
+
+
+def test_business_data_domain_is_ignored_by_report_status():
+    result = [{'code': 'sql_content_status', 'domain': 'sql_correctness', 'status': '通過'},
+              {'code': 'business_data_validation', 'domain': 'business_data_validation',
+               'blocking': True, 'status': '未通過'}]
+    assert api()._report_status(result, 'sql_correctness', 'sql_content_status') == '通過'
+
+
 def test_review_uses_database_tool_minimal_lifecycle_profile(release):
     """A minimal artifact must not be checked against the legacy wrapper contract."""
     _, output, run, _ = release

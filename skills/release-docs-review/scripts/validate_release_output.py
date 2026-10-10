@@ -52,16 +52,33 @@ missing_try_catch transaction_count missing_implicit_transactions_off unconditio
 validate_only_rollback deploy_commit missing_throw transaction_scope error_rollback missing_error_context
 missing_transaction_action unmapped_sql invalid_exclusion_provenance
 invalid_runtime_mode sql_profile_mismatch invalid_sql_profile
+business_data_validation
+""".split())
+SQL_CORRECTNESS_CODES = REPORT_CODES - {
+    "business_data_validation", "incomplete_deployment_evidence", "unsupported_deployment_pass_claim"
+} | frozenset("""
+duplicate_unit_id phase_dependency_conflict dependency_cycle_or_missing_unit
+unresolved_exclusion partial_exclusion unresolved_ef_detection missing_pinned_source_scope
+incomplete_migration_chain stale_ef_detection model_drift_without_migration missing_model_snapshot
+baseline_model_conflict unsupported_migration_operation missing_baseline_schema
+unsupported_migration_definition partial_execution_artifact missing_authoritative_sql
+deleted_source_requires_execution_artifact incomplete_unit
 """.split())
 
 
-def _finding(code, blocking=True, domain="sql_content", status=None):
+def _finding(code, blocking=True, domain="sql_correctness", status=None):
+    if isinstance(code, str) and code in SQL_CORRECTNESS_CODES or domain == "sql_content":
+        domain = "sql_correctness"
+    if domain == "business_data_validation":
+        blocking = False
+        status = "通過" if status == "通過" else "待確認"
     return {"code": code, "blocking": blocking, "domain": domain,
             "status": status or ("未通過" if blocking else "待確認")}
 
 
 def _summary(findings, deployment="待確認", semantic_complete=False):
-    sql = [f for f in findings if f["domain"] == "sql_content"]
+    findings = [{**f, **_finding(f["code"], f["blocking"], f["domain"], f.get("status"))} for f in findings]
+    sql = [f for f in findings if f["domain"] == "sql_correctness"]
     status = "未通過" if any(f["blocking"] for f in sql) else "待確認" if sql else "通過"
     static_status = status
     if status == "通過" and not semantic_complete:
@@ -446,8 +463,12 @@ def _units(sql, evidence, exclusions, profile="framework"):
     expected = {u.get("unit_id"): u for u in source_units if u.get("unit_id") not in excluded}
     if len(expected) != len([u for u in source_units if u.get("unit_id") not in excluded]) or None in expected:
         findings.append(_finding("invalid_unit_evidence"))
-    if any(f["blocking"] for f in source_findings):
+    normalized_source = [_finding(f["code"], f["blocking"], f.get("domain", "sql_correctness"),
+                                   f.get("status")) for f in source_findings]
+    if any(f["blocking"] for f in normalized_source if f["domain"] != "business_data_validation"):
         findings.append(_finding("blocking_source_analysis"))
+    if any(f["domain"] == "business_data_validation" for f in normalized_source):
+        findings.append(_finding("business_data_validation", domain="business_data_validation"))
     for unit in expected.values():
         dependencies = unit.get("depends_on")
         if not isinstance(dependencies, list):
@@ -660,16 +681,19 @@ def validate_release_output(output_dir, run_root, *, repo=None) -> list[Finding]
             semantic_findings = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
         except (ValueError, OSError, KeyError):
             pass
-    result = _summary(findings, deployment, semantic_complete=not semantic_findings)
+    semantic_complete = not any(f["domain"] != "business_data_validation" for f in semantic_findings)
+    result = _summary(findings, deployment, semantic_complete=semantic_complete)
     # Retain the independent static summary before lowering the final status.
     static = next(f for f in result if f["code"] == "static_sql_status")
-    result = _summary(findings + semantic_findings, deployment, semantic_complete=not semantic_findings)
+    result = _summary(findings + semantic_findings, deployment, semantic_complete=semantic_complete)
     return [static if f["code"] == "static_sql_status" else f for f in result]
 
 
 def _report_status(findings, domain, summary_code):
     """Never upgrade any prior summary or hide a later semantic finding."""
     rank = {value: index for index, value in enumerate(STATUSES)}
+    if domain == "sql_content":
+        domain = "sql_correctness"
     summaries = [f.get("status") if f.get("status") in STATUSES else "待確認"
                  for f in findings if isinstance(f, dict) and f.get("code") == summary_code]
     status = max(summaries or ["待確認"], key=rank.get)
@@ -677,7 +701,7 @@ def _report_status(findings, domain, summary_code):
         if not isinstance(finding, dict) or finding.get("code") in ("static_sql_status", "sql_content_status", "deployment_validation_status"):
             continue
         code = finding.get("code")
-        finding_domain = "sql_content" if code in ("semantic_sql_defect", "semantic_review_pending") else finding.get("domain", "sql_content")
+        finding_domain = _finding(code, domain=finding.get("domain", "sql_correctness"))["domain"]
         if finding_domain != domain:
             continue
         candidate = "未通過" if finding.get("blocking") is True or code == "semantic_sql_defect" else finding.get("status", "待確認")
@@ -705,7 +729,7 @@ def write_review_report(run_root, findings, fingerprint, *, repo=None, output_di
         semantic_findings = [_finding('semantic_review_pending', blocking=False)]
     findings = list(findings) + semantic_findings
     report = plain_path(run / "05_版更審查報告.md")
-    values = {"SQLSTATUS": _report_status(findings, "sql_content", "sql_content_status"),
+    values = {"SQLSTATUS": _report_status(findings, "sql_correctness", "sql_content_status"),
               "DEPLOYSTATUS": _report_status(findings, "deployment_validation", "deployment_validation_status"),
               "FINGERPRINT": fingerprint.sha256, "FINDINGS": ""}
     semantic_path = plain_path(run / "semantic_review_record.json")
