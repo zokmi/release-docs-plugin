@@ -357,15 +357,22 @@ def test_static_success_without_semantic_record_is_pending(release):
     assert next(f['status'] for f in findings if f['code'] == 'sql_content_status') == '待確認'
 
 
-def test_current_complete_semantic_record_allows_pass(release):
+@pytest.mark.parametrize('runtime_complete', [False, True])
+def test_current_complete_semantic_record_requires_runtime_for_pass(release, runtime_complete):
     from semantic_review import write_semantic_review
+    from test_release_review import report_query_evidence, update_metadata
+    if runtime_complete:
+        update_metadata(release, localdb_validation=report_query_evidence(release))
     record, _, _, _ = record_for(release)
     write_semantic_review(release[2], record)
     findings = api().validate_release_output(release[1], release[2], repo=release[0])
-    assert next(f['status'] for f in findings if f['code'] == 'sql_content_status') == '通過'
+    expected = '通過' if runtime_complete else '待確認'
+    assert next(f['status'] for f in findings if f['code'] == 'sql_content_status') == expected
+    assert not any(f['code'] == 'semantic_review_pending' for f in findings)
+    assert any(f['code'] == 'validation_sql_pending' for f in findings) == (not runtime_complete)
     fingerprint = record_for(release)[3]
     report = api().write_review_report(release[2], findings, fingerprint, repo=release[0], output_dir=release[1])
-    assert 'SQL 內容審核：通過' in report.read_text(encoding='utf-8')
+    assert 'SQL 內容審核：' + expected in report.read_text(encoding='utf-8')
 
 
 @pytest.mark.parametrize('damage', ['missing', 'duplicate', 'unknown', 'empty_reason', 'stale'])

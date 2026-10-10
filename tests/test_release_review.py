@@ -317,6 +317,88 @@ def test_unapproved_minimal_execution_remains_opaque():
                for item in module.validate_sql_contract(source, profile="database_tool_minimal"))
 
 
+@pytest.mark.parametrize("provider", ["metadata", "dynamic_ddl"])
+@pytest.mark.parametrize("damage", [None, "descriptor", "mapping", "hash", "rerun"])
+def test_provider_review_requires_descriptor_mapping_hash_and_rerun(release, provider, damage):
+    """Pinned provider SQL plus recorded runtime checks; no database execution."""
+    from assemble_deployment_sql import assemble_deployment_sql
+    from metadata_provider import render_dynamic_drop_constraint_provider
+    from semantic_review import write_semantic_review
+    from test_semantic_review import record_for
+
+    repo, output, run, _ = release
+    sql = ("IF NOT EXISTS (SELECT 1 FROM sys.extended_properties)\nBEGIN\n"
+           "EXEC sys.sp_addextendedproperty N'MS_Description', N'Name', "
+           "N'SCHEMA', N'dbo', N'TABLE', N'Customer', N'COLUMN', N'Name';\nEND;\n"
+           if provider == "metadata" else render_dynamic_drop_constraint_provider())
+    (repo / "customer.sql").write_bytes(sql.encode("utf-8"))
+    git(repo, "add", "customer.sql")
+    git(repo, "commit", "-qm", "pinned provider fixture")
+    revision = git(repo, "rev-parse", "HEAD")
+    source_path = run / "source_unit_metadata.json"
+    source = json.loads(source_path.read_text())
+    source["source_scope"]["target_sha"] = revision
+    unit = source["units"][0]
+    digest = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+    unit.update(sql=sql, target_definition={"sql": sql}, provider_kind=provider,
+                source_revision=revision, source_hash=digest, sql_hash=digest)
+    unit["objects"] = ["dbo.Customer" if provider == "metadata" else "dbo.tblVenueTimetableSlots"]
+    for item in source["sources"]:
+        if item["source_path"] == "customer.sql":
+            item.update(source_revision=revision, source_hash=digest)
+    write_json(source_path, source)
+    artifact = assemble_deployment_sql([unit], run / "assembly/01_部署SQL.sql",
+                                      {"profile": "database_tool_minimal"})
+    artifact_sql = artifact.path.read_bytes().decode("utf-8")
+    replace_sql(release, artifact_sql)
+    update_metadata(release, execution_artifact={"path": "assembly/01_部署SQL.sql",
+                    "sha256": artifact.sha256, "sql_profile": "database_tool_minimal"})
+    evidence, _ = _na_localdb_evidence(release)
+    queries = report_query_evidence(release)
+    for name, row in evidence["rounds"].items():
+        row["checks"] = queries["rounds"][name]["checks"]
+    if damage in ("descriptor", "mapping", "hash"):
+        mapping = json.loads(next(line[9:] for line in artifact_sql.splitlines()
+                                  if line.startswith("-- UNIT: ")))
+        altered = dict(mapping)
+        if damage == "descriptor":
+            del altered["provider_kind"]
+        elif damage == "mapping":
+            altered["source_hash"] = "0" * 64
+        else:
+            altered["sql_hash"] = "0" * 64
+        artifact_sql = artifact_sql.replace(json.dumps(mapping, sort_keys=True),
+                                            json.dumps(altered, sort_keys=True))
+        replace_sql(release, artifact_sql)
+        artifact_hash = hashlib.sha256(artifact_sql.encode("utf-8")).hexdigest()
+        update_metadata(release, execution_artifact={"path": "assembly/01_部署SQL.sql",
+                        "sha256": artifact_hash, "sql_profile": "database_tool_minimal"})
+        evidence["artifact_sha256"] = artifact_hash
+        for row in evidence["rounds"].values():
+            row["artifact_sha256"] = artifact_hash
+    elif damage == "rerun":
+        evidence["rounds"]["rerun"]["committed_state"] = "wrong-state"
+    update_metadata(release, localdb_validation=evidence)
+    current = (repo, output, run, source["source_scope"])
+    record, _, _, fingerprint = record_for(current)
+    record["unit_reviews"][0]["checks"]["preservation"]["conclusion"] = "N/A"
+    write_semantic_review(run, record)
+    result = api().validate_release_output(output, run, repo=repo)
+    states = {f["code"]: f["status"] for f in result if f["code"].endswith("_status")}
+    expected = "通過" if damage is None else "待確認" if damage == "rerun" else "未通過"
+    assert states["sql_content_status"] == expected
+    expected_code = {"descriptor": "opaque_execution", "mapping": "unit_mapping_mismatch",
+                     "hash": "unit_sql_hash_mismatch", "rerun": "transaction_validation_pending"}
+    if damage:
+        assert expected_code[damage] in {f["code"] for f in result}
+        assert any(f["blocking"] for f in result) == (damage != "rerun")
+    else:
+        assert states["deployment_validation_status"] == "通過"
+        assert not {"opaque_execution", "rerun_risk"} & {f["code"] for f in result}
+    report = api().write_review_report(run, result, fingerprint, repo=repo, output_dir=output)
+    assert "SQL 內容審核：" + expected in report.read_text(encoding="utf-8")
+
+
 def test_review_distinguishes_generated_execution_from_opaque_source(release):
     sql = (release[1] / "01_部署SQL.sql").read_text(encoding="utf-8")
     assert "EXEC sys.sp_executesql N'" in sql
