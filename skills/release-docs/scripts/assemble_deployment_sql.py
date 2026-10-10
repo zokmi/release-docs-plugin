@@ -1,0 +1,406 @@
+"""Assemble authoritative ordered SQL units without rewriting their text.
+
+Static checks are deliberately conservative, not a SQL parser or proof that a
+deployment is idempotent. Opaque procedure execution, batch splits and transaction
+ownership inside units require repaired authoritative source before assembly.
+No SQL is read from the repository or executed against a database here.
+"""
+from dataclasses import dataclass, field
+import hashlib
+import json
+from pathlib import Path
+import re
+
+PHASES = ("SCHEMA", "REPAIR", "DATA", "VALIDATION")
+Finding = dict
+_ID = re.compile(r"[A-Za-z_][A-Za-z0-9_.:-]{0,127}\Z")
+_HEX = re.compile(r"[0-9a-fA-F]{64}\Z")
+_ASCII_UPPER = str.maketrans("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+_CONTEXT = ("ReleaseId", "RawValidateOnly", "ValidateOnly", "Phase", "UnitId", "SourcePath",
+            "SourceRevision", "SourceLine", "TransactionAction", "ErrorNumber",
+            "ErrorSeverity", "ErrorState", "ErrorProcedure", "ErrorLine",
+            "ErrorMessage", "ErrorXactState", "ErrorTranCount")
+
+
+@dataclass
+class ArtifactRecord:
+    path: Path
+    sha256: str
+    release_id: str
+    transaction_mode: str
+    unit_mapping: list
+    findings: list = field(default_factory=list)
+
+
+class SQLContractError(ValueError):
+    """Blocking findings contain metadata, never SQL or credentials."""
+
+    def __init__(self, findings):
+        self.findings = findings
+        super().__init__("SQL contract blocked: " + ", ".join(sorted({f["code"] for f in findings})))
+
+
+def _finding(code, **metadata):
+    return {"code": code, "blocking": True, **metadata}
+
+
+def _lex(sql):
+    """Mask comments, literals and quoted identifiers, preserving offsets/lines.
+
+    Nested block comments and doubled quote delimiters follow SQL Server lexical
+    rules. Unterminated constructs block rather than hiding the rest of a file.
+    """
+    chars = list(sql)
+    index = 0
+    malformed = False
+
+    def mask(start, end):
+        for offset in range(start, end):
+            if chars[offset] not in "\r\n":
+                chars[offset] = " "
+
+    while index < len(sql):
+        start = index
+        if sql.startswith("--", index):
+            while index < len(sql) and sql[index] not in "\r\n":
+                index += 1
+            mask(start, index)
+        elif sql.startswith("/*", index):
+            index += 2
+            depth = 1
+            while index < len(sql) and depth:
+                if sql.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif sql.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            malformed |= bool(depth)
+            mask(start, index)
+        elif sql[index] in "'\"[":
+            close = "]" if sql[index] == "[" else sql[index]
+            index += 1
+            closed = False
+            while index < len(sql):
+                if sql[index] == close:
+                    index += 1
+                    if index < len(sql) and sql[index] == close:
+                        index += 1
+                    else:
+                        closed = True
+                        break
+                else:
+                    index += 1
+            malformed |= not closed
+            mask(start, index)
+        else:
+            index += 1
+    # Unicode uppercasing can expand characters (e.g. ß -> SS), which would
+    # invalidate the source offsets used for literal/error-context checks.
+    return "".join(chars).translate(_ASCII_UPPER), malformed
+
+
+def _matches(pattern, code):
+    return re.search(pattern, code, re.MULTILINE | re.DOTALL) is not None
+
+
+def _set_options(code):
+    """Recognize only SQL Server's small SET option[, option] ON/OFF grammar.
+
+    Input has already had literals/comments/quoted identifiers masked. This is
+    not a general statement parser; variable assignments and other SET forms
+    are deliberately outside this helper's grammar.
+    """
+    pattern = r"\bSET\s+([A-Z_][A-Z0-9_]*(?:\s*,\s*[A-Z_][A-Z0-9_]*)*)\s+(ON|OFF)\b"
+    for match in re.finditer(pattern, code):
+        yield {option.strip() for option in match.group(1).split(",")}, match.group(2)
+
+
+def _hazards(sql, is_unit=False):
+    code, malformed = _lex(sql)
+    findings = []
+    checks = [
+        ("batch_separator", r"^\s*GO\b[^\r\n]*$"),
+        ("non_transactional_sql", r"\b(?:ALTER|CREATE|DROP)\s+DATABASE\b|\b(?:BACKUP|RESTORE|RECONFIGURE)\b|\bWITH\s+ROLLBACK\s+IMMEDIATE\b|\bDBCC\s+SHRINK(?:DATABASE|FILE)\b|\b(?:CREATE|ALTER|DROP)\s+FULLTEXT\b|\bALTER\s+INDEX\b[^;]*\bREORGANIZE\b"),
+        ("non_transactional_sql", r"\b(?:CREATE|ALTER)\s+(?:UNIQUE\s+)?(?:CLUSTERED\s+|NONCLUSTERED\s+)?INDEX\b[^;]*\bRESUMABLE\s*=\s*ON\b|\bALTER\s+INDEX\b[^;]*\b(?:PAUSE|RESUME|ABORT)\b"),
+        ("batch_only_sql", r"\b(?:CREATE(?:\s+OR\s+ALTER)?|ALTER)\s+(?:PROC(?:EDURE)?|VIEW|FUNCTION|TRIGGER)\b"),
+        ("early_exit", r"\b(?:RETURN|GOTO)\b"),
+        ("database_switch", r"\bUSE\b"),
+        ("opaque_execution", r"\bEXEC(?:UTE)?\b|^\s*:[A-Z]+\b"),
+    ]
+    if is_unit:
+        checks.extend([
+            ("unit_transaction_control", r"\b(?:BEGIN|SAVE)\s+TRAN(?:SACTION)?\b|\b(?:COMMIT|ROLLBACK)\b"),
+            ("reserved_context_mutation", r"@(?:" + "|".join(_CONTEXT).upper() + r")\b"),
+        ])
+    for name, pattern in checks:
+        if _matches(pattern, code):
+            findings.append(_finding(name))
+    for options, state in _set_options(code):
+        if "IMPLICIT_TRANSACTIONS" in options and state == "ON":
+            findings.append(_finding("implicit_transactions_enabled"))
+        if "XACT_ABORT" in options and state == "OFF":
+            findings.append(_finding("xact_abort_disabled"))
+        if state == "ON" and options & {"NOEXEC", "PARSEONLY", "SHOWPLAN_ALL", "SHOWPLAN_TEXT", "SHOWPLAN_XML", "FMTONLY"}:
+            findings.append(_finding("execution_disabled"))
+    if malformed:
+        findings.append(_finding("malformed_sql_lexeme"))
+    catches = list(re.finditer(r"\bBEGIN\s+CATCH\b(.*?)\bEND\s+CATCH\b", code, re.S))
+    if len(catches) != len(re.findall(r"\bBEGIN\s+CATCH\b", code)):
+        findings.append(_finding("silent_catch"))
+    for catch in catches:
+        # Require a final standalone rethrow, rather than IF ... THROW or a
+        # handler that prints/logs and resumes execution. Semicolon boundaries
+        # keep the wrapper's SELECT CASE ... ELSE ... END from looking like an
+        # IF/ELSE statement governing the final THROW.
+        if not re.search(r"(?:^|;)\s*THROW\s*;\s*$", catch.group(1)):
+            findings.append(_finding("silent_catch"))
+    for raise_match in re.finditer(r"\bRAISERROR\b", code):
+        end = code.find(";", raise_match.end())
+        if end < 0 or not re.match(r"\s*THROW\b", code[end + 1:]):
+            findings.append(_finding("raiserror_without_throw"))
+    return findings
+
+
+def _generated_units(sql):
+    """Parse the exact generated execution region and recheck decoded source."""
+    findings = []
+    parsed = []
+    first = sql.find("\n-- PHASE: SCHEMA\n")
+    last = sql.rfind("\n    SET @Phase = N'FINALIZE';")
+    if first < 0 or last <= first:
+        return parsed, [_finding("unmapped_sql")]
+    release_match = re.match(r"-- Unified deployment:[^\n]*\nSET XACT_ABORT ON;\nDECLARE @ReleaseId nvarchar\(128\) = (N'[A-Za-z0-9_.:-]{1,128}');", sql)
+    if release_match is None:
+        return parsed, [_finding("unmapped_sql")]
+    template = (Path(__file__).parents[1] / "assets/sql_transaction_wrapper.sql").read_text(encoding="utf-8")
+    prefix, suffix = template.replace("{{RELEASE_ID}}", release_match[1]).split("{{UNITS}}")
+    if sql[:first].rstrip() != prefix.rstrip() or sql[last:].lstrip() != suffix.lstrip():
+        findings.append(_finding("unmapped_sql"))
+    region = sql[first:last]
+    position = 0
+    seen = set()
+    for phase in PHASES:
+        header = "\n-- PHASE: " + phase + "\n    SET @Phase = N'" + phase + "';\n"
+        if not region.startswith(header, position):
+            return parsed, findings + [_finding("unmapped_sql")]
+        position += len(header)
+        while region.startswith("-- UNIT: ", position):
+            line_end = region.find("\n", position)
+            if line_end < 0:
+                return parsed, findings + [_finding("invalid_unit_mapping")]
+            try:
+                mapping = json.loads(region[position + len("-- UNIT: "):line_end])
+                keys = {"unit_id", "phase", "source_path", "source_revision", "source_hash", "sql_hash", "source_line", "source_end_line", "depends_on"}
+                if not isinstance(mapping, dict) or set(mapping) != keys or mapping["phase"] != phase:
+                    raise ValueError()
+                if (not isinstance(mapping["unit_id"], str) or not _ID.fullmatch(mapping["unit_id"])
+                        or mapping["unit_id"] in seen
+                        or not isinstance(mapping["source_path"], str)
+                        or not mapping["source_path"] or any(ord(c) < 32 for c in mapping["source_path"])
+                        or not isinstance(mapping["source_revision"], str)
+                        or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", mapping["source_revision"])
+                        or not isinstance(mapping["source_hash"], str) or not _HEX.fullmatch(mapping["source_hash"])
+                        or not isinstance(mapping["sql_hash"], str) or not _HEX.fullmatch(mapping["sql_hash"])
+                        or not isinstance(mapping["depends_on"], list)
+                        or any(not isinstance(dep, str) or dep not in seen for dep in mapping["depends_on"])
+                        or type(mapping["source_line"]) is not int or mapping["source_line"] < 1
+                        or type(mapping["source_end_line"]) is not int
+                        or mapping["source_end_line"] < mapping["source_line"]):
+                    raise ValueError()
+            except (ValueError, KeyError, TypeError):
+                return parsed, findings + [_finding("invalid_unit_mapping")]
+            position = line_end + 1
+            context = "".join("    SET @" + name + " = " + _literal(mapping[key]) + ";\n"
+                              for name, key in (("UnitId", "unit_id"), ("SourcePath", "source_path"), ("SourceRevision", "source_revision")))
+            context += "    SET @SourceLine = " + str(mapping["source_line"]) + ";\n"
+            if not region.startswith(context, position):
+                return parsed, findings + [_finding("unit_context_mismatch")]
+            position += len(context)
+            match = re.match(r"    EXEC sys\.sp_executesql N'((?:''|[^'])*)';\n", region[position:])
+            if match is None:
+                return parsed, findings + [_finding("unmapped_sql")]
+            source = match[1].replace("''", "'")
+            if (hashlib.sha256(source.encode("utf-8")).hexdigest() != mapping["sql_hash"]
+                    or mapping["source_end_line"] != mapping["source_line"] + len(source.splitlines()) - 1):
+                findings.append(_finding("unit_sql_hash_mismatch", unit_id=mapping["unit_id"]))
+            for hazard in _hazards(source, is_unit=True):
+                findings.append({**hazard, "unit_id": mapping["unit_id"]})
+            position += match.end()
+            end = "-- END UNIT: " + mapping["unit_id"] + "\n"
+            if not region.startswith(end, position):
+                return parsed, findings + [_finding("unmapped_sql")]
+            position += len(end)
+            parsed.append((mapping, source))
+            seen.add(mapping["unit_id"])
+    if region[position:].strip():
+        findings.append(_finding("unmapped_sql"))
+    return parsed, findings
+
+
+def validate_sql_contract(sql_text) -> list[Finding]:
+    """Validate conservative lexical invariants of one release-level wrapper.
+
+    Findings are blocking. Passing means the static contract is present, not that
+    the SQL was parsed, executed, provider-validated or proven safe to rerun.
+    """
+    code, _ = _lex(sql_text)
+    parsed, generated_findings = _generated_units(sql_text)
+    findings = generated_findings + _hazards(sql_text)
+    code_execs = re.findall(r"\bEXEC(?:UTE)?\b", code)
+    if not generated_findings and len(code_execs) == len(parsed):
+        findings = [finding for finding in findings if finding["code"] != "opaque_execution"]
+    expected_runtime = ("DECLARE @RawValidateOnly sql_variant = SESSION_CONTEXT(N'ReleaseDocs.ValidateOnly');\n"
+                        "IF @RawValidateOnly IS NOT NULL\n"
+                        "   AND CONVERT(nvarchar(128), SQL_VARIANT_PROPERTY(@RawValidateOnly, 'BaseType'))\n"
+                        "       NOT IN (N'bit', N'tinyint', N'smallint', N'int', N'bigint')\n"
+                        "    THROW 51002, N'ValidateOnly must be 0 or 1.', 1;\n"
+                        "IF @RawValidateOnly IS NOT NULL\n"
+                        "   AND (TRY_CONVERT(tinyint, @RawValidateOnly) IS NULL\n"
+                        "        OR TRY_CONVERT(tinyint, @RawValidateOnly) NOT IN (0, 1))\n"
+                        "    THROW 51002, N'ValidateOnly must be 0 or 1.', 1;\n"
+                        "DECLARE @ValidateOnly bit =\n"
+                        "    COALESCE(CONVERT(bit, TRY_CONVERT(tinyint, @RawValidateOnly)), 1);")
+    if expected_runtime not in sql_text:
+        findings.append(_finding("invalid_runtime_mode"))
+    if not _matches(r"\bSET\s+XACT_ABORT\s+ON\s*;", code):
+        findings.append(_finding("missing_xact_abort"))
+    tries = list(re.finditer(r"\bBEGIN\s+TRY\b(.*?)\bEND\s+TRY\s+BEGIN\s+CATCH\b(.*?)\bEND\s+CATCH\b", code, re.S))
+    if not tries:
+        findings.append(_finding("missing_try_catch"))
+    if len(re.findall(r"\bBEGIN\s+TRAN(?:SACTION)?\b", code)) != 1 or len(re.findall(r"\bCOMMIT\b", code)) != 1 or len(re.findall(r"\bROLLBACK\b", code)) != 2 or _matches(r"\bSAVE\s+TRAN", code):
+        findings.append(_finding("transaction_count"))
+    rollback = r"\bIF\s+@VALIDATEONLY\s*=\s*1\s+BEGIN\s+ROLLBACK\s+TRAN(?:SACTION)?\s*;"
+    commit = r"\bELSE\s+IF\s+@VALIDATEONLY\s*=\s*0\s+BEGIN\s+COMMIT\s+TRAN(?:SACTION)?\s*;"
+    try_code = tries[-1].group(1) if tries else ""
+    preflight = code[:tries[-1].start()] if tries else ""
+    if not re.search(r"(?:^|;)\s*SET\s+IMPLICIT_TRANSACTIONS\s+OFF\s*;\s*$", preflight):
+        findings.append(_finding("missing_implicit_transactions_off"))
+    if not re.match(r"\s*BEGIN\s+TRAN(?:SACTION)?\s*;", try_code):
+        findings.append(_finding("unconditional_transaction_start"))
+    if not _matches(rollback, try_code):
+        findings.append(_finding("validate_only_rollback"))
+    if not _matches(commit, try_code):
+        findings.append(_finding("deploy_commit"))
+    if not _matches(r"\bTHROW\s*;", code):
+        findings.append(_finding("missing_throw"))
+    if tries:
+        catch = tries[-1].group(2)
+        if (len(re.findall(r"\bBEGIN\s+TRAN(?:SACTION)?\b", try_code)) != 1
+                or len(re.findall(r"\bCOMMIT\b", try_code)) != 1
+                or len(re.findall(r"\bROLLBACK\b", try_code)) != 1
+                or len(re.findall(r"\bROLLBACK\b", catch)) != 1):
+            findings.append(_finding("transaction_scope"))
+        if not _matches(r"\bIF\s+XACT_STATE\s*\(\s*\)\s*<>\s*0\s+BEGIN\s+ROLLBACK\s+TRAN(?:SACTION)?\s*;", catch):
+            findings.append(_finding("error_rollback"))
+        fields = ("ReleaseId", "DatabaseName", "ServerName", "ValidateOnly", "Phase", "UnitId", "SourcePath", "SourceRevision", "SourceLine", "ErrorNumber", "ErrorSeverity", "ErrorState", "ErrorProcedure", "ErrorLine", "ErrorMessage", "XactState", "TranCount", "TransactionAction")
+        required = [r"\bAS\s+" + field.upper() + r"\b" for field in fields]
+        required.extend(r"\b" + func + r"\s*\(\s*\)" for func in ("ERROR_NUMBER", "ERROR_SEVERITY", "ERROR_STATE", "ERROR_PROCEDURE", "ERROR_LINE", "ERROR_MESSAGE", "XACT_STATE", "DB_NAME"))
+        required.extend((r"@@TRANCOUNT\b", r"\bSERVERPROPERTY\s*\("))
+        if any(not _matches(pattern, catch) for pattern in required):
+            findings.append(_finding("missing_error_context"))
+        original_catch = sql_text[tries[-1].start(2):tries[-1].end(2)]
+        actions = list(re.finditer(r"\bSET\s+@TRANSACTIONACTION\s*=\s*", catch))
+        if not any(re.match(r"N?'ROLLBACK'\s*;", original_catch[m.end():], re.I) for m in actions):
+            findings.append(_finding("missing_transaction_action"))
+    else:
+        findings.append(_finding("missing_error_context"))
+    return findings
+
+
+def _mode(transaction_mode, units):
+    release = None
+    if transaction_mode is not None:
+        if not isinstance(transaction_mode, dict) or set(transaction_mode) - {"release_id"}:
+            raise ValueError("transaction_mode only accepts an optional release_id")
+        release = transaction_mode.get("release_id")
+    if release is None:
+        provenance = [{k: u[k] for k in ("unit_id", "source_path", "source_revision", "source_hash", "sql_hash")} for u in units]
+        release = "release-" + hashlib.sha256(json.dumps(provenance, sort_keys=True).encode()).hexdigest()[:24]
+    if not isinstance(release, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", release):
+        raise ValueError("Invalid release identifier")
+    return release
+
+
+def _validate_units(units):
+    seen = set()
+    last_phase = -1
+    findings = []
+    for unit in units:
+        if not isinstance(unit, dict):
+            raise ValueError("Invalid unit descriptor")
+        try:
+            uid, phase, sql = unit["unit_id"], unit["phase"], unit["sql"]
+            source, revision, source_hash = unit["source_path"], unit["source_revision"], unit["source_hash"]
+            dependencies = unit["depends_on"]
+            valid = (isinstance(uid, str) and bool(_ID.fullmatch(uid)) and uid not in seen
+                     and phase in PHASES and PHASES.index(phase) >= last_phase
+                     and unit["complete"] is True and isinstance(sql, str) and bool(sql.strip())
+                     and isinstance(source, str) and 0 < len(source) <= 1024
+                     and not any(ord(c) < 32 for c in source)
+                     and not re.search(r"(?:password|token|secret)\s*[=:]", source, re.I)
+                     and isinstance(revision, str) and bool(re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", revision))
+                     and isinstance(source_hash, str) and bool(_HEX.fullmatch(source_hash))
+                     and type(unit["source_line"]) is int and unit["source_line"] >= 1
+                     and isinstance(dependencies, list) and all(isinstance(d, str) and d in seen for d in dependencies)
+                     and unit["sql_hash"] == hashlib.sha256(sql.encode("utf-8")).hexdigest())
+        except (KeyError, TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise ValueError("Incomplete, inconsistent or unordered unit descriptor")
+        seen.add(uid)
+        last_phase = PHASES.index(phase)
+        for finding in _hazards(sql, is_unit=True):
+            findings.append({**finding, "unit_id": uid, "source_path": source, "source_line": unit["source_line"]})
+    if findings:
+        raise SQLContractError(findings)
+
+
+def _literal(text):
+    return "N'" + text.replace("'", "''") + "'"
+
+
+def assemble_deployment_sql(units, output_path, transaction_mode=None) -> ArtifactRecord:
+    """Write the fixed operator SQL filename after all contract checks pass.
+
+    transaction_mode is None or {release_id: safe identifier}; the runtime
+    session context selects ValidateOnly without changing artifact bytes.
+    Ordered descriptors are consumed exactly as provided; unsafe source must be
+    repaired upstream. Mapping records precise original and artifact line ranges.
+    """
+    units = list(units)
+    _validate_units(units)
+    release = _mode(transaction_mode, units)
+    output = Path(output_path)
+    if output.name != "01_部署SQL.sql":
+        raise ValueError("Output must be named 01_部署SQL.sql")
+    template = (Path(__file__).parents[1] / "assets/sql_transaction_wrapper.sql").read_text(encoding="utf-8")
+    template = template.replace("{{RELEASE_ID}}", _literal(release))
+    prefix, suffix = template.split("{{UNITS}}")
+    body = ""
+    mappings = []
+    for phase in PHASES:
+        body += "\n-- PHASE: " + phase + "\n    SET @Phase = " + _literal(phase) + ";\n"
+        for unit in (u for u in units if u["phase"] == phase):
+            mapping = {key: unit[key] for key in ("unit_id", "phase", "source_path", "source_revision", "source_hash", "sql_hash", "source_line", "depends_on")}
+            source_lines = len(unit["sql"].splitlines())
+            mapping["source_end_line"] = unit["source_line"] + source_lines - 1
+            body += "-- UNIT: " + json.dumps(mapping, ensure_ascii=True, sort_keys=True) + "\n"
+            for variable, key in (("UnitId", "unit_id"), ("SourcePath", "source_path"), ("SourceRevision", "source_revision")):
+                body += "    SET @" + variable + " = " + _literal(unit[key]) + ";\n"
+            body += "    SET @SourceLine = " + str(unit["source_line"]) + ";\n"
+            mapping["artifact_start_line"] = len((prefix + body).splitlines()) + 1
+            mapping["artifact_end_line"] = mapping["artifact_start_line"] + source_lines - 1
+            body += "    EXEC sys.sp_executesql " + _literal(unit["sql"]) + ";\n"
+            body += "-- END UNIT: " + unit["unit_id"] + "\n"
+            mappings.append(mapping)
+    sql = prefix + body + suffix
+    findings = validate_sql_contract(sql)
+    if findings:
+        raise SQLContractError(findings)
+    data = sql.encode("utf-8")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(data)
+    return ArtifactRecord(output, hashlib.sha256(data).hexdigest(), release, "session_context", mappings)
