@@ -32,6 +32,7 @@ class AnalysisResult:
     baseline: dict = field(default_factory=dict)
     source_scope: dict = field(default_factory=dict)
     structure_changes: list = field(default_factory=list)
+    data_changes: list = field(default_factory=list)
     parameter_changes: list = field(default_factory=list)
     parameters_applicable: bool | None = None
     analysis_confidence: str = "blocked"

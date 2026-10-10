@@ -22,7 +22,7 @@
 
 建立單號→來源→物件→unit mapping 與相依閉包，含 diff 外前置物件；同時列出不受影響與無法解析的來源，不用全 repo 檔案數當 SQL 範圍，也不改變 Git scope。#5005 等排除依已授權意圖解析成完整 units，不能照抄案例的六項物件或以相依自動擴大授權。
 
-現有 analyzer 只接受 Git 中的 SQL source；produce_release 也核對 base/target 的 pinned bytes。run 內新產製的 deployment／repair bytes 尚不能直接當 source_path 消費：明確報告工具介面缺口，或依另獲授權的來源修正建立新 pinned revision，保存原 scope→新來源 mapping 再重新分析。禁止偽填 source_revision/hash、假稱產物已在 target、只靠 covers 將 sqlproj 當 execution SQL，或私自 commit／更換 scope。此限制不能成為不生成其他可取得 descriptors 的理由。
+使用 `scripts/derived_sources.py` 的 `derived_artifact` 來源契約接入 run 內新產製的 deployment／repair bytes；`pinned_git` 仍核對 base/target blob。兩者都要保存 scope、baseline、完整輸入 hash、工具／版本、mapping 與輸出 hash。禁止偽填 source_revision/hash、假稱產物已在 target、只靠 covers 將 sqlproj 當 execution SQL，或私自 commit／更換 scope。未知來源類型與任一 hash／mapping 不符均拒絕；此限制不能成為不生成其他可取得 descriptors 的理由。
 
 ## 4. 自動建立 fixture、預期與設定說明
 

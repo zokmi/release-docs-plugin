@@ -235,6 +235,30 @@ def _parameters(changes):
     return "\n".join(rows)
 
 
+def _change_tables(analysis, excluded):
+    """Render auditable structure/data effect tables from explicit descriptors."""
+    structure = ["| 物件／欄位 | 異動類型 | 異動前 → 異動後 | 目的與功能影響 | 資料保留／相依注意事項 | 來源定位 |",
+                 "| --- | --- | --- | --- | --- | --- |"]
+    for change in getattr(analysis, "structure_changes", []) or []:
+        if change.get("unit_id") in excluded:
+            continue
+        structure.append("| " + " | ".join(_text(change.get(key, "待確認")) for key in (
+            "name", "kind", "before_after", "impact", "preservation", "source_location")) + " |")
+    if len(structure) == 2:
+        structure.append("| 待確認 | 待確認 | 待確認 | 尚未取得可核對的結構異動描述 | 待確認 | 待確認 |")
+    data = ["| 資料對象 | 操作與觸發條件 | 異動前 → 預期異動後 | 保留／清除範圍與風險 | 部署後查核 | 來源定位 |",
+            "| --- | --- | --- | --- | --- | --- |"]
+    descriptors = getattr(analysis, "data_changes", []) or []
+    for change in descriptors:
+        if change.get("unit_id") in excluded:
+            continue
+        data.append("| " + " | ".join(_text(change.get(key, "待確認")) for key in (
+            "object", "operation_condition", "before_after", "preservation", "validation", "source_location")) + " |")
+    if len(data) == 2:
+        data.append("| 待確認 | 尚未取得可核對的持久資料異動描述 | 待確認 | 待確認 | 待確認 | 待確認 |")
+    return "\n".join(structure), "\n".join(data)
+
+
 def _template(name, replacements):
     text = (Path(__file__).parents[1] / "assets" / name).read_text(encoding="utf-8")
     # One substitution pass keeps caller content from becoming template syntax.
@@ -278,8 +302,10 @@ def render_release_documents(analysis, deployment_artifact, lifecycle_record, ou
                   _text(str(scope.get("base_sha", "待確認"))[:12]) + " → " +
                   _text(str(scope.get("target_sha", "待確認"))[:12]) + "\n\n舊版結構來源：" +
                   _text(str(analysis.baseline.get("source_path", "待確認")).replace("\\", "/").rsplit("/", 1)[-1]))
+    structure_table, data_table = _change_tables(analysis, excluded)
     documents = {SQL: data, GUIDE: _template(GUIDE, {
         "SCOPE": scope_text, "STRUCTURE": _structure(analysis, excluded),
+        "STRUCTURE_TABLE": structure_table, "DATA_TABLE": data_table,
         "EXCLUSIONS": _exclusion_summary(exclusions),
         "MODE": ("ValidateOnly=1（未設定 SESSION_CONTEXT(N'ReleaseDocs.ValidateOnly') 時）；"
                  "只有在同一新 session 執行 `EXEC sys.sp_set_session_context "
