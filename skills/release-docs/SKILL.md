@@ -109,6 +109,8 @@ renderer 寫入前檢查全部輸入與輸出，拒絕 traversal、symlink、jun
 
 `00` 是給 DBA 閱讀的異動摘要，只列 release/source、實際新增或異動的 table／column／index／FK／constraint／extended property、持久資料異動與排除項目。執行摘要只保留 `01_部署SQL.sql`、DBA 工具、ValidateOnly=1 rollback／ValidateOnly=0 COMMIT／ROLLBACK、備份與查核要求；完整 execution evidence 留在 run。LocalDB 預設「未執行」，SQL 內容審核預設「待確認」，兩者不互相取代。
 
+混合 migration unit 或跨 phase dependency 必須沿來源／dependency chain 保留原始執行順序；phase 只作分類與證據欄位，不能重新排序。descriptor 必須保存 `original_phase`、`depends_on`、`mixed_unit` 與排序理由，dependency 未在前方出現時停止產製。
+
 若 lifecycle metadata 有 `localdb_validation`，renderer 可讀取 `status`（not_run／failed／passed）。passed 必須有相符 `artifact_sha256` 及 `rounds`：validate_only、commit、rerun、injected_failure；每輪需 status=passed、exit_code=0 與 server、database、provider_version、tool_version、baseline_source、fixture_source、command、checks，以及必填字串 `error_output_summary`。正常成功輪可明確記錄空摘要，injected_failure 輪需非空預期錯誤摘要。注入錯誤輪的 exit_code=0 指 runner 成功驗證預期錯誤、rollback 與停止，並非 SQL 無錯誤。證據不完整或 artifact 不符只顯示「待確認」。這是讀取既有證據的介面，renderer 不執行資料庫測試。
 
 

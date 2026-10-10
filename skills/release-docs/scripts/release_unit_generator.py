@@ -38,9 +38,21 @@ def generate_release_artifacts(descriptor_path: Path, repair_root: Path, output_
         if entry["phase"] not in PHASES:
             raise ValueError(f"unsupported phase: {entry['phase']}")
         missing_contract = [key for key in ("preconditions", "target_definition", "skip_condition", "stop_condition", "validation_queries") if key not in item]
+        inferred_dependencies = list(item.get("depends_on", []))
+        for prior in materialized:
+            if prior["unit_id"] in inferred_dependencies:
+                continue
+            prior_stem = Path(prior["repair_source"]).stem
+            prior_alias = prior_stem[3:] if prior_stem.startswith("EF_") else prior_stem
+            if (prior["unit_id"] in raw or f"{prior['unit_id']}.sql" in raw
+                    or f"{prior_stem}.sql" in raw or f"{prior_alias}.sql" in raw):
+                inferred_dependencies.append(prior["unit_id"])
         entry.update({"complete": True, "sql": execution,
                       "sql_hash": hashlib.sha256(execution.encode("utf-8")).hexdigest(),
                       "repair_source": item["repair_source"], "repair_hash": repair_hash,
+                      "depends_on": inferred_dependencies,
+                      "original_phase": item["phase"],
+                      "mixed_unit": ("CREATE TABLE" in raw.upper() and any(token in raw.upper() for token in ("ALTER TABLE", "INSERT ", "UPDATE ", "DELETE "))),
                       "provider_kind": "metadata" if provenance["metadata_operations"] or any(x.startswith("metadata") for x in provenance["transformations"]) else None,
                       "execution_body": str(body_path.relative_to(output_root)),
                       "provenance": {**provenance, "provider_version": PROVIDER_VERSION,
@@ -57,8 +69,12 @@ def generate_release_artifacts(descriptor_path: Path, repair_root: Path, output_
         if "dynamic_drop_constraint_provider" in provenance["transformations"]:
             entry["provider_kind"] = "dynamic_ddl"
         materialized.append(entry)
-    materialized.sort(key=lambda x: (PHASES.index(x["phase"]), x["unit_id"]))
     seen = set()
+    by_id = {item["unit_id"]: item for item in materialized}
+    for item in materialized:
+        if any(by_id.get(dep, {}).get("original_phase") != item["original_phase"] for dep in item["depends_on"]):
+            item["mixed_unit"] = True
+            item["mixed_unit_reason"] = "dependency chain crosses metadata phases; source order retained"
     for item in materialized:
         unknown = [dep for dep in item["depends_on"] if dep not in seen]
         if unknown:

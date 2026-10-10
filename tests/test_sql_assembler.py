@@ -136,6 +136,17 @@ def test_database_tool_minimal_profile_allows_explicit_metadata_provider_unit(tm
     assert artifact.path.is_file()
 
 
+def test_minimal_profile_preserves_explicit_source_dependency_order_across_mixed_phases(tmp_path):
+    module = api()
+    first = unit("EF_2026_09_AdminTwoFactorEnrollLinks", "DATA", "SELECT 1;")
+    second = unit("EF_2026_09_AdminTwoFactorEnrollLinkDeviceName", "SCHEMA", "SELECT 2;", (first["unit_id"],))
+    artifact = module.assemble_deployment_sql(
+        [first, second], tmp_path / "01_部署SQL.sql", {"profile": "database_tool_minimal"})
+    text = (tmp_path / "01_部署SQL.sql").read_text(encoding="utf-8")
+    assert text.index(first["unit_id"]) < text.index(second["unit_id"])
+    assert artifact.unit_mapping[1]["depends_on"] == [first["unit_id"]]
+
+
 def test_runtime_mode_rejects_values_other_than_zero_or_one(tmp_path):
     module, _, sql = assembled(tmp_path)
     assert "SQL_VARIANT_PROPERTY(@RawValidateOnly, 'BaseType')" in sql

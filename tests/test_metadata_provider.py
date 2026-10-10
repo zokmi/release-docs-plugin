@@ -45,6 +45,7 @@ def test_provider_replaces_constant_dynamic_sql_and_raises_with_throw():
     assert provenance["unit_id"] == "u1"
     assert provenance["input_sha256"] == hashlib.sha256(source.encode()).hexdigest()
     assert provenance["transformations"] == ["constant_dynamic_sql", "raiserror_to_throw"]
+    assert "BEGIN\n    DECLARE @ReleaseMessage1" in transformed
 
 
 def test_variable_dynamic_sql_is_blocked_until_provider_mapping_exists():

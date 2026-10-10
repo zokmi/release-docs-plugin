@@ -55,6 +55,8 @@ Metadata operation 若確實屬於本次 release，必須改以明確 descriptor
 
 `data_evidence.py` 要求五個 DATA unit 各自提供 `preserved_data`、`existing_value`、`boundary`、`missing_reference` 四輪實際結果。驗證器缺少任一 round 或 `data_checks` 為空時輸出 `blocked_missing_authoritative_evidence`，不得以推導值或空 assertion 宣稱通過。正式資料庫執行器必須把四輪結果回填後才能將狀態改為 `passed`。
 
+Assembler 的 `database_tool_minimal` profile 依 descriptor 輸入順序執行；phase 僅作 mapping 與查核標記，不重新分組。若 dependency chain 跨越 SCHEMA／REPAIR／DATA，必須保留來源順序、要求 dependency 已在前方出現，並記錄 `original_phase`、`mixed_unit` 與 chain reason。缺 dependency 或嘗試以 unit name 排序時 fail closed；不得因 metadata phase 推導而靜默改寫 migration chain。
+
 ## 四輪与交付
 
 同一 immutable SQL：validate_only 完整執行後 rollback；commit 從 fresh baseline／fresh session 執行並提交；rerun 沿用 commit DB 但另開 session驗證收斂；injected_failure 使用 fresh baseline，在 mutation 後／commit 前注入錯誤，驗證 rollback與停止。runner 實際回報 session/database IDs、checks、data_checks 及 preservation；adapter 不可用則部署 not_run，不能捏造通過。

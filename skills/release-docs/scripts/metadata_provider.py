@@ -204,7 +204,8 @@ def render_dynamic_drop_constraint_provider():
             "JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id\n"
             "WHERE dc.parent_object_id = OBJECT_ID(N'dbo.tblVenueTimetableSlots') AND c.name = N'cNote';\n"
             "IF @ReleaseConstraint IS NOT NULL\nBEGIN\n"
-            "    EXEC sys.sp_executesql N'ALTER TABLE [dbo].[tblVenueTimetableSlots] DROP CONSTRAINT ' + QUOTENAME(@ReleaseConstraint);\n"
+            "    DECLARE @ReleaseSql nvarchar(max) = N'ALTER TABLE [dbo].[tblVenueTimetableSlots] DROP CONSTRAINT ' + QUOTENAME(@ReleaseConstraint);\n"
+            "    EXEC sys.sp_executesql @ReleaseSql;\n"
             "END;\n")
 
 
@@ -243,8 +244,10 @@ def transform_provider_sql(sql, *, source_path, unit_id):
         message = match.group(1).replace("''", "'").replace("'", "''")
         args = match.group(2).strip()
         variable = f"@ReleaseMessage{counter}"
-        return (f"DECLARE {variable} nvarchar(2048) = FORMATMESSAGE(N'{message}', {args});\n"
-                f"THROW 51000, {variable}, 1;")
+        return ("BEGIN\n"
+                f"    DECLARE {variable} nvarchar(2048) = FORMATMESSAGE(N'{message}', {args});\n"
+                f"    THROW 51000, {variable}, 1;\n"
+                "END;")
     sql, count = re.subn(r"\bRAISERROR\s*\(\s*N'((?:''|[^'])*)'\s*,\s*16\s*,\s*1\s*,\s*(.*?)\)\s*;", replace_raise, sql, flags=re.I | re.S)
     if count:
         transformations.append("raiserror_to_throw")

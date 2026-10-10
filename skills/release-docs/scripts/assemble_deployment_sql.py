@@ -391,7 +391,7 @@ def _mode(transaction_mode, units):
     return release, profile
 
 
-def _validate_units(units, *, allow_metadata=False):
+def _validate_units(units, *, allow_metadata=False, preserve_order=False):
     seen = set()
     last_phase = -1
     findings = []
@@ -403,7 +403,7 @@ def _validate_units(units, *, allow_metadata=False):
             source, revision, source_hash = unit["source_path"], unit["source_revision"], unit["source_hash"]
             dependencies = unit["depends_on"]
             valid = (isinstance(uid, str) and bool(_ID.fullmatch(uid)) and uid not in seen
-                     and phase in PHASES and PHASES.index(phase) >= last_phase
+                     and phase in PHASES and (preserve_order or PHASES.index(phase) >= last_phase)
                      and unit["complete"] is True and isinstance(sql, str) and bool(sql.strip())
                      and isinstance(source, str) and 0 < len(source) <= 1024
                      and not any(ord(c) < 32 for c in source)
@@ -446,7 +446,8 @@ def assemble_deployment_sql(units, output_path, transaction_mode=None) -> Artifa
     """
     units = list(units)
     release, profile = _mode(transaction_mode, units)
-    _validate_units(units, allow_metadata=profile == "database_tool_minimal")
+    _validate_units(units, allow_metadata=profile == "database_tool_minimal",
+                    preserve_order=profile == "database_tool_minimal")
     if profile == "database_tool_minimal":
         findings = []
         for unit in units:
@@ -460,30 +461,33 @@ def assemble_deployment_sql(units, output_path, transaction_mode=None) -> Artifa
             raise ValueError("Output must be named 01_部署SQL.sql")
         body = "-- Unified deployment: database tool owns transaction and session settings.\n"
         mappings = []
-        for phase in PHASES:
-            body += "\n-- PHASE: " + phase + "\n"
-            for unit in (u for u in units if u["phase"] == phase):
-                source_lines = len(unit["sql"].splitlines())
-                mapping = {key: unit[key] for key in ("unit_id", "phase", "source_path", "source_revision", "source_hash", "sql_hash", "source_line", "depends_on")}
-                if unit.get("provider_kind"):
-                    mapping["provider_kind"] = unit["provider_kind"]
-                mapping["source_end_line"] = unit["source_line"] + source_lines - 1
-                body += "-- UNIT: " + json.dumps(mapping, ensure_ascii=True, sort_keys=True) + "\n"
-                mapping["artifact_start_line"] = len(body.splitlines()) + 1
-                body += unit["sql"]
-                if not body.endswith("\n"):
-                    body += "\n"
-                mapping["artifact_end_line"] = len(body.splitlines())
-                body += "-- END UNIT: " + unit["unit_id"] + "\n"
-                mappings.append(mapping)
-            validation_body = body
-            for unit in units:
-                if unit.get("provider_kind") == "metadata":
-                    validation_body = validation_body.replace(unit["sql"],
-                        re.sub(r"\bEXEC\s+(?:sys\.)?sp_(?:add|update|drop)extendedproperty\b|\bEXEC\s+sp_rename\b", "-- provider metadata", unit["sql"], flags=re.I))
-                elif unit.get("provider_kind") == "dynamic_ddl":
-                    validation_body = validation_body.replace(unit["sql"], re.sub(r"\bEXEC\s+(?:sys\.)?sp_executesql\b[^;]*;", "-- provider dynamic ddl", unit["sql"], flags=re.I | re.S))
-            findings = validate_sql_contract(validation_body, profile=profile)
+        current_phase = None
+        for unit in units:
+            phase = unit["phase"]
+            if phase != current_phase:
+                body += "\n-- PHASE: " + phase + "\n"
+                current_phase = phase
+            source_lines = len(unit["sql"].splitlines())
+            mapping = {key: unit[key] for key in ("unit_id", "phase", "source_path", "source_revision", "source_hash", "sql_hash", "source_line", "depends_on")}
+            if unit.get("provider_kind"):
+                mapping["provider_kind"] = unit["provider_kind"]
+            mapping["source_end_line"] = unit["source_line"] + source_lines - 1
+            body += "-- UNIT: " + json.dumps(mapping, ensure_ascii=True, sort_keys=True) + "\n"
+            mapping["artifact_start_line"] = len(body.splitlines()) + 1
+            body += unit["sql"]
+            if not body.endswith("\n"):
+                body += "\n"
+            mapping["artifact_end_line"] = len(body.splitlines())
+            body += "-- END UNIT: " + unit["unit_id"] + "\n"
+            mappings.append(mapping)
+        validation_body = body
+        for unit in units:
+            if unit.get("provider_kind") == "metadata":
+                validation_body = validation_body.replace(unit["sql"],
+                    re.sub(r"\bEXEC\s+(?:sys\.)?sp_(?:add|update|drop)extendedproperty\b|\bEXEC\s+sp_rename\b", "-- provider metadata", unit["sql"], flags=re.I))
+            elif unit.get("provider_kind") == "dynamic_ddl":
+                validation_body = validation_body.replace(unit["sql"], re.sub(r"\bEXEC\s+(?:sys\.)?sp_executesql\b[^;]*;", "-- provider dynamic ddl", unit["sql"], flags=re.I | re.S))
+        findings = validate_sql_contract(validation_body, profile=profile)
         if findings:
             raise SQLContractError(findings)
         data = body.encode("utf-8")
