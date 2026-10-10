@@ -68,6 +68,32 @@ def test_derives_units_from_ef_migration_operations(tmp_path):
                for u in result.units)
 
 
+@pytest.mark.parametrize("pk_sql", ["[Id] int NULL", "[Id] nvarchar(max) NOT NULL",
+                                            "[Id] nvarchar(max) NULL"])
+def test_guard_rejects_invalid_sql_server_primary_key_definition(pk_sql):
+    analyzer, _ = api()
+    sql = f"CREATE TABLE [dbo].[Widgets] ({pk_sql}, CONSTRAINT [PK_Widgets] PRIMARY KEY ([Id]));"
+    with pytest.raises(ValueError, match="primary key"):
+        analyzer._guard_ef_sql(sql)
+
+
+@pytest.mark.parametrize("replacement", ['table.Column<int>(type: "int", nullable: true)',
+                                            'table.Column<string>(type: "nvarchar(max)", nullable: false)'])
+def test_invalid_ef_primary_key_blocks_units(tmp_path, replacement):
+    analyzer, _ = api()
+    root, evidence, baseline, detection = ef_case(tmp_path)
+    path = root / "20260101000000_AddWidget.cs"
+    source = path.read_text(encoding="utf-8")
+    path.write_text(source.replace('table.Column<int>(type: "int", nullable: false)', replacement), encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "invalid primary key")
+    evidence["target_sha"] = git(root, "rev-parse", "HEAD")
+    refresh_detection(root, evidence, detection)
+    result = analyzer.analyze_release_units(root, evidence, baseline, None, ef_detection=detection)
+    assert result.blocked and not result.units
+    assert "unsupported_migration_definition" in {finding["code"] for finding in result.findings}
+
+
 def test_derives_ef6_create_table_without_ignoring_column_definition(tmp_path):
     analyzer, _ = api()
     root, evidence, baseline, detection = ef_case(tmp_path, migration=False, snapshot=False)

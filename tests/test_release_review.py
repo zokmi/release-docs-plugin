@@ -253,15 +253,19 @@ def localdb_evidence(release):
     run = release[2]
     baseline = run / "baseline.sql"
     fixture = run / "fixture.sql"
+    fixture_manifest = run / "fixture.json"
     baseline.write_text("CREATE TABLE dbo.Existing (Id int);\n", encoding="utf-8")
     fixture.write_text("INSERT INTO dbo.Existing VALUES (1);\n", encoding="utf-8")
+    fixture_manifest.write_text('{"usage":"seed disposable database"}', encoding="utf-8")
     baseline_hash = hashlib.sha256(baseline.read_bytes()).hexdigest()
     fixture_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    fixture_manifest_hash = hashlib.sha256(fixture_manifest.read_bytes()).hexdigest()
     artifact_hash = hashlib.sha256((release[1] / "01_部署SQL.sql").read_bytes()).hexdigest()
     evidence = {"status": "passed", "exit_code": 0, "server": "(localdb)\\release-test",
                 "database": "disposable", "provider_version": "test provider", "tool_version": "test runner",
                 "baseline_source": str(baseline), "baseline_sha256": baseline_hash,
                 "fixture_source": str(fixture), "fixture_sha256": fixture_hash,
+                "fixture_manifest": str(fixture_manifest), "fixture_manifest_sha256": fixture_manifest_hash,
                 "command": ["runner", "--isolated"],
                 "error_output_summary": "", "checks": ["checks passed"]}
     rounds = {}
@@ -275,7 +279,9 @@ def localdb_evidence(release):
                         "committed_state": "state-1" if name in ("commit", "rerun") else ""}
     rounds["injected_failure"]["error_output_summary"] = "Expected failure rollback and stop confirmed"
     return {"status": "passed", "artifact_sha256": artifact_hash,
-            "fixture_source": str(fixture), "fixture_sha256": fixture_hash, "rounds": rounds}
+            "fixture_source": str(fixture), "fixture_sha256": fixture_hash,
+            "fixture_manifest": str(fixture_manifest), "fixture_manifest_sha256": fixture_manifest_hash,
+            "rounds": rounds}
 
 
 @pytest.mark.parametrize("damage", ["missing_fixture_hash", "changed_fixture", "changed_baseline", "wrong_round_hash"])
@@ -292,6 +298,33 @@ def test_deployment_pass_requires_current_fixture_and_baseline_hashes(release, d
     update_metadata(release, localdb_validation=evidence)
     assert status(release, "deployment_validation_status") == "待確認"
     assert status(release, "sql_content_status") == "通過"
+
+
+@pytest.mark.parametrize("damage", ["missing_manifest", "missing_manifest_hash", "changed_manifest",
+                                    "round_missing_manifest", "round_missing_manifest_hash",
+                                    "round_wrong_manifest_hash", "external_manifest"])
+def test_deployment_pass_requires_current_lifecycle_fixture_manifest(release, tmp_path, damage):
+    evidence = localdb_evidence(release)
+    if damage == "missing_manifest":
+        del evidence["fixture_manifest"]
+    elif damage == "missing_manifest_hash":
+        del evidence["fixture_manifest_sha256"]
+    elif damage == "changed_manifest":
+        Path(evidence["fixture_manifest"]).write_text('{"usage":"changed"}', encoding="utf-8")
+    elif damage == "round_missing_manifest":
+        del evidence["rounds"]["commit"]["fixture_manifest"]
+    elif damage == "round_missing_manifest_hash":
+        del evidence["rounds"]["commit"]["fixture_manifest_sha256"]
+    elif damage == "round_wrong_manifest_hash":
+        evidence["rounds"]["commit"]["fixture_manifest_sha256"] = "0" * 64
+    else:
+        external = tmp_path / "external.json"
+        external.write_bytes(Path(evidence["fixture_manifest"]).read_bytes())
+        evidence["fixture_manifest"] = str(external)
+        for row in evidence["rounds"].values():
+            row["fixture_manifest"] = str(external)
+    update_metadata(release, localdb_validation=evidence)
+    assert status(release, "deployment_validation_status") == "待確認"
 
 
 def test_fingerprint_changes_when_fixture_or_localdb_evidence_changes(release):

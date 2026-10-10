@@ -115,7 +115,11 @@ def _deployment(metadata, digest, source=None, exclusions=(), run=None):
         return "待確認"
     fixture = validation.get("fixture_source")
     fixture_hash = validation.get("fixture_sha256")
-    if not _current_evidence_hash(fixture, fixture_hash, run):
+    fixture_manifest = validation.get("fixture_manifest")
+    fixture_manifest_hash = validation.get("fixture_manifest_sha256")
+    if (not _current_evidence_hash(fixture, fixture_hash, run)
+            or not isinstance(fixture_manifest, str) or not fixture_manifest.lower().endswith(".json")
+            or not _current_evidence_hash(fixture_manifest, fixture_manifest_hash, run)):
         return "待確認"
     rounds = validation.get("rounds")
     if not isinstance(rounds, dict):
@@ -163,6 +167,8 @@ def _deployment(metadata, digest, source=None, exclusions=(), run=None):
             return "待確認"
         if (evidence.get("fixture_source") != fixture
                 or evidence.get("fixture_sha256") != fixture_hash
+                or evidence.get("fixture_manifest") != fixture_manifest
+                or evidence.get("fixture_manifest_sha256") != fixture_manifest_hash
                 or evidence.get("artifact_sha256") != digest
                 or not _current_evidence_hash(evidence.get("baseline_source"), evidence.get("baseline_sha256"), run)
                 or evidence.get("round") != name

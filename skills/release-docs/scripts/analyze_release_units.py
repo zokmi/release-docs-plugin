@@ -249,6 +249,7 @@ def _guard_ef_sql(sql):
         name, body, pk_name, pk_column = table.groups()
         columns = body.split(", ")
         expected = []
+        pk_seen = False
         types = {"int": (4, 10, 0), "bigint": (8, 19, 0), "bit": (1, 1, 0),
                  "nvarchar(max)": (-1, 0, 0)}
         for ordinal, column in enumerate(columns, 1):
@@ -259,6 +260,12 @@ def _guard_ef_sql(sql):
             length, precision, scale = types[typ.lower()]
             base_type = typ.split("(")[0]
             expected.append(f"({ordinal}, N'{column_name}', TYPE_ID(N'{base_type}'), {length}, {precision}, {scale}, {int(nullable == 'NULL')})")
+            if column_name == pk_column:
+                pk_seen = True
+                if nullable == "NULL" or typ.lower() == "nvarchar(max)":
+                    raise ValueError("Unsupported EF primary key definition")
+        if not pk_seen:
+            raise ValueError("Unsupported EF primary key definition")
         obj = f"dbo.{name}"
         expected_rows = ", ".join(expected)
         fields = "column_id, name, user_type_id, max_length, precision, scale, is_nullable"
