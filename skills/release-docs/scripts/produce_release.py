@@ -32,6 +32,7 @@ class ProductionResult:
     findings: list
     fingerprint: object = None
     delivery_eligible: bool = False
+    resumable: bool = False
 
 
 def _immutable_copy(source, destination):
