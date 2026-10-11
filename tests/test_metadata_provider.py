@@ -89,3 +89,40 @@ END;"""
     assert "dynamic_drop_constraint_provider" in provenance["transformations"]
     assert "QUOTENAME(@ReleaseConstraint)" in transformed
     assert "EXEC('ALTER TABLE" not in transformed
+
+
+@pytest.mark.parametrize("operation,procedure,arguments", [
+    ("add", "sp_addextendedproperty", "N'MS_Description', N'new',"),
+    ("update", "sp_updateextendedproperty", "N'MS_Description', N'changed',"),
+    ("drop", "sp_dropextendedproperty", "N'MS_Description',"),
+])
+def test_source_operation_controls_materialized_procedure(operation, procedure, arguments):
+    source = (f"EXEC sys.{procedure} {arguments} N'SCHEMA', N'dbo', "
+              "N'TABLE', N'Customer', N'COLUMN', N'Id';")
+    parsed = parse_metadata_operations(source, source_path="sql/customer.sql")
+    assert [op.operation for op in parsed] == [operation]
+    rendered = render_metadata_operation(parsed[0])
+    assert f"EXEC sys.{procedure}" in rendered
+    if operation == "update":
+        assert rendered.index("EXEC sys.sp_updateextendedproperty") < rendered.index("EXEC sys.sp_addextendedproperty")
+    else:
+        assert "EXEC sys.sp_updateextendedproperty" not in rendered
+        assert ("EXEC sys.sp_addextendedproperty" in rendered) == (operation == "add")
+    transformed, provenance = transform_provider_sql(source, source_path="sql/customer.sql", unit_id="customer")
+    assert f"EXEC sys.{procedure}" in transformed
+    assert provenance["metadata_operations"][0]["source_operation"] == operation
+    assert provenance["metadata_operations"][0]["materialized_operation"] == operation
+    assert provenance["metadata_operations"][0]["fallback_policy"] == (
+        "add_if_missing" if operation == "update" else "none")
+
+
+def test_excluded_metadata_object_is_absent_from_sql_and_provenance():
+    source = ("EXEC sp_addextendedproperty N'MS_Description', N'excluded', "
+              "N'SCHEMA', N'dbo', N'TABLE', N'Excluded';\n"
+              "EXEC sp_updateextendedproperty N'MS_Description', N'kept', "
+              "N'SCHEMA', N'dbo', N'TABLE', N'Kept';")
+    transformed, provenance = transform_provider_sql(
+        source, source_path="sql/mixed.sql", unit_id="mixed", excluded_objects={"dbo.Excluded"})
+    assert "Excluded" not in transformed
+    assert "Excluded" not in str(provenance)
+    assert "Kept" in transformed

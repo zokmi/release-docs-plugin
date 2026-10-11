@@ -140,8 +140,11 @@ def parse_metadata_operations(sql, *, source_path=""):
             keys = ("name", "value", "level0type", "level0name", "level1type", "level1name", "level2type", "level2name")
             values = [named.get(key) for key in keys]
         else:
+            if match.group(1).lower() == "drop":
+                positional.insert(1, None)
             values = positional + [None] * (8 - len(positional))
-        if any(value is None for value in values[:6]):
+        required = (0, 2, 3, 4, 5) if match.group(1).lower() == "drop" else (0, 1, 2, 3, 4, 5)
+        if any(values[index] is None for index in required):
             raise MetadataProviderError("metadata_arguments_not_static")
         try:
             _, property_name = _literal(values[0])
@@ -197,6 +200,12 @@ def render_metadata_operation(op):
             f"AND ep.name = {property_sql})\nBEGIN\n    {call}\nEND;\n")
 
 
+def _operation_provenance(op):
+    return {**asdict(op), "source_operation": op.operation,
+            "materialized_operation": op.operation,
+            "fallback_policy": "add_if_missing" if op.operation == "update" else "none"}
+
+
 def render_dynamic_drop_constraint_provider():
     return ("DECLARE @ReleaseConstraint sysname;\n"
             "SELECT @ReleaseConstraint = dc.name\n"
@@ -214,7 +223,7 @@ def _decode_static_exec(match):
     return body
 
 
-def transform_provider_sql(sql, *, source_path, unit_id):
+def transform_provider_sql(sql, *, source_path, unit_id, excluded_objects=()):
     """Normalize static provider calls and RAISERROR without guessing dynamic SQL."""
     original = sql
     raise_candidates = []
@@ -228,8 +237,11 @@ def transform_provider_sql(sql, *, source_path, unit_id):
         if str(exc) != "metadata_arguments_not_static" or not ("DECLARE @cols" in sql or "DECLARE @fixes" in sql):
             raise
         operations = []
+    excluded = {name.casefold() for name in excluded_objects}
     for op in reversed(operations):
-        sql = sql[:op.start] + render_metadata_operation(op) + sql[op.end:]
+        replacement = "" if op.qualified_object.casefold() in excluded else render_metadata_operation(op)
+        sql = sql[:op.start] + replacement + sql[op.end:]
+    operations = [op for op in operations if op.qualified_object.casefold() not in excluded]
     transformations = []
     static_pattern = re.compile(r"\bEXEC(?:UTE)?\s*(?:sys\.)?sp_executesql\s+N'((?:''|[^'])*)'\s*;?", re.I)
     static_call = re.compile(r"\bEXEC(?:UTE)?\s*\(\s*N'((?:''|[^'])*)'\s*\)\s*;?", re.I)
@@ -303,7 +315,7 @@ def transform_provider_sql(sql, *, source_path, unit_id):
                          "input_sha256": hashlib.sha256(original.encode("utf-8")).hexdigest(),
                          "output_sha256": hashlib.sha256(sql.encode("utf-8")).hexdigest(),
                          "transformations": transformations,
-                 "metadata_operations": [asdict(op) for op in operations],
+                 "metadata_operations": [_operation_provenance(op) for op in operations],
                  "raiserror_candidates": raise_candidates}
         remaining = parse_metadata_operations(sql, source_path=source_path)
         if any("@" in op.raw for op in remaining):
@@ -313,5 +325,5 @@ def transform_provider_sql(sql, *, source_path, unit_id):
                  "input_sha256": hashlib.sha256(original.encode("utf-8")).hexdigest(),
                  "output_sha256": hashlib.sha256(sql.encode("utf-8")).hexdigest(),
                  "transformations": transformations,
-                         "metadata_operations": [asdict(op) for op in operations],
+                         "metadata_operations": [_operation_provenance(op) for op in operations],
                          "raiserror_candidates": raise_candidates}
