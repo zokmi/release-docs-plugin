@@ -14,6 +14,15 @@ from workflow_state import (STAGES, invalidate_from, load_workflow_state,
                             record_stage, resume_checkpoint)
 
 
+def _exception_chain(error):
+    seen = set()
+    current = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
 def _canonical(value):
     if isinstance(value, Path):
         if value.is_file():
@@ -237,6 +246,30 @@ def _builtin_production_outputs(run):
                                     'localdb_validation.json')]
 
 
+def _redact_durable_files(run, files, secrets=()):
+    """Sanitize adapter-owned evidence before it becomes a hashed checkpoint."""
+    from evidence_redaction import redact_text
+    for output in files:
+        path = Path(output)
+        if not path.is_absolute():
+            path = run / path
+        try:
+            relative = path.resolve(strict=True).relative_to(run.resolve(strict=True))
+        except (OSError, ValueError):
+            raise ValueError('Adapter output must be a regular file inside the run')
+        if path.is_symlink() or not path.is_file() or relative.as_posix() in ('run.json', '.lock', 'workflow_state.json'):
+            raise ValueError('Adapter output must be a regular evidence file')
+        try:
+            original = path.read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError) as error:
+            raise ValueError('Adapter evidence must be UTF-8 text') from error
+        cleaned = redact_text(original, secrets=secrets)
+        if cleaned != original:
+            temporary = path.with_name(path.name + '.redact.tmp')
+            temporary.write_text(cleaned, encoding='utf-8', newline='')
+            os.replace(temporary, path)
+
+
 def _builtin_production(repo, run, inputs, input_fingerprint, secrets=()):
     request = inputs.get('production_request')
     if not isinstance(request, dict) or request.get('run_root') is None or request.get('repo') is None:
@@ -341,6 +374,19 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None, secrets=())
             fingerprint = _stage_fingerprint(name, stage_inputs)
             if (name in STAGES[:3]
                     and 'production_request' in current_inputs[STAGES[0]]):
+                recovered = _load_result(run, current_inputs) if _result_path(run).exists() else None
+                builtin_outputs = _builtin_production_outputs(run)
+                if recovered is not None and all(path.is_file() for path in builtin_outputs):
+                    for pipeline_stage, output in zip(STAGES[:3], builtin_outputs):
+                        pipeline_state = load_workflow_state(run)
+                        if pipeline_state['stage_records'][pipeline_stage]['status'] == 'completed':
+                            continue
+                        record_stage(run, pipeline_stage, status='completed',
+                                     input_fingerprint=_stage_fingerprint(
+                                         pipeline_stage, current_inputs[pipeline_stage]),
+                                     output_files=[output], secrets=secrets)
+                    results.append({'result': recovered})
+                    continue
                 if state['stage_records'][name]['status'] != 'completed':
                     record_stage(run, name, status='running', input_fingerprint=fingerprint,
                                  secrets=secrets)
@@ -404,6 +450,7 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None, secrets=())
                     result_file = _save_result(run, output_result, producer_stage=name,
                                                input_fingerprint=fingerprint, secrets=secrets)
                     files = (*files, result_file)
+                _redact_durable_files(run, files, secrets=secrets)
                 record_stage(run, name, status='completed', input_fingerprint=fingerprint,
                              output_files=files, secrets=secrets)
                 results.append(output)
@@ -431,5 +478,10 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None, secrets=())
     except ProductionError:
         raise
     except (ValueError, OSError, KeyError, TypeError, AttributeError) as error:
+        if 'secret_redaction_required' in str(error) or any(
+                'secret_redaction_required' in str(cause)
+                for cause in _exception_chain(error)):
+            raise ProductionError(stage if 'stage' in locals() else 'preflight',
+                                  'secret_redaction_required') from error
         raise ProductionError(stage if 'stage' in locals() else 'preflight',
                               'production_contract_violation') from error

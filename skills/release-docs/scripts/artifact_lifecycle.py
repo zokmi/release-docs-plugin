@@ -3,11 +3,13 @@ import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import stat
 import subprocess
+import tempfile
 import uuid
 from workflow_state import (STAGES, initialize_workflow_state, load_workflow_state,
                             mark_workflow_status, record_stage)
@@ -87,7 +89,17 @@ def save(run, state, *, secrets=()):
     secrets = normalize_secrets(secrets)
     state = redact_mapping(state, secrets=secrets)
     assert_safe_evidence(state, secrets=secrets)
-    (run / MANIFEST).write_text(json.dumps(state, ensure_ascii=True, indent=2) + '\n', encoding='utf-8')
+    manifest = run / MANIFEST
+    fd, temporary = tempfile.mkstemp(prefix=MANIFEST + '.', suffix='.tmp', dir=run)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='') as stream:
+            stream.write(json.dumps(state, ensure_ascii=True, indent=2) + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, manifest)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
     return state
 
 
@@ -106,7 +118,8 @@ def prune(repo):
         for run in base.iterdir():
             try:
                 _, run, state = owned(repo, run)
-                if state['status'] not in ('failed', 'interrupted', 'cleanup_pending') or (run / LOCK).exists():
+                if (state['status'] not in ('failed', 'interrupted', 'cleanup_pending')
+                        or (state['status'] != 'cleanup_pending' and (run / LOCK).exists())):
                     continue
                 if datetime.fromisoformat(state['expires_at']) > datetime.now(timezone.utc):
                     continue
@@ -144,8 +157,6 @@ def finish(repo, run, documents):
     workflow = load_workflow_state(run)
     if state['status'] != 'running' or not (run / LOCK).is_file() or workflow['status'] != 'running':
         raise ValueError('Run is not active')
-    if workflow['stage_records']['report_finalized']['status'] != 'completed':
-        raise ValueError('Report stage incomplete')
     _, docs = validate_output_paths(repo, documents)
     if not all((docs / name).is_file() for name in (*REQUIRED_DOCUMENTS, REPORT)):
         raise ValueError('Deliverables or durable review summary missing')
@@ -174,6 +185,9 @@ def finish(repo, run, documents):
         raise ValueError('Evidence hash inventory missing or changed')
     # Recheck ownership, aliases and Git membership immediately before deletion.
     owned(repo, run)
+    if workflow['stage_records']['report_finalized']['status'] != 'completed':
+        record_stage(run, 'report_finalized', status='completed',
+                     input_fingerprint=hashlib.sha256(report.encode('utf-8')).hexdigest())
     record_stage(run, 'delivery_finalized', status='completed',
                  input_fingerprint=hashlib.sha256(report.encode('utf-8')).hexdigest())
     mark_workflow_status(run, 'finalized')

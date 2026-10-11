@@ -178,4 +178,9 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
                     {'production': 'produced', 'semantic_review': 'pending', 'deployment_validation': localdb['status']},
                     [{'code': 'semantic_review_pending', 'status': '待確認'}], fingerprint)
     except (ValueError, OSError, KeyError, TypeError, AttributeError, subprocess.CalledProcessError) as error:
+        current = error
+        while current is not None:
+            if 'secret_redaction_required' in str(current):
+                raise ProductionError(stage, 'secret_redaction_required') from error
+            current = current.__cause__ or current.__context__
         raise ProductionError(stage, 'production_contract_violation') from error
