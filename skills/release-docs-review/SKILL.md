@@ -73,6 +73,10 @@ LocalDB 的 rounds 必須有 `validate_only`、`commit`、`rerun`、`injected_fa
 
 先計算新 fingerprint，再比對舊報告；不同即失效，缺必要證據即待確認。報告不納入自身 fingerprint，避免循環依賴。待成功產製、來源語意審核、隔離驗證與交付完成後，才交由 lifecycle manager 清除暫存；失敗／中斷保留七天。此審核器不刪除 run、不執行 SQL，也不以手改 manifest 解決 finding。
 
+報告必須以同目錄 temporary file 寫入、flush／fsync 後 atomic replace；replace 失敗時原報告與 run evidence 必須保持不變。finalization 只在 fingerprint、receipt、文件／evidence hash、四輪 LocalDB 證據與 workflow 狀態全部重新核對後成立，且同一 receipt 重試不得產生不同結論。cleanup 失敗標記 `cleanup_pending`，不可留下 locked running run。
+
+正式資料列、業務 before／after、筆數與不變量的缺失只列 `business_data_validation` 非阻塞附加資訊；不得產生 `semantic_review_pending` 或降低 `sql_content_status`。SQL contract、schema、validation SQL、transaction、rollback、commit、rerun、injected failure、#5005 排除與未核准 provider finding 仍屬 `sql_correctness`，可阻擋 SQL content。
+
 
 每輪證據還需 current artifact_sha256、baseline_sha256、fixture_sha256、fixture_manifest_sha256、不同的 session_id 與可辨識 database_id，以及實際 preserved_data_summary 等於 expected_preserved_data_summary。四輪 checks 必須各自反映 rollback／commit／rerun／injected failure，不能複製同一份。rerun 必須沿用 commit 的 database_id 與 committed_state，但另開 session。baseline、fixture、manifest 與 execution artifact 必須為 run 內永久一般檔案，hash 重新讀取比對；外部路徑、temporary 或缺檔不能續認通過。
 

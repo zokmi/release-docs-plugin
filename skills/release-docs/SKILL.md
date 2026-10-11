@@ -21,6 +21,12 @@ description: 當使用者要先確認 Git 差異範圍，再以舊版資料庫�
 
 收尾分別回報文件產出、來源語意審查、隔離部署驗證、交付資格，以及阻擋原因與下一步。未執行資料庫就明確寫未執行；不得把 CLI exit 0 當成審查通過。
 
+### 可恢復執行與證據安全
+
+每個 run 都必須保留 `.release-docs/runs/<run-id>/workflow_state.json`。階段完成後以原子替換保存輸出 hash；中斷或失敗時保留 evidence、移除 lock 並標記可恢復狀態，不得刪除或手改 manifest 續跑。恢復前重新核對 workflow fingerprint、來源／fixture／artifact hash 與每個已完成階段的輸出；任何變更都使該階段及後續階段 invalidated，必須重跑。
+
+所有 command、例外、finding 與 durable JSON／報告寫入前都必須經 shared redaction；未知 credential-like material 必須 fail closed 並回報 `secret_redaction_required`。不得把密碼、token、連線字串、正式資料原值或 temporary path 寫入交付文件。cleanup 失敗時使用 `cleanup_pending`，保留可回收證據，待確認狀態後再由 prune 回收。
+
 ## 輸入與證據
 
 先從已提供內容取得 repository、base／target 或明確 commit 範圍、diff mode、工作區是否納入、舊版 DB 結構來源、release 識別與排除意圖。缺少影響範圍的必要資訊時標示待確認；不得自行將 HEAD 或工作區異動視為本次 scope。
