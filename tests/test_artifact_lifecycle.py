@@ -60,6 +60,18 @@ class LifecycleTests(unittest.TestCase):
         run = self.repo / data['run_path']
         self.assertEqual(json.loads((run / 'workflow_state.json').read_text())['workflow_fingerprint'], 'revision-42')
 
+    def test_initialize_forwards_normalized_keyword_only_secrets(self):
+        from artifact_lifecycle import initialize
+
+        secret = 'lifecycle-init-secret'
+        data = initialize(self.repo, secret,
+                          secrets=(value for value in (secret,)))
+        run = self.repo / data['run_path']
+
+        workflow = json.loads((run / 'workflow_state.json').read_text())
+        self.assertEqual(workflow['workflow_fingerprint'], '[REDACTED]')
+        self.assertNotIn(secret, (run / 'run.json').read_text())
+
     def test_interrupt_persists_workflow_before_removing_lock(self):
         run = self.init()
         self.cli('interrupt', '--run', str(run))

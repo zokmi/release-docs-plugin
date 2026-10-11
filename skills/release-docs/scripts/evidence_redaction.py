@@ -12,9 +12,9 @@ _SENSITIVE = re.compile(
     r"user(?:[_ -]?(?:name|id))?|uid)(?:$|[^A-Za-z])", re.IGNORECASE,
 )
 _ASSIGNMENT = re.compile(
-    r"(\[?(?:password|passwd|pwd|token|secret|credential|connection.?string|api.?key|"
+    r"(?<![A-Za-z0-9_$\.\[])((?:\[)?(?:password|passwd|pwd|token|secret|credential|connection.?string|api.?key|"
     r"private.?key|access.?key|auth(?:orization)?|client.?secret|user(?:name)?|user[_ -]?id|uid)\]?\s*[=:]\s*)"
-    r"(\"(?:\"\"|[^\"])*\"|'(?:''|[^'])*'|[^\s;&|,'\"]+)",
+    r"(\"(?:\"\"|[^\"])*\"|'(?:''|[^'])*'|[^\s;&|,'\"()\[\]{}<>]+)",
     re.IGNORECASE,
 )
 _SQL_IDENTIFIER_PART = r"(?:[A-Za-z_][A-Za-z0-9_$]*|\[(?:[^\]]|\]\])+\])"
@@ -42,6 +42,10 @@ _COMMAND_ARGUMENT = re.compile(
     r"((?:--?(?:password|passwd|pwd|token|secret|api[-_]?key|user(?:name)?|uid|p|u)|"
     r"/(?:password|passwd|pwd|token|secret|api[-_]?key|user(?:name)?|uid))\s+)"
     r"(\"[^\"]*\"|'[^']*'|[^\s]+)", re.IGNORECASE,
+)
+_ATTACHED_COMMAND_ARGUMENT = re.compile(
+    r"(?<![A-Za-z0-9_-])(-p=?)(\"[^\"]*\"|'[^']*'|[^\s;&|,'\"()\[\]{}<>]+)",
+    re.IGNORECASE,
 )
 
 
@@ -173,6 +177,7 @@ def _redact_text(value: str, secrets: list[str]) -> str:
     text = _redact_assignments(text)
     text = _BEARER.sub(lambda match: match.group(1) + REDACTED, text)
     text = _COMMAND_ARGUMENT.sub(lambda match: match.group(1) + REDACTED, text)
+    text = _ATTACHED_COMMAND_ARGUMENT.sub(lambda match: match.group(1) + REDACTED, text)
     if (_UNCLASSIFIED_TOKEN.search(text)
             or _UNRECOGNIZED_CREDENTIAL_MATERIAL.search(text)):
         raise _fail_closed()
@@ -250,6 +255,8 @@ def assert_safe_evidence(value: Any, secrets: Iterable[str] = ()) -> None:
                     for match in _ASSIGNMENT.finditer(item))
                     or any(match.group(2).strip("\"'") != REDACTED
                            for match in _COMMAND_ARGUMENT.finditer(item))
+                    or any(match.group(2).strip("\"'") != REDACTED
+                           for match in _ATTACHED_COMMAND_ARGUMENT.finditer(item))
                     or _BEARER.search(item)):
                 raise _fail_closed()
         elif isinstance(item, dict):

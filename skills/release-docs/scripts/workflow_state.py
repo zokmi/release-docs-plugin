@@ -47,6 +47,7 @@ def _write(run, state, *, secrets=()):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+    return state
 
 
 def _read(run):
@@ -106,8 +107,7 @@ def initialize_workflow_state(run_root, run_id, workflow_fingerprint, stages, *,
                                for stage in STAGES}}
     from evidence_redaction import normalize_secrets
     secrets = normalize_secrets(secrets)
-    _write(run, state, secrets=secrets)
-    return state
+    return _write(run, state, secrets=secrets)
 
 
 def load_workflow_state(run_root):
@@ -157,8 +157,7 @@ def invalidate_from(run_root, stage, reason, *, secrets=()):
     secrets = normalize_secrets(secrets)
     reason = redact_text(reason, secrets=secrets)
     _invalidate(state, stage, reason)
-    _write(run, state, secrets=secrets)
-    return state
+    return _write(run, state, secrets=secrets)
 
 
 def record_stage(run_root, stage, *, status, input_fingerprint, output_files=(),
@@ -201,8 +200,7 @@ def record_stage(run_root, stage, *, status, input_fingerprint, output_files=(),
     state['current_stage'] = (STAGES[index + 1] if status == 'completed' and index + 1 < len(STAGES)
                               else stage)
     state['updated_at'] = _now()
-    _write(run, state, secrets=secrets)
-    return state
+    return _write(run, state, secrets=secrets)
 
 
 def _outputs_match(run, record):
@@ -250,5 +248,4 @@ def mark_workflow_status(run_root, status, *, secrets=()):
     state['updated_at'] = _now()
     from evidence_redaction import normalize_secrets
     secrets = normalize_secrets(secrets)
-    _write(run, state, secrets=secrets)
-    return state
+    return _write(run, state, secrets=secrets)

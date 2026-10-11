@@ -82,8 +82,13 @@ def owned(repo, run):
     return repo, candidate, state
 
 
-def save(run, state):
+def save(run, state, *, secrets=()):
+    from evidence_redaction import assert_safe_evidence, normalize_secrets, redact_mapping
+    secrets = normalize_secrets(secrets)
+    state = redact_mapping(state, secrets=secrets)
+    assert_safe_evidence(state, secrets=secrets)
     (run / MANIFEST).write_text(json.dumps(state, ensure_ascii=True, indent=2) + '\n', encoding='utf-8')
+    return state
 
 
 def prune(repo):
@@ -113,7 +118,9 @@ def prune(repo):
     return {'removed': removed, 'skipped': skipped}
 
 
-def initialize(repo, workflow_fingerprint='default-workflow'):
+def initialize(repo, workflow_fingerprint='default-workflow', *, secrets=()):
+    from evidence_redaction import normalize_secrets
+    secrets = normalize_secrets(secrets)
     repo = root_path(repo)
     cleanup = prune(repo)
     run = repo / ROOT / 'runs' / uuid.uuid4().hex
@@ -122,9 +129,9 @@ def initialize(repo, workflow_fingerprint='default-workflow'):
     state = {'schema_version': 1, 'owner': 'release-docs', 'repo_root': str(repo),
              'run_id': run.name, 'status': 'running', 'created_at': now.isoformat(),
              'expires_at': None}
-    save(run, state)
+    save(run, state, secrets=secrets)
     (run / LOCK).write_text('running\n', encoding='utf-8')
-    initialize_workflow_state(run, run.name, workflow_fingerprint, STAGES)
+    initialize_workflow_state(run, run.name, workflow_fingerprint, STAGES, secrets=secrets)
     return {'run_id': run.name, 'run_path': run.relative_to(repo).as_posix(), 'prune': cleanup}
 
 

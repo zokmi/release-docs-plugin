@@ -46,10 +46,33 @@ def test_schema_and_atomic_creation(run):
 def test_initialize_workflow_state_redacts_known_secret(run):
     (run / 'workflow_state.json').unlink()
 
-    initialize_workflow_state(run, run.name, 'initialize-secret', STAGES,
-                              secrets=('initialize-secret',))
+    state = initialize_workflow_state(run, run.name, 'initialize-secret', STAGES,
+                                      secrets=('initialize-secret',))
 
+    assert state['workflow_fingerprint'] == '[REDACTED]'
     assert load_workflow_state(run)['workflow_fingerprint'] == '[REDACTED]'
+
+
+def test_workflow_mutators_return_the_redacted_state_they_persist(run):
+    (run / 'workflow_state.json').unlink()
+    state = initialize_workflow_state(run, run.name, 'initial-secret', STAGES,
+                                      secrets=('initial-secret',))
+
+    state = record_stage(run, STAGES[0], status='running',
+                         input_fingerprint='record-secret',
+                         secrets=('record-secret',))
+    assert state['stage_records'][STAGES[0]]['input_fingerprint'] == '[REDACTED]'
+    assert state == load_workflow_state(run)
+
+    state = invalidate_from(run, STAGES[0], 'reason-secret',
+                            secrets=('reason-secret',))
+    assert state['stage_records'][STAGES[0]]['error_summary'] == '[REDACTED]'
+    assert state == load_workflow_state(run)
+
+    state = __import__('workflow_state').mark_workflow_status(
+        run, 'failed', secrets=('initial-secret', 'record-secret', 'reason-secret'))
+    assert state['workflow_fingerprint'] == '[REDACTED]'
+    assert state == load_workflow_state(run)
 
 
 def test_order_attempt_hash_and_invalidation(run):

@@ -31,6 +31,29 @@ def test_known_secrets_are_replaced_even_without_credential_labels():
         "tool failed: [REDACTED]"
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("sqlcmd -Psecret", "sqlcmd -P[REDACTED]"),
+        ("sqlcmd -P=secret", "sqlcmd -P=[REDACTED]"),
+    ],
+)
+def test_attached_short_command_password_forms_are_redacted(value, expected):
+    assert evidence_redaction.redact_text(value) == expected
+
+
+def test_assignment_redaction_preserves_sql_punctuation():
+    value = "password=secret); token=another-secret,"
+    assert evidence_redaction.redact_text(value) == \
+        "password=[REDACTED]); token=[REDACTED],"
+
+
+def test_assignment_redaction_uses_lexical_identifier_boundaries():
+    value = "customer_user_id=alice; dbo.user_id=bob; user_id=carol"
+    assert evidence_redaction.redact_text(value) == \
+        "customer_user_id=alice; dbo.user_id=bob; user_id=[REDACTED]"
+
+
 def test_credential_material_with_unrecognized_value_fails_closed_without_echoing_input():
     value = "credential material: opaque-value"
     with pytest.raises(ValueError, match="secret_redaction_required") as error:
