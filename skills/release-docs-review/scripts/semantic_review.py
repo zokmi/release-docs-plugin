@@ -1,12 +1,22 @@
 """Validate an explicit source review against current, non-circular evidence identity."""
 import json
 import re
-from validate_release_output import (_approved_provider_body, _finding as domain_finding,
+from validate_release_output import (_approved_provider_body as _base_approved_provider_body, _finding as domain_finding,
                                      lifecycle_root, plain_path)
 from assemble_deployment_sql import _lex
 
 CHECKS = {'definition', 'preconditions', 'rerun', 'dependencies', 'preservation'}
 CONCLUSIONS = {'passed', 'pending', 'failed'}
+
+
+def _approved_provider_body(unit, sql):
+    if not _base_approved_provider_body(unit, sql):
+        return False
+    if unit.get('provider_kind') != 'dynamic_ddl':
+        return True
+    from metadata_provider import render_dynamic_drop_constraint_provider
+    normalize = lambda value: re.sub(r'\s+', ' ', value.strip()).upper()
+    return normalize(sql) == normalize(render_dynamic_drop_constraint_provider())
 
 
 def _finding(code='semantic_review_pending', failed=False):
@@ -16,6 +26,15 @@ def _finding(code='semantic_review_pending', failed=False):
 def classify_data_impact(unit: dict) -> str:
     """Classify pinned execution SQL; names, phases and unproved labels are not evidence."""
     if not isinstance(unit, dict):
+        return 'unknown'
+    descriptors = []
+    if isinstance(unit.get('sql'), str):
+        descriptors.append(unit['sql'])
+    definition = unit.get('target_definition')
+    if isinstance(definition, dict) and isinstance(definition.get('sql'), str):
+        descriptors.append(definition['sql'])
+    if len(descriptors) > 1 and any(descriptors[0].replace('\r\n', '\n') != value.replace('\r\n', '\n')
+                                    for value in descriptors[1:]):
         return 'unknown'
     definition = unit.get('target_definition')
     sql = unit.get('sql', definition.get('sql') if isinstance(definition, dict) else None)
@@ -37,8 +56,10 @@ def classify_data_impact(unit: dict) -> str:
             # Unspecified nullability depends on session/database settings.
             if re.search(r'\bNOT\s+NULL\b', columns):
                 return 'mutation'
-            if ',' in columns or not re.search(r'\bNULL\b', columns[:default.start()]):
+            if _top_level_comma(columns) or not re.search(r'\bNULL\b', columns[:default.start()]):
                 return 'unknown'
+        if re.search(r'\b(?:IDENTITY|PERSISTED|GENERATED\s+ALWAYS)\b', columns):
+            return 'mutation'
     provider = _approved_provider_body(unit, sql)
     if re.search(r'\bEXEC(?:UTE)?\b', code):
         if not provider:
@@ -58,6 +79,30 @@ def classify_data_impact(unit: dict) -> str:
                         r'|ALTER\s+TABLE\b[^;]*?\b(?:ADD|DROP\s+CONSTRAINT)\b)', tail):
             return 'unknown'
     return 'non_mutating' if operations or provider or re.search(r'\bSELECT\b', code) else 'unknown'
+
+
+def _top_level_comma(text):
+    depth = 0
+    quote = None
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == quote:
+                if index + 1 < len(text) and text[index + 1] == quote:
+                    index += 1
+                else:
+                    quote = None
+        elif char in "'\"":
+            quote = char
+        elif char == '(':
+            depth += 1
+        elif char == ')':
+            depth = max(0, depth - 1)
+        elif char == ',' and depth == 0:
+            return True
+        index += 1
+    return False
 
 
 def _no_existing_row_mutation(reason):
@@ -88,7 +133,7 @@ def _review(value, conclusions=CONCLUSIONS):
             and isinstance(value.get('reason'), str) and bool(value['reason'].strip()))
 
 
-def validate_semantic_review(record, source, exclusions, fingerprint_sha256):
+def validate_semantic_review(record, source, exclusions, fingerprint_sha256, execution_units=None):
     if (not isinstance(record, dict) or record.get('schema_version') != 1
             or not re.fullmatch(r'[0-9a-f]{64}', str(fingerprint_sha256))
             or record.get('evidence_fingerprint') != fingerprint_sha256
@@ -116,6 +161,8 @@ def validate_semantic_review(record, source, exclusions, fingerprint_sha256):
         if any(item.get(k) != unit.get(k) or not isinstance(item.get(k), str) or not item[k]
                for k in ('source_path', 'source_revision', 'source_hash')):
             return [_finding()]
+    authenticated = {unit.get('unit_id'): unit for unit in (execution_units or [])
+                     if isinstance(unit, dict) and isinstance(unit.get('unit_id'), str)}
     # Malformed sibling checks are incomplete evidence, not grounds to erase a
     # well-formed failed conclusion tied to the current evidence identity.
     conclusions = [record['conclusion']]
@@ -137,7 +184,7 @@ def validate_semantic_review(record, source, exclusions, fingerprint_sha256):
             conclusions.append(('passed' if check['conclusion'] == 'N/A' else check['conclusion'])
                                if _review(check, allowed) else 'pending')
         unit = included[item['unit_id']]
-        impact = classify_data_impact(unit)
+        impact = classify_data_impact(authenticated.get(item['unit_id'], unit))
         if impact == 'unknown' or not _preservation(checks.get('preservation'), unit, impact):
             conclusions.append('pending')
     if 'failed' in conclusions:

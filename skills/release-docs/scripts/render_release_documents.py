@@ -169,6 +169,23 @@ def _status(metadata, artifact, data_ids=()):
             fields = ("server", "database", "provider_version", "tool_version", "baseline_source",
                       "fixture_source", "command", "checks")
             preserved = validation.get("expected_preserved_data_summary")
+            # Non-mutating units have no row snapshot to repeat in each round.
+            # Accept that explicit N/A contract only when the runner recorded
+            # per-unit impact and source-located preservation evidence.
+            impacts = validation.get("data_impact")
+            preservation = validation.get("preservation")
+            na_preservation = (
+                isinstance(impacts, dict) and bool(impacts)
+                and all(value == "non_mutating" for value in impacts.values())
+                and isinstance(preservation, dict)
+                and set(preservation) == set(impacts)
+                and all(isinstance(item, dict) and item.get("conclusion") == "N/A"
+                        and isinstance(item.get("reason"), str)
+                        and re.search(r"no existing (?:persistent )?rows? mutations?|無既有資料列異動",
+                                      item["reason"], re.I)
+                        and re.search(r"[^\s:]+:\d+", item["reason"])
+                        for item in preservation.values())
+            )
             if (isinstance(rounds, dict) and all(
                     isinstance(rounds.get(name), dict) and rounds[name].get("status") == "passed"
                     and type(rounds[name].get("exit_code")) is int and rounds[name]["exit_code"] == 0
@@ -179,7 +196,8 @@ def _status(metadata, artifact, data_ids=()):
                     and all(rounds[name].get(k) for k in fields)
                     and isinstance(rounds[name].get("checks"), (list, dict))
                     and isinstance(preserved, dict) and bool(preserved)
-                    and rounds[name].get("preserved_data_summary") == preserved
+                    and (rounds[name].get("preserved_data_summary") == preserved
+                         or (na_preservation and rounds[name].get("preserved_data_summary") in ({}, None)))
                     and rounds[name].get("fixture_source") == validation["fixture_source"]
                     and rounds[name].get("fixture_sha256") == validation["fixture_sha256"]
                     and rounds[name].get("fixture_manifest") == validation["fixture_manifest"]

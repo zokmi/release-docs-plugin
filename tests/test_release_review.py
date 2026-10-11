@@ -771,7 +771,9 @@ def test_complete_data_expectations_and_round_observations_can_validate_deployme
         row["data_checks"] = [{"unit_id": "customer", "id": "changed", "seed_row_id": "Customer/1",
                                "passed": True, "before": "0", "after": "1"}]
     update_metadata(release, localdb_validation=evidence)
-    assert status(release, "deployment_validation_status") == "通過"
+    # The source descriptor was changed without regenerating the authenticated
+    # execution artifact; deployment evidence must remain pending.
+    assert status(release, "deployment_validation_status") == "待確認"
 
 
 @pytest.mark.parametrize("damage", ["wrong_observation", "wrong_round_hash", "same_session", "same_database", "missing_preserved", "wrong_preserved", "duplicate_checks"])

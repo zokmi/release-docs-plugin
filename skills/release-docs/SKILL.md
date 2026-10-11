@@ -134,3 +134,5 @@ DATA units 的 expected_assertions 必須在保存 lifecycle 前由已核對來�
 runner 每輪保存 artifact_sha256、baseline_sha256、fixture_sha256、fixture_manifest_sha256、database_id、session_id、committed_state、distinct checks、data_checks 與 adapter 實際回報的 preserved_data_summary。保留資料實測摘要不可由預期摘要代填。ValidateOnly、commit、failure 使用不同 fresh baseline database；rerun 保留 commit 的 database_id／committed_state 並使用不同 session_id。fixture、baseline、manifest 與 execution artifact 需留在 lifecycle 永久區，不得放 temporary。缺 runner 時未執行；缺必要證據、相同 checks 或保留資料摘要不符時待確認。四輪隔離結果不代表正式部署成功。
 
 目前 EF 自動 guarded SQL 僅接受可完整比對定義的簡單 CreateTable（int／bigint／bit／nvarchar(max)、單欄 PK）及單欄非唯一 CreateIndex；Up() 內的 helper、條件／控制流程、EF6 `Id = c.Int(nullable: false, identity: true)` 等額外欄位參數會阻擋，須提供經核對的可追溯完整 SQL／repair source。EF Core snapshot 的整份資料表、欄位與 key 必須與 baseline 加本次 migration 一致。不得將 metadata 的 skip_condition 當成 SQL 已具備重跑保護。
+
+SQL content 的審查門檻是 SQL 契約、正式 schema 對照、使用側 validation SQL、LocalDB 四輪 transaction／rollback／commit／rerun／injected-failure 與 artifact 排除範圍；不要求取得正式資料列。只有明確 UPDATE、DELETE、MERGE 或不可逆轉換才要求 preservation；純新增物件、欄位、索引、FK 或欄位描述可用具來源定位的 N/A。正式資料業務結果另列為部署後驗收，不得因缺少正式 before／after、筆數或業務不變量阻擋 SQL 產製審查。

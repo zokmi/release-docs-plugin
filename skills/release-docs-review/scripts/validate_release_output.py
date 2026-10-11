@@ -40,6 +40,7 @@ invalid_unit_evidence blocking_source_analysis excluded_dependency unresolved_de
 missing_or_unordered_phases excluded_object_in_sql invalid_unit_mapping excluded_unit_in_sql
 unexpected_or_duplicate_unit unit_dependency_order unit_mapping_mismatch unit_phase_mismatch
 incomplete_unit_mapping missing_unit_context unit_context_mismatch unit_sql_hash_mismatch
+unit_sql_descriptor_mismatch
 rerun_risk included_unit_mapping_mismatch duplicate_column guide_exclusion_mismatch
 missing_data_expectations
 incomplete_deployment_evidence unsupported_deployment_pass_claim deployment_proved_sql_defect
@@ -101,6 +102,19 @@ def _non_mutating_preservation(units, summary, preservation):
                    or not unit["unit_id"] for unit in units)):
         return False
     ids = {unit["unit_id"] for unit in units}
+    for unit in units:
+        candidates = []
+        if isinstance(unit.get("sql"), str):
+            candidates.append(unit["sql"])
+        definition = unit.get("target_definition")
+        if isinstance(definition, dict) and isinstance(definition.get("sql"), str):
+            candidates.append(definition["sql"])
+        declared = unit.get("sql_hash")
+        if isinstance(declared, str) and any(
+                declared not in {hashlib.sha256(value.encode("utf-8")).hexdigest(),
+                                 hashlib.sha256(value.replace("\r\n", "\n").encode("utf-8")).hexdigest()}
+                for value in candidates):
+            return False
     return (len(ids) == len(units) and summary == {uid: "N/A" for uid in ids}
             and isinstance(preservation, dict) and set(preservation) == ids
             and all(classify_data_impact(unit) == "non_mutating"
@@ -110,15 +124,24 @@ def _non_mutating_preservation(units, summary, preservation):
                     for unit in units))
 
 
-def _data_expectations(source, exclusions):
+def _data_expectations(source, exclusions, units_override=None):
     from semantic_review import classify_data_impact
     excluded = {uid for item in exclusions for uid in item["unit_ids"]}
-    units = source.get("units", [])
+    units = units_override if units_override is not None else source.get("units", [])
     if not isinstance(units, list):
         return {}, False
     expected = {}
     for unit in units:
         if not isinstance(unit, dict):
+            return {}, False
+        descriptors = []
+        if isinstance(unit.get("sql"), str):
+            descriptors.append(unit["sql"])
+        definition = unit.get("target_definition")
+        if isinstance(definition, dict) and isinstance(definition.get("sql"), str):
+            descriptors.append(definition["sql"])
+        if len(descriptors) > 1 and any(descriptors[0].replace("\r\n", "\n")
+                                       != value.replace("\r\n", "\n") for value in descriptors[1:]):
             return {}, False
         impact = classify_data_impact(unit)
         if impact == "non_mutating" or (impact != "mutation" and unit.get("phase") != "DATA"):
@@ -147,7 +170,21 @@ def _data_expectations(source, exclusions):
     return expected, True
 
 
-def _deployment(metadata, digest, source=None, exclusions=(), run=None):
+def _authenticated_units(sql, source, exclusions, profile):
+    """Return source units whose SQL is the authenticated artifact body."""
+    generated, _ = _artifact_units(sql, profile)
+    bodies = {mapping.get("unit_id"): body for mapping, body in generated}
+    excluded = {uid for item in exclusions for uid in item["unit_ids"]}
+    result = []
+    for unit in source.get("units", []):
+        uid = unit.get("unit_id") if isinstance(unit, dict) else None
+        if uid in excluded or uid not in bodies:
+            continue
+        result.append({**unit, "sql": bodies[uid]})
+    return result
+
+
+def _deployment(metadata, digest, source=None, exclusions=(), run=None, execution_units=None):
     validation = metadata.get("localdb_validation")
     if not isinstance(validation, dict):
         return "待確認"
@@ -172,7 +209,8 @@ def _deployment(metadata, digest, source=None, exclusions=(), run=None):
     if not valid_expectations:
         return "待確認"
     excluded = {uid for item in exclusions for uid in item["unit_ids"]}
-    included = [unit for unit in source.get("units", []) if unit.get("unit_id") not in excluded]
+    included = execution_units if execution_units is not None else [
+        unit for unit in source.get("units", []) if unit.get("unit_id") not in excluded]
     assertions = validation.get("expected_assertions")
     if data_units and (not isinstance(assertions, list) or not assertions
                        or any(not isinstance(item, dict) or item.get("unit_id") not in data_units
@@ -556,6 +594,16 @@ def _units(sql, evidence, exclusions, profile="framework"):
             continue
         if hashlib.sha256(body.encode("utf-8")).hexdigest() != unit.get("sql_hash"):
             findings.append(_finding("unit_sql_hash_mismatch"))
+        descriptor_sqls = []
+        if isinstance(unit.get("sql"), str):
+            descriptor_sqls.append(unit["sql"])
+        definition = unit.get("target_definition")
+        if isinstance(definition, dict) and isinstance(definition.get("sql"), str):
+            descriptor_sqls.append(definition["sql"])
+        body_hash = hashlib.sha256(body.replace("\r\n", "\n").encode("utf-8")).hexdigest()
+        if any(hashlib.sha256(value.replace("\r\n", "\n").encode("utf-8")).hexdigest() != body_hash
+               for value in descriptor_sqls):
+            findings.append(_finding("unit_sql_descriptor_mismatch"))
         if _rerun_risk(body) and not _approved_provider_body(mapping, body):
             findings.append(_finding("rerun_risk"))
     if seen != set(expected):
@@ -573,6 +621,8 @@ def _resolve_sql_profile(metadata):
     lifecycle_profile = metadata.get("sql_profile")
     validation = metadata.get("localdb_validation")
     validation_profile = validation.get("sql_profile") if isinstance(validation, dict) else None
+    if artifact_profile == "session_context":
+        artifact_profile = "framework"
     profiles = [p for p in (artifact_profile, lifecycle_profile, validation_profile) if p is not None]
     if any(p not in ("framework", "database_tool_minimal") for p in profiles):
         return "framework", [_finding("invalid_sql_profile")]
@@ -685,13 +735,14 @@ def validate_release_output(output_dir, run_root, *, repo=None) -> list[Finding]
     if _unmapped_sql(sql, sql_profile):
         findings.append(_finding("unmapped_sql"))
     findings.extend(_units(sql, source, exclusions, sql_profile))
+    execution_units = _authenticated_units(sql, source, exclusions, sql_profile)
     _, valid_data_expectations = _data_expectations(source, exclusions)
     if not valid_data_expectations:
         findings.append(_finding("missing_data_expectations"))
     section = re.search(r"^## 本次排除摘要\s*\n(.*?)(?=^## |\Z)", guide, re.M | re.S)
     if section is None or section.group(1).strip() != _projection(exclusions):
         findings.append(_finding("guide_exclusion_mismatch"))
-    deployment = _deployment(metadata, digest, source, exclusions, run)
+    deployment = _deployment(metadata, digest, source, exclusions, run, execution_units)
     validation = metadata.get("localdb_validation")
     if isinstance(validation, dict) and validation.get("status") == "passed" and deployment != "通過":
         findings.append(_finding("incomplete_deployment_evidence", blocking=False, domain="deployment_validation"))
@@ -709,7 +760,8 @@ def validate_release_output(output_dir, run_root, *, repo=None) -> list[Finding]
         try:
             fingerprint = _fingerprint.review_fingerprint(repo, output, run, source["source_scope"])
             record = read_json(run / "semantic_review_record.json")
-            semantic_findings = validate_semantic_review(record, source, exclusions, fingerprint.sha256)
+            semantic_findings = validate_semantic_review(record, source, exclusions, fingerprint.sha256,
+                                                         execution_units=execution_units)
         except (ValueError, OSError, KeyError):
             pass
     semantic_complete = not any(f["domain"] != "business_data_validation" for f in semantic_findings)
@@ -717,7 +769,8 @@ def validate_release_output(output_dir, run_root, *, repo=None) -> list[Finding]
     # Retain the independent static summary before lowering the final status.
     static = next(f for f in result if f["code"] == "static_sql_status")
     runtime = _report_runtime(source, exclusions, metadata, digest, run,
-                              identity_complete=_runtime_identity(findings))
+                              identity_complete=_runtime_identity(findings),
+                              execution_units=execution_units)
     result = _summary(findings + semantic_findings + _runtime_findings(runtime, deployment),
                       deployment, semantic_complete=semantic_complete)
     return [static if f["code"] == "static_sql_status" else f for f in result]
@@ -857,9 +910,9 @@ def _runtime_findings(runtime, deployment):
     return findings
 
 
-def _report_runtime(source, exclusions, metadata, digest, run, *, identity_complete=True):
+def _report_runtime(source, exclusions, metadata, digest, run, *, identity_complete=True, execution_units=None):
     """Share correctness conclusions between validator and report; never emit raw values."""
-    deployment = _deployment(metadata, digest, source, exclusions, run)
+    deployment = _deployment(metadata, digest, source, exclusions, run, execution_units)
     rounds = "\n".join("- " + name + "：" + ("通過" if deployment == "通過" else "待確認") for name in ROUND_NAMES)
     if not identity_complete:
         return "待確認", "待確認", rounds
@@ -929,14 +982,21 @@ def write_review_report(run_root, findings, fingerprint, *, repo=None, output_di
         if "localdb_validation" not in metadata and (run / 'localdb_validation.json').is_file():
             metadata = {**metadata, "localdb_validation": read_json(run / 'localdb_validation.json')}
         # Recheck source mapping/contracts before trusting per-query evidence.
-        checked = validate_release_output(output_dir, run)
+        checked = validate_release_output(output_dir, run, repo=repo)
         fresh_findings = [f for f in checked if f["code"] not in ("semantic_review_pending", "sql_content_status")]
         current_identity = next(f["status"] for f in checked if f["code"] == "static_sql_status") == "通過"
+        artifact_text = (Path(output_dir) / OPERATOR_FILES[1]).read_bytes().decode('utf-8-sig')
+        execution_units = _authenticated_units(
+            artifact_text, source, exclusions,
+            metadata.get('sql_profile') or
+            metadata.get('localdb_validation', {}).get('sql_profile', 'framework'))
         runtime = _report_runtime(source, exclusions, metadata, file_hash(Path(output_dir) / OPERATOR_FILES[1]), run,
-                                  identity_complete=_runtime_identity(checked))
+                                  identity_complete=_runtime_identity(checked),
+                                  execution_units=execution_units)
         semantic_findings = validate_semantic_review(
             read_json(run / 'semantic_review_record.json'), source,
-            exclusions, current.sha256)
+            exclusions, current.sha256,
+            execution_units=execution_units)
     except (ValueError, OSError, KeyError):
         semantic_findings = [_finding('semantic_review_pending', blocking=False)]
     findings = list(findings) + fresh_findings + semantic_findings

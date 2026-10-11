@@ -78,4 +78,6 @@ LocalDB 的 rounds 必須有 `validate_only`、`commit`、`rerun`、`injected_fa
 
 每個 included DATA unit 需完整、唯一的 expected_assertions，含 seed_row_id 和四輪 before／after；每輪 data_checks 必須有相同 unit_id／id／seed_row_id、passed=true 與相符的實際 before／after。缺 DATA 預期結果會阻擋 SQL 內容審查；缺實測或保留資料摘要只影響部署驗證。任何 fixture、baseline、manifest、SQL 或來源變更，都要重算 fingerprint 並重審。
 
+Finding 必須分流為 `sql_correctness`、`business_data_validation` 與 `deployment_validation`。正式資料列、業務結果、before／after 筆數與不變量只能作 `business_data_validation` 附加資訊；不得因正式資料不可取得而產生 blocking 或 `semantic_review_pending`。審查分類以已驗證 execution artifact body 為準，並核對 source mapping／hash／descriptor 一致；未知 mutation、未核准 provider、opaque execution、rerun 風險與 schema／transaction 缺口仍屬 `sql_correctness` 阻擋項。provider 只有在 descriptor、canonical body、source mapping、hash 與實際 rerun evidence 全部成立時，才可排除 opaque／rerun finding。
+
 核對 `SESSION_CONTEXT(N'ReleaseDocs.ValidateOnly')` 的安全預設 1、拒絕非 0／1、同一新 session 設 0 才 commit；舊版 assembler validate_only 參數已移除，runtime_mode 為 session_context。guarded EF units 必須同時驗證完整欄位與 key 定義，僅存在性或 metadata 條件不足以認定可重跑。

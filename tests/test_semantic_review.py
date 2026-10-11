@@ -324,6 +324,19 @@ def test_dynamic_ddl_provider_domain_needs_recognized_execution_body():
     assert api('semantic_review').classify_data_impact(unit) == 'unknown'
 
 
+def test_non_mutating_classifier_handles_decimal_default_and_identity_safely():
+    classifier = api('semantic_review').classify_data_impact
+    assert classifier({'sql': 'ALTER TABLE dbo.T ADD Amount decimal(10,2) NULL DEFAULT 0;'}) == 'non_mutating'
+    assert classifier({'sql': 'ALTER TABLE dbo.T ADD NewId int IDENTITY(1,1) NULL;'}) == 'mutation'
+
+
+def test_modified_dynamic_provider_is_not_approved_for_n_a():
+    from metadata_provider import render_dynamic_drop_constraint_provider
+    unit = {'provider_kind': 'dynamic_ddl',
+            'sql': render_dynamic_drop_constraint_provider() + ' DELETE FROM dbo.Customer;'}
+    assert api('semantic_review').classify_data_impact(unit) in ('mutation', 'unknown')
+
+
 def test_unknown_preservation_keeps_failed_sql_review_blocking(release):
     from semantic_review import validate_semantic_review
     record, source, exclusions, fingerprint = record_for(release)
