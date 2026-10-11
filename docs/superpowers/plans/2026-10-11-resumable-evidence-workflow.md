@@ -12,7 +12,7 @@
 - 以 lifecycle run 內的 `workflow_state.json` 保存固定 stage、attempt、input/output fingerprint、錯誤摘要與狀態。
 - 以單一 resume coordinator 依序處理 `source_collected -> fixture_ready -> local_validation_passed -> semantic_review_passed -> report_finalized -> delivery_finalized`；上游輸入變更時使 downstream invalidated。
 - 所有永久 evidence 先寫入並核對 hash，再 atomic replace workflow state；未完成 stage 不得成為 passed。
-- provider 以來源 metadata operation 為 authoritative：source `update` 必須輸出 `sp_updateextendedproperty`，source `add` 才輸出 add；物件存在性只用於 guarded execution。
+- provider 以來源 metadata operation 為 authoritative：`add/update/drop` 分開解析與產生；source `update` 必須輸出 `sp_updateextendedproperty`，source `add` 才輸出 add，source `drop` 才輸出 drop；物件存在性只用於 guarded execution，不得改寫 operation 或 provenance。
 
 ## Tech Stack
 
@@ -47,18 +47,19 @@
 **Files:**
 
 - Modify: `tests/test_metadata_provider.py`
-- Modify: `tests/test_release_unit_generator.py` if needed by the existing test layout
-- Modify: `skills/release-docs/scripts/metadata_provider.py` only if a failing test proves the current materialization/provenance contract is incomplete
-- Modify: `skills/release-docs/scripts/release_unit_generator.py` only if provider provenance is not propagated
+- Modify: `tests/test_release_unit_generator.py`
+- Modify: `skills/release-docs/scripts/metadata_provider.py`
+- Modify: `skills/release-docs/scripts/release_unit_generator.py`
 
 **TDD steps:**
 
-1. RED: add tests for source add/update/drop parsing; assert source update renders `sp_updateextendedproperty`, guarded update fallback remains update-first, and source add renders only add semantics. Add a deterministic regeneration test asserting artifact bytes, descriptor, operation mapping, provider version and input/output hashes are stable.
+1. RED: add tests for source add/update/drop parsing; assert add renders `sp_addextendedproperty`, update renders `sp_updateextendedproperty`, drop renders `sp_dropextendedproperty`, and no renderer branch chooses operation from object existence. If update fallback is retained, assert the update branch remains authoritative and provenance records the fallback policy without changing operation.
 2. RED: add a contract test proving excluded `#5005` objects never appear in provider output or provenance.
-3. Run targeted tests and record the exact failures.
-4. GREEN: make the smallest provider/generator change that preserves the authoritative operation without changing approved dynamic-DDL blocking behavior.
-5. Run `python -m pytest tests/test_metadata_provider.py tests/test_release_unit_generator.py -q` and the relevant SQL contract tests.
-6. Commit: `fix: preserve metadata provider operations`.
+3. RED: add a deterministic regeneration test asserting artifact bytes, descriptor, source/materialized operation mapping, provider version, fallback policy and input/output hashes are stable.
+4. Run targeted tests and record the exact failures.
+5. GREEN: make the smallest provider/generator change that preserves the authoritative operation without changing approved dynamic-DDL blocking behavior.
+6. Run `python -m pytest tests/test_metadata_provider.py tests/test_release_unit_generator.py -q` and the relevant SQL contract tests.
+7. Commit: `fix: preserve metadata provider operations`.
 
 ## Task 2: Add durable workflow state and controlled stage transitions
 

@@ -28,15 +28,33 @@
 
 ## Provider correction priority
 
-Provider 修正是第一個可獨立交付的階段。來源 SQL 的 metadata operation 是 authoritative input；若來源使用 `sp_updateextendedproperty`，materialized execution body 必須保留 update operation，並由 provider 產生 `sp_updateextendedproperty`。只有明確的 `add` operation 才能產生 `sp_addextendedproperty`。
+Provider 修正是第一個可獨立交付的階段。來源 SQL 的 metadata operation 是 authoritative input；`add`、`update`、`drop` 必須分開解析、分開產生、分開驗證。若來源使用 `sp_updateextendedproperty`，materialized execution body 必須保留 update operation，並由 provider 產生 `sp_updateextendedproperty`。只有明確的 `add` operation 才能產生 `sp_addextendedproperty`。
 
-Provider 不得以目前物件是否存在來改寫 operation 語意；存在性只用於 guarded execution 的 add／update fallback，不能把來源的 update 記錄成 add。provider provenance 必須保存 operation、source mapping、input/output hash 與 provider version，供重新產製、四輪 LocalDB 與 validator 核對。
+### Provider operation contract
+
+| Source operation | Required materialized procedure | Guard condition | Forbidden transformation |
+|---|---|---|---|
+| `add` | `sp_addextendedproperty` | 可用 `IF NOT EXISTS` 避免重複建立 | 不得產生 update 作為主要語意 |
+| `update` | `sp_updateextendedproperty` | 若既有相容契約需要，可在不存在時明確 fallback 至 add | 不得因物件不存在或存在而把 source operation 記錄成 add |
+| `drop` | `sp_dropextendedproperty` | 可依既有契約加存在性 guard | 不得轉成 add 或 update |
+
+存在性只控制 guarded execution，不控制 operation 的語意、provenance 或 unit mapping。若採用 `update -> add` fallback，SQL 必須仍以 update 為 authoritative branch，並在 descriptor／provenance 同時記錄 `source_operation=update`、`materialized_operation=update`、fallback policy 與實際輸出 hash；fallback 不得讓 validator 把該 unit 判定為 add。若無法保證這個追溯鏈，provider 必須阻擋產製，而不是猜測 operation。
+
+Provider provenance 至少必須保存：source operation、source SQL mapping、provider version、source input hash、materialized body hash、artifact hash 與 fallback policy。相同 source revision、provider version、profile 與輸入時，materialized bytes、descriptor 與 provenance 必須 deterministic；改變任一輸入必須使 hash 或 fingerprint 改變。
+
+Provider operation 的不變量如下：
+
+- parser 不能把 `sp_addextendedproperty`、`sp_updateextendedproperty`、`sp_dropextendedproperty` 合併成同一 operation。
+- renderer 不能以 DB 目前狀態、metadata lookup 或 execution result 改寫 source operation。
+- validator 必須同時核對 SQL procedure、descriptor operation、provenance operation 與 artifact hash；任一不一致均屬 `sql_correctness` blocker。
+- `#5005` 排除規則優先於 provider expansion；被排除物件不得出現在 materialized SQL、unit mapping、provenance 或 evidence receipt。
 
 Provider correction 的最小驗證範圍：
 
 - parse `add`、`update`、`drop` 時 operation 正確保存。
-- `update` 來源產生 `sp_updateextendedproperty`，不得退化為單純 add。
-- generator 的 execution body、descriptor、provenance 與 SQL hash 一致。
+- `add` 來源產生 `sp_addextendedproperty`；`update` 來源產生 `sp_updateextendedproperty`；兩者不得互換。
+- `update` 若有 fallback，測試必須證明 fallback 不改變 source/materialized operation 或 provenance。
+- generator 的 execution body、descriptor、provenance、procedure operation 與 SQL hash 一致。
 - 重新產製相同 source revision 時 output bytes 與 provenance 穩定。
 - provider 輸出通過 database-tool contract，未核准的 dynamic execution 仍阻擋。
 
@@ -138,7 +156,8 @@ created
 5. credential 出現在 command、exception 或 connection string 時不會寫入 durable evidence。
 6. `business_data_validation` finding 不會降低 `sql_content_status`。
 7. 舊 schema run 維持可讀但不能 resume。
-8. `sp_updateextendedproperty` source unit 重新產製後仍是 update operation，且其 artifact／provenance／hash 可被 validator 核對。
+8. `sp_addextendedproperty`、`sp_updateextendedproperty`、`sp_dropextendedproperty` 各有正確 procedure、operation 與 provenance，且不會互相轉換。
+9. `sp_updateextendedproperty` source unit 重新產製後仍是 update operation，且其 artifact／provenance／hash 可被 validator 核對。
 
 ## Success criteria
 
@@ -147,4 +166,4 @@ created
 - evidence 缺口以精確 stage／finding 回報，而非泛化為 opaque 或 semantic pending。
 - 全部測試與現有 SQL correctness、validation SQL、LocalDB 四輪契約保持通過。
 - 任何 credential 不出現在 lifecycle evidence、review report 或 command log。
-- metadata provider 不會把來源 update operation 錯誤物化為 add operation。
+- metadata provider 不會把來源 add/update/drop operation 互相錯誤物化；尤其不會把來源 update operation 錯誤物化為 add operation。
