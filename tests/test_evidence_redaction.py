@@ -31,6 +31,25 @@ def test_known_secrets_are_replaced_even_without_credential_labels():
         "tool failed: [REDACTED]"
 
 
+def test_credential_material_with_unrecognized_value_fails_closed_without_echoing_input():
+    value = "credential material: opaque-value"
+    with pytest.raises(ValueError, match="secret_redaction_required") as error:
+        evidence_redaction.redact_text(value)
+    assert value not in str(error.value)
+
+
+def test_known_credential_material_is_masked_without_failing_closed():
+    assert evidence_redaction.redact_text(
+        "credential material: known-secret", secrets=("known-secret",)
+    ) == "credential material: [REDACTED]"
+
+
+def test_text_user_id_assignment_is_masked_without_masking_sql_identifiers():
+    value = "user_id=release-user; SELECT user_id FROM dbo.ReleaseUser"
+    assert evidence_redaction.redact_text(value) == \
+        "user_id=[REDACTED]; SELECT user_id FROM dbo.ReleaseUser"
+
+
 def test_redact_mapping_recurses_and_preserves_safe_identifiers_hashes_paths_and_statuses():
     payload = {
         "finding": {"message": "token=abc123", "code": "business_data_validation"},

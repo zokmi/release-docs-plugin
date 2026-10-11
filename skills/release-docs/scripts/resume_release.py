@@ -96,11 +96,11 @@ def _result_outputs_match(result):
         return False
 
 
-def _sanitize_result_value(value):
+def _sanitize_result_value(value, secrets=()):
     from evidence_redaction import redact_text
 
     if isinstance(value, str):
-        return redact_text(value)
+        return redact_text(value, secrets=secrets)
     if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
@@ -108,11 +108,11 @@ def _sanitize_result_value(value):
             raise ValueError('Production result metadata must be finite JSON data')
         return value
     if isinstance(value, list):
-        return [_sanitize_result_value(item) for item in value]
+        return [_sanitize_result_value(item, secrets=secrets) for item in value]
     if isinstance(value, dict):
         if any(not isinstance(key, str) for key in value):
             raise ValueError('Production result metadata keys must be strings')
-        return {_sanitize_result_value(key): _sanitize_result_value(item)
+        return {_sanitize_result_value(key, secrets=secrets): _sanitize_result_value(item, secrets=secrets)
                 for key, item in value.items()}
     raise ValueError('Production result metadata must be JSON data')
 
@@ -155,14 +155,14 @@ def _save_result(run, result, *, producer_stage, input_fingerprint, secrets=()):
         raise ValueError('Production result is incomplete')
     payload = {
         'inventory': {'output_dir': str(inventory.output_dir),
-                      'files': _sanitize_result_value(inventory.files)},
+                      'files': _sanitize_result_value(inventory.files, secrets=secrets)},
         'artifact': {key: getattr(artifact, key) for key in
                      ('path', 'sha256', 'release_id', 'transaction_mode', 'unit_mapping', 'findings')},
         'fingerprint': {key: getattr(fingerprint, key) for key in
                         ('sha256', 'components', 'schema_version')},
     }
-    payload['artifact']['unit_mapping'] = _sanitize_result_value(payload['artifact']['unit_mapping'])
-    payload['artifact']['findings'] = _sanitize_result_value(payload['artifact']['findings'])
+    payload['artifact']['unit_mapping'] = _sanitize_result_value(payload['artifact']['unit_mapping'], secrets=secrets)
+    payload['artifact']['findings'] = _sanitize_result_value(payload['artifact']['findings'], secrets=secrets)
     payload['producer'] = {'stage': producer_stage, 'input_fingerprint': input_fingerprint}
     payload['artifact']['path'] = str(payload['artifact']['path'])
     if not _artifact_outputs_match(payload):
@@ -237,15 +237,24 @@ def _builtin_production_outputs(run):
                                     'localdb_validation.json')]
 
 
-def _builtin_production(repo, run, inputs, input_fingerprint):
+def _builtin_production(repo, run, inputs, input_fingerprint, secrets=()):
     request = inputs.get('production_request')
     if not isinstance(request, dict) or request.get('run_root') is None or request.get('repo') is None:
         raise ValueError('A production_request with repo and run_root is required')
     if Path(request['run_root']).resolve() != run.resolve() or Path(request['repo']).resolve() != repo.resolve():
         raise ValueError('Production request ownership mismatch')
+    request = dict(request)
+    has_request_secrets = 'secrets' in request
+    request_secrets = request.get('secrets', ())
+    if isinstance(request_secrets, str):
+        request_secrets = (request_secrets,)
+    if isinstance(secrets, str):
+        secrets = (secrets,)
+    if has_request_secrets or request_secrets or secrets:
+        request['secrets'] = (*request_secrets, *secrets)
     result = produce_release(**request)
     result_file = _save_result(run, result, producer_stage=STAGES[0],
-                               input_fingerprint=input_fingerprint)
+                               input_fingerprint=input_fingerprint, secrets=secrets)
     outputs = _builtin_production_outputs(run)
     if any(not path.is_file() for path in outputs):
         raise ValueError('Production pipeline omitted durable stage evidence')
@@ -253,7 +262,7 @@ def _builtin_production(repo, run, inputs, input_fingerprint):
     return result, outputs
 
 
-def resume_release(repo, run_root, *, current_inputs, adapters=None) -> ProductionResult:
+def resume_release(repo, run_root, *, current_inputs, adapters=None, secrets=()) -> ProductionResult:
     """Resume through ``produce_release`` or explicit stage adapters.
 
     ``current_inputs`` must contain exactly the six workflow stages. The built-in
@@ -294,7 +303,7 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
             fingerprint = _stage_fingerprint(name, stage_inputs)
             record = state['stage_records'][name]
             if name in completed and record['input_fingerprint'] != fingerprint:
-                state = invalidate_from(run, name, 'Stage input fingerprint changed')
+                state = invalidate_from(run, name, 'Stage input fingerprint changed', secrets=secrets)
                 checkpoint = STAGES.index(name)
                 completed = {prior for prior in STAGES[:checkpoint]
                              if state['stage_records'][prior]['status'] == 'completed'}
@@ -303,7 +312,7 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
         if ('production_request' in current_inputs[STAGES[0]]
                 and _result_path(run).exists()
                 and _load_result(run, current_inputs) is None):
-            state = invalidate_from(run, STAGES[0], 'Production result evidence changed')
+            state = invalidate_from(run, STAGES[0], 'Production result evidence changed', secrets=secrets)
             completed.clear()
 
         if (all(state['stage_records'][name]['status'] == 'completed' for name in STAGES)
@@ -313,7 +322,7 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
             statuses = {name: 'completed' for name in STAGES}
             result = _load_result(run, current_inputs)
             if result is None:
-                state = invalidate_from(run, STAGES[0], 'Production result evidence changed')
+                state = invalidate_from(run, STAGES[0], 'Production result evidence changed', secrets=secrets)
                 completed.clear()
             else:
                 result.stage_statuses = statuses
@@ -332,11 +341,12 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
             if (name in STAGES[:3]
                     and 'production_request' in current_inputs[STAGES[0]]):
                 if state['stage_records'][name]['status'] != 'completed':
-                    record_stage(run, name, status='running', input_fingerprint=fingerprint)
+                    record_stage(run, name, status='running', input_fingerprint=fingerprint,
+                                 secrets=secrets)
                 try:
                     result, outputs = _builtin_production(
                         repository, run, current_inputs[STAGES[0]],
-                        _stage_fingerprint(STAGES[0], current_inputs[STAGES[0]]))
+                        _stage_fingerprint(STAGES[0], current_inputs[STAGES[0]]), secrets=secrets)
                     for pipeline_stage, output in zip(STAGES[:2], outputs[:2]):
                         pipeline_state = load_workflow_state(run)
                         if pipeline_state['stage_records'][pipeline_stage]['status'] == 'completed':
@@ -344,19 +354,19 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
                         record_stage(run, pipeline_stage, status='completed',
                                      input_fingerprint=_stage_fingerprint(
                                          pipeline_stage, current_inputs[pipeline_stage]),
-                                     output_files=[output])
+                                     output_files=[output], secrets=secrets)
                     pipeline_state = load_workflow_state(run)
                     if pipeline_state['stage_records'][STAGES[2]]['status'] != 'completed':
                         record_stage(run, STAGES[2], status='completed',
                                      input_fingerprint=_stage_fingerprint(
                                          STAGES[2], current_inputs[STAGES[2]]),
-                                     output_files=outputs[2:])
+                                     output_files=outputs[2:], secrets=secrets)
                     results.append({'result': result})
                     continue
                 except Exception as error:
                     if load_workflow_state(run)['stage_records'][name]['status'] != 'completed':
                         record_stage(run, name, status='failed', input_fingerprint=fingerprint,
-                                     error_summary='stage_execution_failed')
+                                     error_summary='stage_execution_failed', secrets=secrets)
                     if isinstance(error, ProductionError):
                         raise
                     raise ProductionError(name, 'production_contract_violation') from error
@@ -365,7 +375,7 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
                 saved_result = _result_value(results) or _load_result(run, current_inputs)
                 if saved_result is not None:
                     if not _result_outputs_match(saved_result):
-                        invalidate_from(run, STAGES[0], 'Production result evidence changed')
+                        invalidate_from(run, STAGES[0], 'Production result evidence changed', secrets=secrets)
                         raise ProductionError('preflight', 'durable_production_result_missing')
                     state = load_workflow_state(run)
                     statuses = {stage_name: state['stage_records'][stage_name]['status']
@@ -376,7 +386,8 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
                     saved_result.findings = findings
                     return saved_result
                 raise ProductionError(name, 'stage_adapter_unavailable')
-            record_stage(run, name, status='running', input_fingerprint=fingerprint)
+            record_stage(run, name, status='running', input_fingerprint=fingerprint,
+                         secrets=secrets)
             try:
                 output = handler(run, stage_inputs)
                 if not isinstance(output, dict):
@@ -390,15 +401,15 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
                 output_result = output.get('result')
                 if output_result is not None:
                     result_file = _save_result(run, output_result, producer_stage=name,
-                                               input_fingerprint=fingerprint)
+                                               input_fingerprint=fingerprint, secrets=secrets)
                     files = (*files, result_file)
                 record_stage(run, name, status='completed', input_fingerprint=fingerprint,
-                             output_files=files)
+                             output_files=files, secrets=secrets)
                 results.append(output)
             except Exception as error:
                 # External exception text can contain credentials or SQL literals.
                 record_stage(run, name, status='failed', input_fingerprint=fingerprint,
-                             error_summary='stage_execution_failed')
+                             error_summary='stage_execution_failed', secrets=secrets)
                 if isinstance(error, ProductionError):
                     raise
                 raise ProductionError(name, 'production_contract_violation') from error
@@ -411,7 +422,7 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
         if prior_result is None:
             raise ProductionError(stage, 'durable_production_result_missing')
         if not _result_outputs_match(prior_result):
-            invalidate_from(run, STAGES[0], 'Production result evidence changed')
+            invalidate_from(run, STAGES[0], 'Production result evidence changed', secrets=secrets)
             raise ProductionError('preflight', 'durable_production_result_missing')
         return ProductionResult(run, prior_result.inventory, prior_result.artifact, statuses,
                                 findings or prior_result.findings, prior_result.fingerprint,

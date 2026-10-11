@@ -13,7 +13,7 @@ _SENSITIVE = re.compile(
 )
 _ASSIGNMENT = re.compile(
     r"((?:password|passwd|pwd|token|secret|credential|connection.?string|api.?key|"
-    r"private.?key|access.?key|client.?secret|user(?:name)?|uid|user\s*id)\s*[=:]\s*)"
+    r"private.?key|access.?key|client.?secret|user(?:name)?|user[_ -]?id|uid)\s*[=:]\s*)"
     r"(\"[^\"]*\"|'[^']*'|[^\s;&|,]+)",
     re.IGNORECASE,
 )
@@ -27,6 +27,9 @@ _BEARER = re.compile(r"(\bBearer\s+)[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 _UNCLASSIFIED_TOKEN = re.compile(
     r"\b(?:sk|rk|pk|ghp|gho|ghu|ghs|github_pat|xox[baprs])-"
     r"[A-Za-z0-9_-]{12,}\b", re.IGNORECASE,
+)
+_UNRECOGNIZED_CREDENTIAL_MATERIAL = re.compile(
+    r"\bcredential\s+material\s*[:=]\s*(?!\[REDACTED\])[^\s;&|,]+", re.IGNORECASE,
 )
 _FLAG = re.compile(
     r"^(?:--?|/)(?:password|passwd|pwd|token|secret|api[-_]?key|user(?:name)?|uid|"
@@ -65,7 +68,8 @@ def _redact_text(value: str, secrets: list[str]) -> str:
     text = _ASSIGNMENT.sub(lambda match: match.group(1) + REDACTED, text)
     text = _BEARER.sub(lambda match: match.group(1) + REDACTED, text)
     text = _COMMAND_ARGUMENT.sub(lambda match: match.group(1) + REDACTED, text)
-    if _UNCLASSIFIED_TOKEN.search(text):
+    if (_UNCLASSIFIED_TOKEN.search(text)
+            or _UNRECOGNIZED_CREDENTIAL_MATERIAL.search(text)):
         raise _fail_closed()
     return text
 
@@ -116,7 +120,7 @@ def redact_mapping(value: Any, secrets: Iterable[str] = ()) -> dict | list:
     if not isinstance(value, (dict, list)):
         raise _fail_closed()
     clean = _redact(value, _secret_values(secrets))
-    assert_safe_evidence(clean)
+    assert_safe_evidence(clean, secrets=secrets)
     return clean
 
 
@@ -128,7 +132,9 @@ def assert_safe_evidence(value: Any, secrets: Iterable[str] = ()) -> None:
         if isinstance(item, str):
             if any(secret in item for secret in secret_values):
                 raise _fail_closed()
-            if (_UNCLASSIFIED_TOKEN.search(item) or _URL_CREDENTIALS.search(item)
+            if (_UNCLASSIFIED_TOKEN.search(item)
+                    or _UNRECOGNIZED_CREDENTIAL_MATERIAL.search(item)
+                    or _URL_CREDENTIALS.search(item)
                     or _PEM_PRIVATE_KEY.search(item)):
                 raise _fail_closed()
             if (any(match.group(2).strip("\"'") != REDACTED

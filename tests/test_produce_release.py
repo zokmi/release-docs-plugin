@@ -118,3 +118,16 @@ def test_unit_only_structure_descriptions_are_delivered(tmp_path):
     text = (args['output_dir'] / '00_上線指引.md').read_text(encoding='utf-8')
     assert 'dbo.One：建立資料表；影響：新增查詢來源' in text
     assert '結構異動說明待確認；來源宣告物件' not in text
+
+
+def test_produce_release_redacts_supplied_unlabelled_secret_from_lifecycle(tmp_path):
+    from produce_release import produce_release
+    args = inputs(tmp_path)
+    args['analysis'].findings = [{'code': 'provider_warning', 'blocking': False,
+                                  'message': 'provider returned opaque-production-secret'}]
+
+    produce_release(**args, secrets=('opaque-production-secret',))
+
+    persisted = (args['run_root'] / 'source_unit_metadata.json').read_text(encoding='utf-8')
+    assert 'opaque-production-secret' not in persisted
+    assert 'provider returned [REDACTED]' in persisted

@@ -52,7 +52,7 @@ def _immutable_copy(source, destination):
 
 def produce_release(repo, evidence, analysis, *, release_id, run_root, output_dir,
                     baseline_source, fixture_source=None, fixture_manifest=None,
-                    validation_options=None, parent_run_id=None):
+                    validation_options=None, parent_run_id=None, secrets=()):
     stage = 'preflight'
     try:
         repo, run, output = _plain_path(repo), _plain_path(run_root), _plain_path(output_dir)
@@ -162,7 +162,7 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
                     execution_artifact={'path': 'assembly/01_部署SQL.sql', 'sha256': artifact.sha256,
                                         'sql_profile': artifact.transaction_mode},
                     operator_contract={'parameters_applicable': clean.parameters_applicable},
-                    parent_run_id=parent_run_id)
+                    parent_run_id=parent_run_id, secrets=secrets)
         stage = 'render'
         inventory = render_release_documents(clean, artifact, lifecycle, output)
         stage = 'fingerprint'
