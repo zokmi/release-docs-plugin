@@ -165,6 +165,22 @@ class LifecycleTests(unittest.TestCase):
         (run / 'run.json').write_text(json.dumps(manifest))
         self.assertEqual(self.cli('prune')['removed'], [run.name])
 
+    def test_prune_repairs_finalized_workflow_with_running_manifest(self):
+        from artifact_lifecycle import prune
+        from workflow_state import STAGES, mark_workflow_status, record_stage
+        run = self.init()
+        for stage in STAGES:
+            record_stage(run, stage, status='completed', input_fingerprint=stage)
+        mark_workflow_status(run, 'finalized')
+        manifest = json.loads((run / 'run.json').read_text())
+        manifest['expires_at'] = '2000-01-01T00:00:00+00:00'
+        (run / 'run.json').write_text(json.dumps(manifest))
+        self.assertEqual(prune(self.repo)['removed'], [])
+        manifest = json.loads((run / 'run.json').read_text())
+        manifest['expires_at'] = '2000-01-01T00:00:00+00:00'
+        (run / 'run.json').write_text(json.dumps(manifest))
+        self.assertEqual(prune(self.repo)['removed'], [run.name])
+
     def test_legacy_manifest_readable_but_finalized_fail_is_rejected(self):
         run = self.init()
         (run / 'workflow_state.json').unlink()

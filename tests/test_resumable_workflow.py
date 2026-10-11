@@ -476,6 +476,16 @@ def test_resume_api_redacts_supplied_unlabelled_secret_from_durable_result(owned
     assert 'opaque-resume-secret' not in (run / 'production_result.json').read_text(encoding='utf-8')
 
 
+def test_adapter_redaction_failure_removes_unsafe_evidence(owned_run):
+    import resume_release as resume_module
+    _repo, run = owned_run
+    evidence = run / 'adapter-evidence.json'
+    evidence.write_text('{"message":"credential material: opaque-value"}', encoding='utf-8')
+    with pytest.raises(ValueError, match='secret_redaction_required'):
+        resume_module._redact_durable_files(run, [evidence])
+    assert not evidence.exists()
+
+
 def test_resume_reuses_generator_secrets_across_checkpoints_and_result_write(owned_run):
     import json
     from resume_release import resume_release
