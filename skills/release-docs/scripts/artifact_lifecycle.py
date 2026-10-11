@@ -9,6 +9,8 @@ import shutil
 import stat
 import subprocess
 import uuid
+from workflow_state import (STAGES, initialize_workflow_state, load_workflow_state,
+                            mark_workflow_status, record_stage)
 
 from validate_output_paths import DOCUMENTS, REPORT, REQUIRED_DOCUMENTS, validate_output_paths
 from validate_release_artifacts import validate
@@ -111,7 +113,7 @@ def prune(repo):
     return {'removed': removed, 'skipped': skipped}
 
 
-def initialize(repo):
+def initialize(repo, workflow_fingerprint='default-workflow'):
     repo = root_path(repo)
     cleanup = prune(repo)
     run = repo / ROOT / 'runs' / uuid.uuid4().hex
@@ -122,6 +124,7 @@ def initialize(repo):
              'expires_at': None}
     save(run, state)
     (run / LOCK).write_text('running\n', encoding='utf-8')
+    initialize_workflow_state(run, run.name, workflow_fingerprint, STAGES)
     return {'run_id': run.name, 'run_path': run.relative_to(repo).as_posix(), 'prune': cleanup}
 
 
@@ -131,6 +134,11 @@ def hashes(paths, base):
 
 def finish(repo, run, documents):
     repo, run, state = owned(repo, run)
+    workflow = load_workflow_state(run)
+    if state['status'] != 'running' or not (run / LOCK).is_file() or workflow['status'] != 'running':
+        raise ValueError('Run is not active')
+    if workflow['stage_records']['report_finalized']['status'] != 'completed':
+        raise ValueError('Report stage incomplete')
     _, docs = validate_output_paths(repo, documents)
     if not all((docs / name).is_file() for name in (*REQUIRED_DOCUMENTS, REPORT)):
         raise ValueError('Deliverables or durable review summary missing')
@@ -154,17 +162,24 @@ def finish(repo, run, documents):
         text = (docs / name).read_text(encoding='utf-8-sig')
         if re.search(r'(?:\.release-docs|release-artifacts)[/\\]', text, re.I):
             raise ValueError('Deliverable still depends on temporary evidence paths')
-    evidence = [p for p in run.rglob('*') if p.is_file() and p not in (run / MANIFEST, run / LOCK)]
+    evidence = [p for p in run.rglob('*') if p.is_file() and p not in (run / MANIFEST, run / LOCK, run / 'workflow_state.json')]
     if receipt.get('evidence') != hashes(evidence, run) or not evidence:
         raise ValueError('Evidence hash inventory missing or changed')
     # Recheck ownership, aliases and Git membership immediately before deletion.
     owned(repo, run)
+    record_stage(run, 'delivery_finalized', status='completed',
+                 input_fingerprint=hashlib.sha256(report.encode('utf-8')).hexdigest())
+    mark_workflow_status(run, 'finalized')
     shutil.rmtree(run)
     return {'removed': run.name, 'documents_preserved': str(docs)}
 
 
 def fail(repo, run, interrupted=False):
     _, run, state = owned(repo, run)
+    if state['status'] == 'finalized' or not (run / LOCK).is_file():
+        raise ValueError('Finalized run or missing run lock')
+    if (run / 'workflow_state.json').exists():
+        mark_workflow_status(run, 'interrupted' if interrupted else 'failed')
     state['status'] = 'interrupted' if interrupted else 'failed'
     state['expires_at'] = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
     save(run, state)
@@ -178,6 +193,7 @@ def main():
     parser.add_argument('--repo', required=True)
     parser.add_argument('--run')
     parser.add_argument('--documents')
+    parser.add_argument('--workflow-fingerprint', default='default-workflow')
     args = parser.parse_args()
     if args.action in ('check', 'finish', 'fail', 'interrupt') and not args.run:
         parser.error('--run required')
@@ -185,7 +201,7 @@ def main():
         parser.error('--documents required')
     try:
         if args.action == 'init':
-            result = initialize(args.repo)
+            result = initialize(args.repo, args.workflow_fingerprint)
         elif args.action == 'prune':
             result = prune(args.repo)
         elif args.action == 'finish':

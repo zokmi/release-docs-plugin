@@ -7,13 +7,21 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+
+import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'skills/release-docs/scripts/artifact_lifecycle.py'
+sys.path.insert(0, str(SCRIPT.parent))
 
 
 class LifecycleTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def local_temp(self, tmp_path):
+        self.test_tmp_path = tmp_path
+
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(dir=getattr(self, 'test_tmp_path', None))
         self.addCleanup(self.tmp.cleanup)
         self.repo = Path(self.tmp.name) / 'repo'
         self.repo.mkdir()
@@ -44,7 +52,96 @@ class LifecycleTests(unittest.TestCase):
         first, second = self.init(), self.init()
         self.assertNotEqual(first, second)
         self.assertEqual(json.loads((first / 'run.json').read_text())['owner'], 'release-docs')
+        self.assertEqual(json.loads((first / 'workflow_state.json').read_text())['current_stage'], 'source_collected')
         self.git('check-ignore', str(first / 'run.json'))
+
+    def test_init_records_requested_workflow_fingerprint(self):
+        data = self.cli('init', '--workflow-fingerprint', 'revision-42')
+        run = self.repo / data['run_path']
+        self.assertEqual(json.loads((run / 'workflow_state.json').read_text())['workflow_fingerprint'], 'revision-42')
+
+    def test_interrupt_persists_workflow_before_removing_lock(self):
+        run = self.init()
+        self.cli('interrupt', '--run', str(run))
+        state = json.loads((run / 'workflow_state.json').read_text())
+        self.assertEqual(state['status'], 'interrupted')
+        self.assertEqual(state['current_stage'], 'source_collected')
+        self.assertFalse((run / '.lock').exists())
+
+    def test_interrupt_records_active_stage_and_retry_attempt(self):
+        from artifact_lifecycle import fail
+        from workflow_state import load_workflow_state, record_stage, resume_checkpoint
+        run = self.init()
+        record_stage(run, 'source_collected', status='running', input_fingerprint='source')
+        fail(self.repo, run, interrupted=True)
+        state = load_workflow_state(run)
+        self.assertEqual(state['stage_records']['source_collected']['status'], 'interrupted')
+        (run / '.lock').write_text('resuming')
+        self.assertEqual(resume_checkpoint(run, state['workflow_fingerprint']), 'source_collected')
+        state = record_stage(run, 'source_collected', status='running', input_fingerprint='source')
+        self.assertEqual(state['attempts']['source_collected'], 2)
+
+    def test_failed_state_write_preserves_lock_and_evidence(self):
+        from artifact_lifecycle import fail
+        run = self.init()
+        evidence = run / 'evidence.txt'
+        evidence.write_text('keep')
+        before = (run / 'workflow_state.json').read_bytes()
+        with patch('workflow_state.os.replace', side_effect=OSError('replace unavailable')):
+            with self.assertRaises(OSError):
+                fail(self.repo, run)
+        self.assertEqual((run / 'workflow_state.json').read_bytes(), before)
+        self.assertTrue((run / '.lock').exists() and evidence.exists())
+
+    def test_finish_write_failure_keeps_evidence_and_deliverables(self):
+        from artifact_lifecycle import finish
+        run = self.init()
+        docs, report, _ = self.receipt(run)
+        with patch('workflow_state.os.replace', side_effect=OSError('replace unavailable')):
+            with self.assertRaises(OSError):
+                finish(self.repo, run, docs)
+        self.assertTrue((run / 'tool-output.sql').exists() and report.exists())
+        self.assertTrue((run / '.lock').exists())
+
+    def test_finish_records_finalization_before_cleanup(self):
+        from artifact_lifecycle import finish
+        run = self.init()
+        docs, report, _ = self.receipt(run)
+        with patch('artifact_lifecycle.shutil.rmtree', side_effect=OSError('cleanup unavailable')):
+            with self.assertRaises(OSError):
+                finish(self.repo, run, docs)
+        state = json.loads((run / 'workflow_state.json').read_text())
+        self.assertEqual(state['status'], 'finalized')
+        self.assertEqual(state['stage_records']['delivery_finalized']['status'], 'completed')
+        self.assertTrue((run / 'tool-output.sql').exists() and report.exists())
+
+    def test_legacy_manifest_readable_but_finalized_fail_is_rejected(self):
+        run = self.init()
+        (run / 'workflow_state.json').unlink()
+        self.assertTrue(self.cli('check', '--run', str(run))['safe'])
+        state = json.loads((run / 'run.json').read_text())
+        state['status'] = 'finalized'
+        (run / 'run.json').write_text(json.dumps(state))
+        self.cli('fail', '--run', str(run), ok=False)
+        self.assertEqual(json.loads((run / 'run.json').read_text())['status'], 'finalized')
+
+    def test_finish_rejects_missing_workflow_state_without_deleting_evidence(self):
+        run = self.init()
+        docs, _, _ = self.receipt(run)
+        (run / 'workflow_state.json').unlink()
+        self.cli('finish', '--run', str(run), '--documents', str(docs), ok=False)
+        self.assertTrue(run.exists())
+
+    def test_lifecycle_cleanup_waits_for_durable_finalization(self):
+        sys.path.insert(0, str(SCRIPT.parent))
+        from lifecycle_store import finalize_lifecycle_run
+        run = self.init()
+        temporary = run / 'temporary'
+        temporary.mkdir()
+        (temporary / 'evidence.txt').write_text('keep')
+        with self.assertRaises(ValueError):
+            finalize_lifecycle_run(run, review_status='success', delivery_status='success')
+        self.assertTrue((temporary / 'evidence.txt').exists())
 
     def test_force_staged_legacy_artifact_blocks_init(self):
         legacy = self.repo / 'docs/release-artifacts/old.sql'
@@ -87,6 +184,10 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(running.exists() and unknown.exists() and failed.exists())
 
     def receipt(self, run):
+        sys.path.insert(0, str(SCRIPT.parent))
+        from workflow_state import STAGES, record_stage
+        for stage in STAGES[:-1]:
+            record_stage(run, stage, status='completed', input_fingerprint=stage)
         docs = self.repo / 'docs/release-doc/2026-10-12'
         docs.mkdir(parents=True)
         (docs / '00_上線指引.md').write_text('用途說明', encoding='utf-8')
