@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,6 +24,13 @@ def owned_run(tmp_path):
 
 def adapters_for(run, calls, *, fail_once=None):
     failures = {fail_once} if fail_once else set()
+    from produce_release import ProductionResult
+    result = ProductionResult(
+        run, SimpleNamespace(output_dir=run / 'deliverables', files={}),
+        SimpleNamespace(path=run / 'evidence' / 'deployment.sql', sha256='b' * 64,
+                        release_id='release-1', transaction_mode='transactional',
+                        unit_mapping=[], findings=[]),
+        {}, [], SimpleNamespace(sha256='c' * 64, components={}, schema_version=1))
 
     def adapter(stage):
         def execute(run_root, stage_inputs):
@@ -33,7 +41,7 @@ def adapters_for(run, calls, *, fail_once=None):
             output = run_root / 'evidence' / f'{stage}.json'
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(str(stage_inputs['value']), encoding='utf-8')
-            return {'output_files': [output], 'value': stage_inputs['value']}
+            return {'output_files': [output], 'value': stage_inputs.get('value'), 'result': result}
         return execute
 
     return {stage: adapter(stage) for stage in STAGES}
@@ -114,3 +122,133 @@ def test_output_hash_change_restarts_at_corrupted_stage(owned_run):
 
     assert calls['source_collected'] == 2
     assert all(calls[stage] == 2 for stage in STAGES[1:])
+
+
+@pytest.mark.parametrize('inputs', [
+    {'source_collected': {}},
+    {**{stage: {} for stage in STAGES}, 'unknown_stage': {}},
+])
+def test_resume_requires_exactly_one_input_mapping_per_stage(owned_run, inputs):
+    from resume_release import resume_release
+
+    repo, run = owned_run
+    with pytest.raises(ProductionError) as error:
+        resume_release(repo, run, current_inputs=inputs)
+    assert error.value.stage == 'preflight'
+    assert error.value.code == 'production_contract_violation'
+
+
+def test_stage_cannot_complete_without_durable_output_files(owned_run):
+    from resume_release import resume_release
+
+    repo, run = owned_run
+    calls = {}
+    adapters = adapters_for(run, calls)
+    adapters['source_collected'] = lambda *_args: {'value': 'not durable'}
+
+    with pytest.raises(ProductionError) as error:
+        resume_release(repo, run, current_inputs={stage: {} for stage in STAGES},
+                       adapters=adapters)
+
+    assert error.value.stage == STAGES[0]
+    assert load_workflow_state(run)['stage_records'][STAGES[0]]['status'] == 'failed'
+
+
+def test_resume_can_enter_the_existing_production_pipeline_without_adapters(owned_run, monkeypatch):
+    import resume_release as resume_module
+    from produce_release import ProductionResult
+
+    repo, run = owned_run
+    for name in ('source_unit_metadata.json', 'lifecycle_exclusion_manifest.json',
+                 'localdb_validation.json'):
+        path = run / name
+        path.write_text('{}', encoding='utf-8')
+    expected = ProductionResult(
+        run, SimpleNamespace(output_dir=repo / 'output', files={}),
+        SimpleNamespace(path=run / 'evidence.sql', sha256='b' * 64, release_id='release-1',
+                        transaction_mode='transactional', unit_mapping=[], findings=[]),
+        {}, [], SimpleNamespace(sha256='c' * 64, components={}, schema_version=1))
+    request = {'repo': repo, 'evidence': object(), 'analysis': object(), 'release_id': 'release-1',
+               'run_root': run, 'output_dir': repo / 'output',
+               'baseline_source': repo / 'baseline.sql'}
+    calls = []
+
+    def pipeline(**kwargs):
+        calls.append(kwargs)
+        return expected
+
+    monkeypatch.setattr(resume_module, 'produce_release', pipeline)
+    inputs = {stage: {} for stage in STAGES}
+    inputs[STAGES[0]] = {'production_request': request}
+
+    result = resume_module.resume_release(repo, run, current_inputs=inputs)
+
+    assert calls == [request]
+    assert isinstance(result, ProductionResult)
+    assert load_workflow_state(run)['stage_records'][STAGES[0]]['status'] == 'completed'
+
+
+def test_resume_runs_existing_production_pipeline_and_reconstructs_its_result(owned_run):
+    import importlib.util
+    from resume_release import resume_release
+
+    repo, run = owned_run
+    fixture_path = Path(__file__).with_name('test_produce_release.py')
+    spec = importlib.util.spec_from_file_location('task3_production_fixture', fixture_path)
+    fixture = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = fixture
+    spec.loader.exec_module(fixture)
+    request = fixture.inputs(repo)
+    request['run_root'] = run
+    inputs = {stage: {} for stage in STAGES}
+    inputs[STAGES[0]] = {'production_request': request}
+
+    first = resume_release(repo, run, current_inputs=inputs)
+    resumed = resume_release(repo, run, current_inputs=inputs)
+
+    assert first.artifact.sha256
+    assert first.inventory.files
+    assert first.fingerprint.sha256
+    assert resumed.artifact.sha256 == first.artifact.sha256
+    assert resumed.inventory.files == first.inventory.files
+    assert resumed.fingerprint.sha256 == first.fingerprint.sha256
+    assert resumed.delivery_eligible is False
+    statuses = load_workflow_state(run)['stage_records']
+    assert all(statuses[stage]['status'] == 'completed' for stage in STAGES[:3])
+    assert statuses[STAGES[3]]['status'] == 'pending'
+
+
+def test_resumed_result_reconstructs_production_fields_from_durable_result(owned_run):
+    from resume_release import resume_release
+    from produce_release import ProductionResult
+
+    repo, run = owned_run
+    calls = {}
+    inputs = {stage: {'value': stage} for stage in STAGES}
+    result_data = {
+        'inventory': SimpleNamespace(output_dir=repo / 'deliverables', files={'guide.md': 'a' * 64}),
+        'artifact': SimpleNamespace(path=run / 'evidence' / 'deployment.sql', sha256='b' * 64,
+                                    release_id='release-1', transaction_mode='transactional',
+                                    unit_mapping=[], findings=[]),
+        'fingerprint': SimpleNamespace(sha256='c' * 64, components={'source_scope': 'd' * 64},
+                                       schema_version=1),
+    }
+
+    def adapter(stage):
+        def execute(run_root, _stage_inputs):
+            calls[stage] = calls.get(stage, 0) + 1
+            output = run_root / 'evidence' / f'{stage}.json'
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(stage, encoding='utf-8')
+            result = ProductionResult(run, result_data['inventory'], result_data['artifact'],
+                                      {}, [], result_data['fingerprint'])
+            return {'output_files': [output], 'result': result}
+        return execute
+
+    adapters = {stage: adapter(stage) for stage in STAGES}
+    resume_release(repo, run, current_inputs=inputs, adapters=adapters)
+    resumed = resume_release(repo, run, current_inputs=inputs)
+
+    assert resumed.inventory.files == {'guide.md': 'a' * 64}
+    assert resumed.artifact.sha256 == 'b' * 64
+    assert resumed.fingerprint.sha256 == 'c' * 64
