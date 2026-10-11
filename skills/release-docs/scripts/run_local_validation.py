@@ -15,6 +15,7 @@ import argparse
 import sys
 from typing import Any, Callable, Sequence
 from path_safety import is_linked_path
+from evidence_redaction import assert_safe_evidence, redact_mapping
 
 ROUNDS = ("validate_only", "commit", "rerun", "injected_failure")
 DATA_CASES = ("existing_value", "preserved_data", "duplicate_candidate",
@@ -401,7 +402,8 @@ def run_local_validation(
     return result
 
 
-def write_localdb_evidence(run_root: str | os.PathLike[str], evidence: dict[str, Any]) -> Path:
+def write_localdb_evidence(run_root: str | os.PathLike[str], evidence: dict[str, Any],
+                           *, secrets: Sequence[str] = ()) -> Path:
     """Write runner evidence only below ``.release-docs/runs/<run-id>``."""
     root = Path(run_root).absolute()
     if ".." in root.parts or root.parent.name != "runs" or root.parent.parent.name != ".release-docs":
@@ -412,7 +414,9 @@ def write_localdb_evidence(run_root: str | os.PathLike[str], evidence: dict[str,
         raise ValueError("Invalid LocalDB evidence")
     root.mkdir(parents=True, exist_ok=True)
     destination = root / "localdb_validation.json"
-    data = (json.dumps(evidence, ensure_ascii=True, sort_keys=True, indent=2) + "\n").encode()
+    safe_evidence = redact_mapping(evidence, secrets=secrets)
+    assert_safe_evidence(safe_evidence)
+    data = (json.dumps(safe_evidence, ensure_ascii=True, sort_keys=True, indent=2) + "\n").encode()
     if destination.exists() and destination.read_bytes() != data:
         raise ValueError("LocalDB evidence is immutable; create a new run")
     if not destination.exists():

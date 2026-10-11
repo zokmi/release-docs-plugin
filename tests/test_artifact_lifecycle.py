@@ -81,6 +81,30 @@ class LifecycleTests(unittest.TestCase):
         state = record_stage(run, 'source_collected', status='running', input_fingerprint='source')
         self.assertEqual(state['attempts']['source_collected'], 2)
 
+    def test_workflow_error_summary_is_redacted_before_durable_write(self):
+        from workflow_state import load_workflow_state, record_stage
+        run = self.init()
+        record_stage(run, 'source_collected', status='failed', input_fingerprint='source',
+                     error_summary='runner failed password=workflow-secret')
+
+        state = load_workflow_state(run)
+
+        self.assertEqual(state['stage_records']['source_collected']['error_summary'],
+                         'runner failed password=[REDACTED]')
+        self.assertNotIn('workflow-secret', (run / 'workflow_state.json').read_text())
+
+    def test_workflow_error_summary_replaces_known_unlabelled_secret(self):
+        from workflow_state import load_workflow_state, record_stage
+        run = self.init()
+        record_stage(run, 'source_collected', status='failed', input_fingerprint='source',
+                     error_summary='runner reported known-workflow-secret',
+                     secrets=('known-workflow-secret',))
+
+        state = load_workflow_state(run)
+
+        self.assertEqual(state['stage_records']['source_collected']['error_summary'],
+                         'runner reported [REDACTED]')
+
     def test_failed_state_write_preserves_lock_and_evidence(self):
         from artifact_lifecycle import fail
         run = self.init()

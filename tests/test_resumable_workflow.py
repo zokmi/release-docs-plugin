@@ -407,6 +407,22 @@ def test_durable_result_redacts_findings_and_unit_mapping_before_write(owned_run
     assert persisted['artifact']['findings'][0]['message'] == 'token=[REDACTED]'
 
 
+def test_durable_result_replaces_known_unlabelled_secrets(owned_run):
+    import json
+    import resume_release as resume_module
+    _repo, run = owned_run
+    result = durable_result(run, run / 'deliverables',
+                            findings=[{'message': 'runner failed with known-secret'}])
+
+    path = resume_module._save_result(run, result, producer_stage=STAGES[0],
+                                      input_fingerprint='e' * 64,
+                                      secrets=('known-secret',))
+
+    persisted = json.loads(path.read_text(encoding='utf-8'))
+    assert persisted['artifact']['findings'][0]['message'] == 'runner failed with [REDACTED]'
+    assert 'known-secret' not in path.read_text(encoding='utf-8')
+
+
 def test_resumed_result_reconstructs_production_fields_from_durable_result(owned_run):
     from resume_release import resume_release
 

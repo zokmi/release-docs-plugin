@@ -32,7 +32,10 @@ def _owned(run_root, *, require_lock=True):
     return run, manifest
 
 
-def _write(run, state):
+def _write(run, state, *, secrets=()):
+    from evidence_redaction import assert_safe_evidence, redact_mapping
+    state = redact_mapping(state, secrets=secrets)
+    assert_safe_evidence(state, secrets=secrets)
     encoded = (json.dumps(state, sort_keys=True, indent=2) + '\n').encode('utf-8')
     fd, temporary = tempfile.mkstemp(prefix=FILE + '.', suffix='.tmp', dir=run)
     try:
@@ -143,17 +146,20 @@ def _invalidate(state, stage, reason):
     state['updated_at'] = _now()
 
 
-def invalidate_from(run_root, stage, reason):
+def invalidate_from(run_root, stage, reason, *, secrets=()):
     run, _ = _owned(run_root)
     state = _read(run)
     if state['status'] == 'finalized' or stage not in STAGES or not isinstance(reason, str):
         raise ValueError('Invalid stage or finalized run')
+    from evidence_redaction import redact_text
+    reason = redact_text(reason, secrets=secrets)
     _invalidate(state, stage, reason)
-    _write(run, state)
+    _write(run, state, secrets=secrets)
     return state
 
 
-def record_stage(run_root, stage, *, status, input_fingerprint, output_files=(), error_summary=''):
+def record_stage(run_root, stage, *, status, input_fingerprint, output_files=(),
+                 error_summary='', secrets=()):
     run, _ = _owned(run_root)
     state = _read(run)
     if (state['status'] == 'finalized' or stage not in STAGES
@@ -161,6 +167,8 @@ def record_stage(run_root, stage, *, status, input_fingerprint, output_files=(),
             or not isinstance(error_summary, str)
             or not isinstance(input_fingerprint, str) or not input_fingerprint):
         raise ValueError('Invalid stage transition')
+    from evidence_redaction import redact_text
+    error_summary = redact_text(error_summary, secrets=secrets)
     index = STAGES.index(stage)
     if any(state['stage_records'][prior]['status'] != 'completed' for prior in STAGES[:index]):
         raise ValueError('Earlier stage incomplete')
@@ -189,7 +197,7 @@ def record_stage(run_root, stage, *, status, input_fingerprint, output_files=(),
     state['current_stage'] = (STAGES[index + 1] if status == 'completed' and index + 1 < len(STAGES)
                               else stage)
     state['updated_at'] = _now()
-    _write(run, state)
+    _write(run, state, secrets=secrets)
     return state
 
 

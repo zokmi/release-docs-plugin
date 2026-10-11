@@ -6,10 +6,12 @@ import re
 import shutil
 from path_safety import is_linked_path
 from parameter_metadata import sanitize_parameter_changes
+from evidence_redaction import assert_safe_evidence, redact_mapping
 
 
 def write_lifecycle_run(run_root, analysis_result, localdb_validation=None,
-                        execution_artifact=None, operator_contract=None, parent_run_id=None):
+                        execution_artifact=None, operator_contract=None, parent_run_id=None,
+                        *, secrets=()):
     """Persist deterministic metadata, rejecting operator paths and replacement."""
     requested = Path(run_root)
     if ".." in requested.parts:
@@ -61,6 +63,10 @@ def write_lifecycle_run(run_root, analysis_result, localdb_validation=None,
     if localdb_validation is not None:
         # Keep the full fixture and round evidence as a permanent review input.
         documents["localdb_validation.json"] = localdb_validation
+    documents = {name: redact_mapping(document, secrets=secrets)
+                 for name, document in documents.items()}
+    for document in documents.values():
+        assert_safe_evidence(document, secrets=secrets)
     encoded = {name: (json.dumps(document, sort_keys=True, ensure_ascii=True,
                                 indent=2) + "\n").encode("utf-8")
                for name, document in documents.items()}

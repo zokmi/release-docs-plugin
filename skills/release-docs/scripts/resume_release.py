@@ -97,7 +97,7 @@ def _result_outputs_match(result):
 
 
 def _sanitize_result_value(value):
-    from parameter_metadata import redact_text
+    from evidence_redaction import redact_text
 
     if isinstance(value, str):
         return redact_text(value)
@@ -143,7 +143,7 @@ def _result_is_current(run, payload):
                for stage_record in state['stage_records'].values())
 
 
-def _save_result(run, result, *, producer_stage, input_fingerprint):
+def _save_result(run, result, *, producer_stage, input_fingerprint, secrets=()):
     if not isinstance(result, ProductionResult) or result.run_root.resolve() != run.resolve():
         raise ValueError('Production result does not belong to this run')
     if producer_stage not in STAGES or not isinstance(input_fingerprint, str) or not input_fingerprint:
@@ -167,6 +167,9 @@ def _save_result(run, result, *, producer_stage, input_fingerprint):
     payload['artifact']['path'] = str(payload['artifact']['path'])
     if not _artifact_outputs_match(payload):
         raise ValueError('Production result output evidence is stale')
+    from evidence_redaction import assert_safe_evidence, redact_mapping
+    payload = redact_mapping(payload, secrets=secrets)
+    assert_safe_evidence(payload, secrets=secrets)
     path = _result_path(run)
     encoded = (json.dumps(payload, sort_keys=True, ensure_ascii=True, indent=2) + '\n').encode('utf-8')
     if path.exists():

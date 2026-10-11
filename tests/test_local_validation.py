@@ -149,6 +149,37 @@ def test_evidence_can_be_written_inside_lifecycle_only(tmp_path):
         raise AssertionError("operator evidence path must be rejected")
 
 
+def test_localdb_durable_write_redacts_command_and_exception_secrets(tmp_path):
+    artifact = tmp_path / "01.sql"
+    artifact.write_text("SELECT 1;", encoding="utf-8")
+    lifecycle = tmp_path / ".release-docs" / "runs" / "redacted"
+    result = module.run_local_validation(
+        artifact, server="(localdb)\\MSSQLLocalDB", database="test",
+        command=["sqlcmd", "--password", "known-secret"],
+    )
+    result["rounds"]["validate_only"]["error_output_summary"] = "executor: known-secret"
+    path = module.write_localdb_evidence(lifecycle, result, secrets=("known-secret",))
+
+    persisted = path.read_text(encoding="utf-8")
+    assert "known-secret" not in persisted
+    assert '"--password"' in persisted and '"[REDACTED]"' in persisted
+    assert "executor: [REDACTED]" in persisted
+
+
+def test_localdb_durable_write_rejects_unrecognized_secret_like_material(tmp_path):
+    artifact = tmp_path / "01.sql"
+    artifact.write_text("SELECT 1;", encoding="utf-8")
+    lifecycle = tmp_path / ".release-docs" / "runs" / "unsafe"
+    evidence = module.run_local_validation(
+        artifact, server="(localdb)\\MSSQLLocalDB", database="test")
+    evidence["rounds"]["validate_only"]["error_output_summary"] = \
+        "credential material: sk-live-0123456789abcdef0123456789"
+
+    with pytest.raises(ValueError, match="secret_redaction_required"):
+        module.write_localdb_evidence(lifecycle, evidence)
+    assert not (lifecycle / "localdb_validation.json").exists()
+
+
 def test_success_cleanup_removes_only_temporary_material(tmp_path):
     import subprocess
     from artifact_lifecycle import initialize
@@ -576,6 +607,29 @@ def test_lifecycle_persists_fixture_evidence_immutably(tmp_path):
         assert "immutable" in str(exc)
     else:
         raise AssertionError("must reject replacement fixture evidence")
+
+
+def test_lifecycle_store_redacts_findings_before_persisting(tmp_path):
+    lifecycle_spec = importlib.util.spec_from_file_location(
+        "lifecycle_store_redaction", ROOT / "skills/release-docs/scripts/lifecycle_store.py")
+    lifecycle = importlib.util.module_from_spec(lifecycle_spec)
+    lifecycle_spec.loader.exec_module(lifecycle)
+
+    class Analysis:
+        blocked = False
+        exclusions = []
+        source_scope = {}
+        baseline = {}
+        sources = []
+        units = []
+        findings = [{"message": "runner exception known-lifecycle-secret"}]
+
+    run = tmp_path / ".release-docs" / "runs" / "redacted-lifecycle"
+    lifecycle.write_lifecycle_run(run, Analysis(), secrets=("known-lifecycle-secret",))
+
+    content = (run / "source_unit_metadata.json").read_text(encoding="utf-8")
+    assert "known-lifecycle-secret" not in content
+    assert "runner exception [REDACTED]" in content
 
 
 @pytest.mark.parametrize("source_name", ["baseline", "fixture", "manifest"])
