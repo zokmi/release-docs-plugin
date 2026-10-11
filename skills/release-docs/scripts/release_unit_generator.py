@@ -48,7 +48,9 @@ def validate_provider_contract(entry: dict, artifact: bytes) -> None:
                 "add_if_missing" if "update" in source_operations else "none")
             or provenance.get("provider_version") != PROVIDER_VERSION
             or provenance.get("source_input_sha256") != entry.get("repair_hash")
+            or provenance.get("input_sha256") != provenance.get("source_input_sha256")
             or provenance.get("materialized_body_sha256") != hashlib.sha256(body).hexdigest()
+            or provenance.get("output_sha256") != provenance.get("materialized_body_sha256")
             or entry.get("sql_hash") != hashlib.sha256(body).hexdigest()
             or provenance.get("artifact_sha256") != hashlib.sha256(artifact).hexdigest()
             or artifact != (body if body.endswith(b"\n") else body + b"\n")):
@@ -64,9 +66,26 @@ def generate_release_artifacts(descriptor_path: Path, repair_root: Path, output_
     if len(units) != 20:
         raise ValueError(f"expected 20 units, got {len(units)}")
     output_root.mkdir(parents=True, exist_ok=True)
+    descriptor_output = output_root / "formal-release-unit-descriptors.json"
+    previous_units = {}
+    if descriptor_output.is_file():
+        previous_units = {unit["unit_id"]: unit.get("execution_body")
+                          for unit in json.loads(descriptor_output.read_text(encoding="utf-8")).get("units", [])}
+    stale_paths = []
     materialized = []
     for item in units:
         if "#5005" in item.get("issues", []):
+            unit_id = item["unit_id"]
+            stale = output_root / "execution" / f"{unit_id}.sql"
+            if (stale.name != f"{unit_id}.sql"
+                    or stale.parent.resolve() != (output_root / "execution").resolve()):
+                raise ValueError("excluded artifact path is unsafe")
+            if stale.exists() or stale.is_symlink():
+                if (previous_units.get(unit_id) is None
+                        or Path(previous_units[unit_id]) != Path("execution") / f"{unit_id}.sql"
+                        or stale.is_symlink() or not stale.is_file()):
+                    raise ValueError("excluded artifact is not an owned generated file")
+                stale_paths.append(stale)
             continue
         unit_id = item["unit_id"]
         relative = Path(item["repair_source"]).relative_to("repair-source/units")
@@ -145,7 +164,9 @@ def generate_release_artifacts(descriptor_path: Path, repair_root: Path, output_
         seen.add(item["unit_id"])
     result = {"schema_version": 2, "status": "materialized", "base_sha": source.get("base_sha"),
               "target_sha": source.get("target_sha"), "units": materialized}
-    (output_root / "formal-release-unit-descriptors.json").write_text(
+    for stale in stale_paths:
+        stale.unlink()
+    descriptor_output.write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return result
 

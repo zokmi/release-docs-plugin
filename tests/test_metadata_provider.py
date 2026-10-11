@@ -126,3 +126,28 @@ def test_excluded_metadata_object_is_absent_from_sql_and_provenance():
     assert "Excluded" not in transformed
     assert "Excluded" not in str(provenance)
     assert "Kept" in transformed
+
+
+def test_excluded_object_guard_cannot_survive_without_its_metadata_call():
+    source = ("IF OBJECT_ID(N'dbo.Excluded', 'U') IS NOT NULL BEGIN\n"
+              "EXEC sp_addextendedproperty N'MS_Description', N'excluded', "
+              "N'SCHEMA', N'dbo', N'TABLE', N'Excluded';\nEND;")
+    with pytest.raises(MetadataProviderError, match="excluded_object_remains"):
+        transform_provider_sql(source, source_path="sql/mixed.sql", unit_id="mixed",
+                               excluded_objects={"dbo.Excluded"})
+
+
+def test_excluded_cursor_target_cannot_reappear_after_expansion():
+    source = """IF OBJECT_ID(N'dbo.Excluded', 'U') IS NOT NULL BEGIN
+DECLARE @cols TABLE (name SYSNAME, descr NVARCHAR(400));
+INSERT INTO @cols (name, descr) VALUES (N'Id', N'excluded');
+DECLARE @name SYSNAME, @descr NVARCHAR(400);
+DECLARE cur CURSOR FOR SELECT name, descr FROM @cols;
+OPEN cur; FETCH NEXT FROM cur INTO @name, @descr;
+WHILE @@FETCH_STATUS = 0 BEGIN
+ EXEC sp_addextendedproperty 'MS_Description', @descr, 'SCHEMA', 'dbo', 'TABLE', 'Excluded', 'COLUMN', @name;
+ FETCH NEXT FROM cur INTO @name, @descr; END
+CLOSE cur; DEALLOCATE cur; END"""
+    with pytest.raises(MetadataProviderError, match="excluded_object_remains"):
+        transform_provider_sql(source, source_path="sql/cursor.sql", unit_id="cursor",
+                               excluded_objects={"dbo.Excluded"})

@@ -306,6 +306,13 @@ def transform_provider_sql(sql, *, source_path, unit_id, excluded_objects=()):
         operations = parse_metadata_operations(sql, source_path=source_path)
         for op in reversed(operations):
             sql = sql[:op.start] + render_metadata_operation(op) + sql[op.end:]
+    # A removed call can leave its surrounding guard or a cursor expansion
+    # referring to the excluded target. Fail closed rather than emit a partial
+    # statement whose scope can no longer be proven safe.
+    for name in excluded:
+        object_name = name.rsplit(".", 1)[-1].strip("[]")
+        if re.search(rf"(?<!\w)\[?{re.escape(object_name)}\]?(?!\w)", sql, re.I):
+            raise MetadataProviderError("excluded_object_remains")
     # Variable/dynamic execution is never silently accepted.
     if re.search(r"\bEXEC(?:UTE)?\s*(?:\(|(?:sys\.)?sp_executesql\b)", sql, re.I):
         if ("QUOTENAME(@ReleaseConstraint)" in sql

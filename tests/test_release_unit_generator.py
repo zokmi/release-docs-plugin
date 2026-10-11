@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
+
 SCRIPTS = Path(__file__).parents[1] / "skills/release-docs/scripts"
 sys.path.insert(0, str(SCRIPTS))
 
@@ -120,9 +122,18 @@ def test_metadata_contract_rejects_operation_and_hash_mismatch(tmp_path):
             damaged["provenance"]["fallback_policy"] = "none"
         else:
             damaged["provenance"]["artifact_sha256"] = "0" * 64
-        import pytest
         with pytest.raises(ValueError, match="provider_contract_failure"):
             release_unit_generator.validate_provider_contract(damaged, damaged_body)
+
+
+@pytest.mark.parametrize("legacy_hash", ["input_sha256", "output_sha256"])
+def test_metadata_contract_rejects_conflicting_legacy_hash(legacy_hash, tmp_path):
+    descriptor, repair, _ = _metadata_input(tmp_path)
+    entry = generate_release_artifacts(descriptor, repair, tmp_path / "out")["units"][1]
+    body = (tmp_path / "out" / entry["execution_body"]).read_bytes()
+    entry["provenance"][legacy_hash] = "0" * 64
+    with pytest.raises(ValueError, match="provider_contract_failure"):
+        release_unit_generator.validate_provider_contract(entry, body)
 
 
 def test_5005_units_are_excluded_before_provider_materialization(tmp_path):
@@ -133,3 +144,16 @@ def test_5005_units_are_excluded_before_provider_materialization(tmp_path):
     assert all(unit["unit_id"] != "u0" for unit in result["units"])
     assert not (tmp_path / "out/execution/u0.sql").exists()
     assert "T0" not in json.dumps(result)
+
+
+def test_5005_rerun_removes_previously_generated_execution_body(tmp_path):
+    descriptor, repair, units = _metadata_input(tmp_path)
+    output = tmp_path / "out"
+    generate_release_artifacts(descriptor, repair, output)
+    stale = output / "execution/u0.sql"
+    assert stale.is_file()
+    units[0]["issues"] = ["#5005"]
+    descriptor.write_text(json.dumps({"units": units}), encoding="utf-8")
+    result = generate_release_artifacts(descriptor, repair, output)
+    assert not stale.exists()
+    assert "u0" not in [unit["unit_id"] for unit in result["units"]]
