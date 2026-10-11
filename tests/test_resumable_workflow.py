@@ -154,6 +154,82 @@ def test_stage_cannot_complete_without_durable_output_files(owned_run):
     assert load_workflow_state(run)['stage_records'][STAGES[0]]['status'] == 'failed'
 
 
+def test_stage_cannot_complete_with_empty_output_file_generator(owned_run):
+    from resume_release import resume_release
+
+    repo, run = owned_run
+    calls = {}
+    adapters = adapters_for(run, calls)
+    adapters['source_collected'] = lambda *_args: {'output_files': iter(())}
+
+    with pytest.raises(ProductionError) as error:
+        resume_release(repo, run, current_inputs={stage: {} for stage in STAGES},
+                       adapters=adapters)
+
+    assert error.value.stage == STAGES[0]
+    assert load_workflow_state(run)['stage_records'][STAGES[0]]['status'] == 'failed'
+
+
+def test_invalidated_stage_result_is_not_returned_when_adapter_is_missing(owned_run):
+    from resume_release import resume_release
+
+    repo, run = owned_run
+    calls = {}
+    inputs = {stage: {'value': stage} for stage in STAGES}
+    adapters = adapters_for(run, calls)
+    resume_release(repo, run, current_inputs=inputs, adapters=adapters)
+    inputs[STAGES[0]]['value'] = 'changed source input'
+
+    with pytest.raises(ProductionError) as error:
+        resume_release(repo, run, current_inputs=inputs)
+
+    assert error.value.stage == STAGES[0]
+    assert error.value.code == 'stage_adapter_unavailable'
+
+
+def test_durable_result_replacement_uses_atomic_replace_and_cleans_temp_on_failure(
+        owned_run, monkeypatch):
+    import os
+    import resume_release as resume_module
+    from produce_release import ProductionResult
+
+    _repo, run = owned_run
+    result = ProductionResult(
+        run, SimpleNamespace(output_dir=run / 'deliverables', files={'guide.md': 'a' * 64}),
+        SimpleNamespace(path=run / 'evidence.sql', sha256='b' * 64,
+                        release_id='release-1', transaction_mode='transactional',
+                        unit_mapping=[], findings=[]),
+        {}, [], SimpleNamespace(sha256='c' * 64, components={}, schema_version=1))
+    path = run / 'production_result.json'
+    path.write_text('{"inventory": {}}', encoding='utf-8')
+    replace_observations = []
+    fsync_calls = []
+    real_fsync = os.fsync
+
+    def observe_fsync(descriptor):
+        fsync_calls.append(descriptor)
+        return real_fsync(descriptor)
+
+    def observe_replace(source, destination):
+        source_path = Path(source)
+        replace_observations.append((source_path.parent, source_path.read_bytes(), Path(destination)))
+        raise OSError('simulated replace failure')
+
+    monkeypatch.setattr(os, 'replace', observe_replace)
+    monkeypatch.setattr(os, 'fsync', observe_fsync)
+    with pytest.raises(OSError, match='simulated replace failure'):
+        resume_module._save_result(run, result, producer_stage=STAGES[0],
+                                   input_fingerprint='d' * 64)
+
+    assert replace_observations
+    assert replace_observations[0][0] == run
+    assert replace_observations[0][1].startswith(b'{')
+    assert replace_observations[0][2] == path
+    assert fsync_calls
+    assert path.read_text(encoding='utf-8') == '{"inventory": {}}'
+    assert not list(run.glob('production_result.json.*.tmp'))
+
+
 def test_resume_can_enter_the_existing_production_pipeline_without_adapters(owned_run, monkeypatch):
     import resume_release as resume_module
     from produce_release import ProductionResult

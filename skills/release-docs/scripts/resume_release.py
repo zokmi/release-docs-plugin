@@ -3,8 +3,10 @@ from dataclasses import asdict, is_dataclass
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
+import tempfile
 
 from produce_release import ProductionError, ProductionResult, produce_release
 from workflow_state import (STAGES, invalidate_from, load_workflow_state,
@@ -44,9 +46,37 @@ def _result_path(run):
     return run / 'production_result.json'
 
 
-def _save_result(run, result):
+def _result_is_current(run, payload):
+    producer = payload.get('producer')
+    if not isinstance(producer, dict):
+        return False
+    stage = producer.get('stage')
+    input_fingerprint = producer.get('input_fingerprint')
+    if stage not in STAGES or not isinstance(input_fingerprint, str):
+        return False
+    try:
+        state = load_workflow_state(run)
+    except (ValueError, OSError, KeyError, TypeError):
+        return False
+    record = state['stage_records'][stage]
+    if record['status'] != 'completed' or record['input_fingerprint'] != input_fingerprint:
+        return False
+    result_path = _result_path(run)
+    try:
+        relative = result_path.relative_to(run).as_posix()
+        digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    except (OSError, ValueError):
+        return False
+    return any(stage_record['status'] == 'completed'
+               and stage_record['output_files'].get(relative) == digest
+               for stage_record in state['stage_records'].values())
+
+
+def _save_result(run, result, *, producer_stage, input_fingerprint):
     if not isinstance(result, ProductionResult) or result.run_root.resolve() != run.resolve():
         raise ValueError('Production result does not belong to this run')
+    if producer_stage not in STAGES or not isinstance(input_fingerprint, str) or not input_fingerprint:
+        raise ValueError('Production result requires a producing stage fingerprint')
     inventory = result.inventory
     artifact = result.artifact
     fingerprint = result.fingerprint
@@ -59,22 +89,47 @@ def _save_result(run, result):
         'fingerprint': {key: getattr(fingerprint, key) for key in
                         ('sha256', 'components', 'schema_version')},
     }
+    payload['producer'] = {'stage': producer_stage, 'input_fingerprint': input_fingerprint}
     payload['artifact']['path'] = str(payload['artifact']['path'])
     path = _result_path(run)
     encoded = (json.dumps(payload, sort_keys=True, ensure_ascii=True, indent=2) + '\n').encode('utf-8')
     if path.exists():
-        if path.read_bytes() != encoded:
+        old_payload = json.loads(path.read_text(encoding='utf-8'))
+        old_result = {key: value for key, value in old_payload.items() if key != 'producer'}
+        new_result = {key: value for key, value in payload.items() if key != 'producer'}
+        old_is_current = _result_is_current(run, old_payload)
+        if old_result != new_result and old_is_current:
             raise ValueError('Durable production result is immutable')
-    else:
-        path.write_bytes(encoded)
+        if old_result == new_result and old_is_current:
+            return path
+    descriptor, temporary = tempfile.mkstemp(prefix=path.name + '.', suffix='.tmp', dir=run)
+    try:
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
     return path
 
 
-def _load_result(run):
+def _load_result(run, current_inputs):
     path = _result_path(run)
     if not path.is_file():
         return None
     payload = json.loads(path.read_text(encoding='utf-8'))
+    producer = payload.get('producer')
+    state = load_workflow_state(run)
+    receipt_stages = [stage for stage in STAGES
+                      if path.relative_to(run).as_posix()
+                      in state['stage_records'][stage]['output_files']]
+    if (not _result_is_current(run, payload)
+            or any(state['stage_records'][stage]['input_fingerprint']
+                   != _stage_fingerprint(stage, current_inputs[stage])
+                   for stage in [producer['stage'], *receipt_stages])):
+        return None
     from assemble_deployment_sql import ArtifactRecord
     from render_release_documents import OutputInventory
     fingerprint_module_path = Path(__file__).parents[2] / 'release-docs-review/scripts/review_fingerprint.py'
@@ -101,14 +156,15 @@ def _builtin_production_outputs(run):
                                     'localdb_validation.json')]
 
 
-def _builtin_production(repo, run, inputs):
+def _builtin_production(repo, run, inputs, input_fingerprint):
     request = inputs.get('production_request')
     if not isinstance(request, dict) or request.get('run_root') is None or request.get('repo') is None:
         raise ValueError('A production_request with repo and run_root is required')
     if Path(request['run_root']).resolve() != run.resolve() or Path(request['repo']).resolve() != repo.resolve():
         raise ValueError('Production request ownership mismatch')
     result = produce_release(**request)
-    result_file = _save_result(run, result)
+    result_file = _save_result(run, result, producer_stage=STAGES[0],
+                               input_fingerprint=input_fingerprint)
     outputs = _builtin_production_outputs(run)
     if any(not path.is_file() for path in outputs):
         raise ValueError('Production pipeline omitted durable stage evidence')
@@ -168,7 +224,7 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
                         == _stage_fingerprint(name, current_inputs[name])
                         for name in STAGES)):
             statuses = {name: 'completed' for name in STAGES}
-            result = _load_result(run)
+            result = _load_result(run, current_inputs)
             if result is None:
                 raise ProductionError('preflight', 'durable_production_result_missing')
             result.stage_statuses = statuses
@@ -187,7 +243,7 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
             if name == STAGES[0] and 'production_request' in stage_inputs:
                 record_stage(run, name, status='running', input_fingerprint=fingerprint)
                 try:
-                    result, outputs = _builtin_production(repository, run, stage_inputs)
+                    result, outputs = _builtin_production(repository, run, stage_inputs, fingerprint)
                     for pipeline_stage, output in zip(STAGES[:2], outputs[:2]):
                         record_stage(run, pipeline_stage, status='completed',
                                      input_fingerprint=_stage_fingerprint(
@@ -206,7 +262,7 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
                     raise ProductionError(name, 'production_contract_violation') from error
             handler = handlers.get(name)
             if not callable(handler):
-                saved_result = _result_value(results) or _load_result(run)
+                saved_result = _result_value(results) or _load_result(run, current_inputs)
                 if saved_result is not None:
                     state = load_workflow_state(run)
                     statuses = {stage_name: state['stage_records'][stage_name]['status']
@@ -225,11 +281,13 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
                 files = output.get('output_files', ())
                 if isinstance(files, (str, Path)):
                     files = (files,)
+                files = tuple(files)
                 if not files:
                     raise ValueError('A completed stage requires durable output files')
                 output_result = output.get('result')
                 if output_result is not None:
-                    result_file = _save_result(run, output_result)
+                    result_file = _save_result(run, output_result, producer_stage=name,
+                                               input_fingerprint=fingerprint)
                     files = (*files, result_file)
                 record_stage(run, name, status='completed', input_fingerprint=fingerprint,
                              output_files=files)
@@ -243,7 +301,7 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
                 raise ProductionError(name, 'production_contract_violation') from error
 
         state = load_workflow_state(run)
-        prior_result = _result_value(results) or _load_result(run)
+        prior_result = _result_value(results) or _load_result(run, current_inputs)
         statuses = {name: state['stage_records'][name]['status'] for name in STAGES}
         findings = ([{'code': 'semantic_review_pending', 'status': '待確認'}]
                     if statuses['semantic_review_passed'] != 'completed' else [])

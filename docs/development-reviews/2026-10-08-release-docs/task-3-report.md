@@ -105,3 +105,23 @@ OK
 ```
 
 Review skill now explicitly saves the reviewed snapshot, updates only the checked 04 status/report link, then compares final base/target/diff_mode/committed/working_tree against the reviewed snapshot before writing or accepting 05. Any source change discards the conclusion and requires fresh source reading and semantic review. Other document changes also require renewed review. This procedure change is documented, not claimed as executed agent evaluation; Task 4 integration obligation remains.
+
+## Scoped resume-workflow re-review (base 41c46e6)
+
+Added a producing-stage/input fingerprint to `production_result.json`; resume now rejects the durable result when that stage is invalidated or its current input fingerprint differs. Empty `output_files` iterables are materialized before the non-empty check. Durable results are written to a same-directory temporary file, flushed and fsynced, then atomically replaced; a failed replacement preserves the prior file and cleans the temporary file.
+
+RED evidence: `pytest -q --basetemp .pytest-task3-rereview tests/test_resumable_workflow.py -k 'empty_output_file_generator or invalidated_stage_result or atomic_replace'` produced 3 failures. The failures showed the empty generator completing the source stage, the stale result being returned after source-input invalidation, and the result writer bypassing atomic replace. The atomic case was separately rerun after correcting its fixture and failed because replace was not called.
+
+Focused regression command: `pytest -q --basetemp .pytest-task3-rereview-green2 tests/test_resumable_workflow.py -k 'empty_output_file_generator or invalidated_stage_result or atomic_replace'`
+
+```text
+3 passed, 12 deselected
+```
+
+Full resume suite command: `pytest -q --basetemp .pytest-task3-rereview-final tests/test_resumable_workflow.py`
+
+```text
+15 passed in 121.56s
+```
+
+The built-in `produce_release` integration and exact six-stage input mapping remain covered by the focused suite. No report outside Task 3 was changed for this review round.
