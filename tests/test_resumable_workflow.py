@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -22,15 +23,27 @@ def owned_run(tmp_path):
     return repo, repo / initialized['run_path']
 
 
+def durable_result(run, output_dir, *, unit_mapping=None, findings=None):
+    from produce_release import ProductionResult
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    document = output_dir / 'guide.md'
+    document.write_bytes(b'guide')
+    artifact_path = run / 'evidence' / 'deployment.sql'
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(b'sql')
+    return ProductionResult(
+        run, SimpleNamespace(output_dir=output_dir,
+                             files={'guide.md': hashlib.sha256(b'guide').hexdigest()}),
+        SimpleNamespace(path=artifact_path, sha256=hashlib.sha256(b'sql').hexdigest(),
+                        release_id='release-1', transaction_mode='transactional',
+                        unit_mapping=unit_mapping or [], findings=findings or []),
+        {}, [], SimpleNamespace(sha256='c' * 64, components={}, schema_version=1))
+
+
 def adapters_for(run, calls, *, fail_once=None):
     failures = {fail_once} if fail_once else set()
-    from produce_release import ProductionResult
-    result = ProductionResult(
-        run, SimpleNamespace(output_dir=run / 'deliverables', files={}),
-        SimpleNamespace(path=run / 'evidence' / 'deployment.sql', sha256='b' * 64,
-                        release_id='release-1', transaction_mode='transactional',
-                        unit_mapping=[], findings=[]),
-        {}, [], SimpleNamespace(sha256='c' * 64, components={}, schema_version=1))
+    result = durable_result(run, run / 'deliverables')
 
     def adapter(stage):
         def execute(run_root, stage_inputs):
@@ -194,12 +207,7 @@ def test_durable_result_replacement_uses_atomic_replace_and_cleans_temp_on_failu
     from produce_release import ProductionResult
 
     _repo, run = owned_run
-    result = ProductionResult(
-        run, SimpleNamespace(output_dir=run / 'deliverables', files={'guide.md': 'a' * 64}),
-        SimpleNamespace(path=run / 'evidence.sql', sha256='b' * 64,
-                        release_id='release-1', transaction_mode='transactional',
-                        unit_mapping=[], findings=[]),
-        {}, [], SimpleNamespace(sha256='c' * 64, components={}, schema_version=1))
+    result = durable_result(run, run / 'deliverables')
     path = run / 'production_result.json'
     path.write_text('{"inventory": {}}', encoding='utf-8')
     replace_observations = []
@@ -233,17 +241,11 @@ def test_durable_result_replacement_uses_atomic_replace_and_cleans_temp_on_failu
 def test_resume_can_enter_the_existing_production_pipeline_without_adapters(owned_run, monkeypatch):
     import resume_release as resume_module
     from produce_release import ProductionResult
-
     repo, run = owned_run
+    expected = durable_result(run, repo / 'output')
     for name in ('source_unit_metadata.json', 'lifecycle_exclusion_manifest.json',
                  'localdb_validation.json'):
-        path = run / name
-        path.write_text('{}', encoding='utf-8')
-    expected = ProductionResult(
-        run, SimpleNamespace(output_dir=repo / 'output', files={}),
-        SimpleNamespace(path=run / 'evidence.sql', sha256='b' * 64, release_id='release-1',
-                        transaction_mode='transactional', unit_mapping=[], findings=[]),
-        {}, [], SimpleNamespace(sha256='c' * 64, components={}, schema_version=1))
+        (run / name).write_text('{}', encoding='utf-8')
     request = {'repo': repo, 'evidence': object(), 'analysis': object(), 'release_id': 'release-1',
                'run_root': run, 'output_dir': repo / 'output',
                'baseline_source': repo / 'baseline.sql'}
@@ -294,21 +296,126 @@ def test_resume_runs_existing_production_pipeline_and_reconstructs_its_result(ow
     assert statuses[STAGES[3]]['status'] == 'pending'
 
 
+def test_builtin_production_resumes_from_partial_stage_receipts(owned_run, monkeypatch):
+    import resume_release as resume_module
+    from produce_release import ProductionResult
+    from workflow_state import record_stage
+
+    repo, run = owned_run
+    request = {'repo': repo, 'evidence': {}, 'analysis': {}, 'release_id': 'release-1',
+               'run_root': run, 'output_dir': repo / 'output',
+               'baseline_source': repo / 'baseline.sql'}
+    inputs = {stage: {} for stage in STAGES}
+    inputs[STAGES[0]] = {'production_request': request}
+    for stage, filename in zip(STAGES[:2], ('source_unit_metadata.json',
+                                             'lifecycle_exclusion_manifest.json')):
+        receipt = run / filename
+        receipt.write_text('{}', encoding='utf-8')
+        record_stage(run, stage, status='completed',
+                     input_fingerprint=resume_module._stage_fingerprint(stage, inputs[stage]),
+                     output_files=[receipt])
+
+    result = durable_result(run, repo / 'output')
+    calls = []
+
+    def pipeline(**kwargs):
+        calls.append(kwargs)
+        for name in ('source_unit_metadata.json', 'lifecycle_exclusion_manifest.json',
+                     'localdb_validation.json'):
+            (run / name).write_text('{}', encoding='utf-8')
+        return result
+
+    monkeypatch.setattr(resume_module, 'produce_release', pipeline)
+    resumed = resume_module.resume_release(repo, run, current_inputs=inputs)
+
+    assert calls == [request]
+    assert isinstance(resumed, ProductionResult)
+    assert all(load_workflow_state(run)['stage_records'][stage]['status'] == 'completed'
+               for stage in STAGES[:3])
+
+
+@pytest.mark.parametrize('damage', ['changed', 'deleted'])
+def test_changed_generated_document_forces_builtin_restart(owned_run, damage):
+    from resume_release import resume_release
+
+    repo, run = owned_run
+    fixture_path = Path(__file__).with_name('test_produce_release.py')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('task3_stale_inventory_fixture', fixture_path)
+    fixture = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = fixture
+    spec.loader.exec_module(fixture)
+    request = fixture.inputs(repo)
+    request['run_root'] = run
+    inputs = {stage: {} for stage in STAGES}
+    inputs[STAGES[0]] = {'production_request': request}
+    first = resume_release(repo, run, current_inputs=inputs)
+    generated = first.inventory.output_dir / next(iter(first.inventory.files))
+    if damage == 'deleted':
+        generated.unlink()
+    else:
+        generated.write_text('tampered generated document', encoding='utf-8')
+
+    if damage == 'changed':
+        with pytest.raises(ProductionError):
+            resume_release(repo, run, current_inputs=inputs)
+        assert generated.read_text(encoding='utf-8') == 'tampered generated document'
+    else:
+        resumed = resume_release(repo, run, current_inputs=inputs)
+        assert generated.is_file()
+        assert resumed.inventory.files == first.inventory.files
+        assert hashlib.sha256(generated.read_bytes()).hexdigest() == first.inventory.files[generated.name]
+
+
+def test_changed_artifact_evidence_is_rejected_and_never_returned(owned_run):
+    from resume_release import resume_release
+
+    repo, run = owned_run
+    fixture_path = Path(__file__).with_name('test_produce_release.py')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('task3_stale_artifact_fixture', fixture_path)
+    fixture = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = fixture
+    spec.loader.exec_module(fixture)
+    request = fixture.inputs(repo)
+    request['run_root'] = run
+    inputs = {stage: {} for stage in STAGES}
+    inputs[STAGES[0]] = {'production_request': request}
+    first = resume_release(repo, run, current_inputs=inputs)
+    first.artifact.path.write_text('tampered evidence', encoding='utf-8')
+
+    with pytest.raises(ProductionError):
+        resume_release(repo, run, current_inputs=inputs)
+
+
+def test_durable_result_redacts_findings_and_unit_mapping_before_write(owned_run):
+    import json
+    import resume_release as resume_module
+    _repo, run = owned_run
+    result = durable_result(
+        run, run / 'deliverables', unit_mapping=[{'source': 'password=MAP_SECRET'}],
+        findings=[{'message': 'token=FINDING_SECRET'}])
+
+    path = resume_module._save_result(run, result, producer_stage=STAGES[0],
+                                      input_fingerprint='d' * 64)
+    persisted = json.loads(path.read_text(encoding='utf-8'))
+
+    encoded = path.read_text(encoding='utf-8')
+    assert 'MAP_SECRET' not in encoded
+    assert 'FINDING_SECRET' not in encoded
+    assert persisted['artifact']['unit_mapping'][0]['source'] == 'password=[REDACTED]'
+    assert persisted['artifact']['findings'][0]['message'] == 'token=[REDACTED]'
+
+
 def test_resumed_result_reconstructs_production_fields_from_durable_result(owned_run):
     from resume_release import resume_release
-    from produce_release import ProductionResult
 
     repo, run = owned_run
     calls = {}
     inputs = {stage: {'value': stage} for stage in STAGES}
-    result_data = {
-        'inventory': SimpleNamespace(output_dir=repo / 'deliverables', files={'guide.md': 'a' * 64}),
-        'artifact': SimpleNamespace(path=run / 'evidence' / 'deployment.sql', sha256='b' * 64,
-                                    release_id='release-1', transaction_mode='transactional',
-                                    unit_mapping=[], findings=[]),
-        'fingerprint': SimpleNamespace(sha256='c' * 64, components={'source_scope': 'd' * 64},
-                                       schema_version=1),
-    }
+    result = durable_result(run, repo / 'deliverables')
+    result.fingerprint = SimpleNamespace(sha256='c' * 64, components={'source_scope': 'd' * 64},
+                                         schema_version=1)
 
     def adapter(stage):
         def execute(run_root, _stage_inputs):
@@ -316,8 +423,6 @@ def test_resumed_result_reconstructs_production_fields_from_durable_result(owned
             output = run_root / 'evidence' / f'{stage}.json'
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(stage, encoding='utf-8')
-            result = ProductionResult(run, result_data['inventory'], result_data['artifact'],
-                                      {}, [], result_data['fingerprint'])
             return {'output_files': [output], 'result': result}
         return execute
 
@@ -325,6 +430,6 @@ def test_resumed_result_reconstructs_production_fields_from_durable_result(owned
     resume_release(repo, run, current_inputs=inputs, adapters=adapters)
     resumed = resume_release(repo, run, current_inputs=inputs)
 
-    assert resumed.inventory.files == {'guide.md': 'a' * 64}
-    assert resumed.artifact.sha256 == 'b' * 64
+    assert resumed.inventory.files == {'guide.md': hashlib.sha256(b'guide').hexdigest()}
+    assert resumed.artifact.sha256 == hashlib.sha256(b'sql').hexdigest()
     assert resumed.fingerprint.sha256 == 'c' * 64

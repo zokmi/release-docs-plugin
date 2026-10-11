@@ -3,6 +3,7 @@ from dataclasses import asdict, is_dataclass
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -46,6 +47,76 @@ def _result_path(run):
     return run / 'production_result.json'
 
 
+def _artifact_outputs_match(payload):
+    try:
+        inventory = payload['inventory']
+        output_dir = Path(inventory['output_dir'])
+        files = inventory['files']
+        if not output_dir.is_absolute() or not isinstance(files, dict):
+            return False
+        expected = set()
+        for name, digest in files.items():
+            if (not isinstance(name, str) or Path(name).name != name
+                    or not isinstance(digest, str) or len(digest) != 64
+                    or any(char not in '0123456789abcdef' for char in digest)):
+                return False
+            path = output_dir / name
+            if path.is_symlink() or not path.is_file():
+                return False
+            if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                return False
+            expected.add(name)
+        actual = set()
+        for path in output_dir.iterdir():
+            if path.is_symlink() or not path.is_file():
+                return False
+            actual.add(path.name)
+        if actual != expected:
+            return False
+        artifact = payload['artifact']
+        artifact_path = Path(artifact['path'])
+        artifact_digest = artifact['sha256']
+        return (artifact_path.is_file() and not artifact_path.is_symlink()
+                and isinstance(artifact_digest, str) and len(artifact_digest) == 64
+                and all(char in '0123456789abcdef' for char in artifact_digest)
+                and hashlib.sha256(artifact_path.read_bytes()).hexdigest() == artifact_digest)
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+
+
+def _result_outputs_match(result):
+    try:
+        return _artifact_outputs_match({
+            'inventory': {'output_dir': str(result.inventory.output_dir),
+                          'files': result.inventory.files},
+            'artifact': {'path': str(result.artifact.path),
+                         'sha256': result.artifact.sha256},
+        })
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _sanitize_result_value(value):
+    from parameter_metadata import redact_text
+
+    if isinstance(value, str):
+        return redact_text(value)
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError('Production result metadata must be finite JSON data')
+        return value
+    if isinstance(value, list):
+        return [_sanitize_result_value(item) for item in value]
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError('Production result metadata keys must be strings')
+        return {_sanitize_result_value(key): _sanitize_result_value(item)
+                for key, item in value.items()}
+    raise ValueError('Production result metadata must be JSON data')
+
+
 def _result_is_current(run, payload):
     producer = payload.get('producer')
     if not isinstance(producer, dict):
@@ -83,14 +154,19 @@ def _save_result(run, result, *, producer_stage, input_fingerprint):
     if inventory is None or artifact is None or fingerprint is None:
         raise ValueError('Production result is incomplete')
     payload = {
-        'inventory': {'output_dir': str(inventory.output_dir), 'files': inventory.files},
+        'inventory': {'output_dir': str(inventory.output_dir),
+                      'files': _sanitize_result_value(inventory.files)},
         'artifact': {key: getattr(artifact, key) for key in
                      ('path', 'sha256', 'release_id', 'transaction_mode', 'unit_mapping', 'findings')},
         'fingerprint': {key: getattr(fingerprint, key) for key in
                         ('sha256', 'components', 'schema_version')},
     }
+    payload['artifact']['unit_mapping'] = _sanitize_result_value(payload['artifact']['unit_mapping'])
+    payload['artifact']['findings'] = _sanitize_result_value(payload['artifact']['findings'])
     payload['producer'] = {'stage': producer_stage, 'input_fingerprint': input_fingerprint}
     payload['artifact']['path'] = str(payload['artifact']['path'])
+    if not _artifact_outputs_match(payload):
+        raise ValueError('Production result output evidence is stale')
     path = _result_path(run)
     encoded = (json.dumps(payload, sort_keys=True, ensure_ascii=True, indent=2) + '\n').encode('utf-8')
     if path.exists():
@@ -120,6 +196,8 @@ def _load_result(run, current_inputs):
     if not path.is_file():
         return None
     payload = json.loads(path.read_text(encoding='utf-8'))
+    if not _artifact_outputs_match(payload):
+        return None
     producer = payload.get('producer')
     state = load_workflow_state(run)
     receipt_stages = [stage for stage in STAGES
@@ -180,8 +258,8 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
     ``production_request``: keyword arguments for the existing ``produce_release``
     API, including the same repository and owned run root. It checkpoints the
     source metadata, fixture/exclusion manifest, and LocalDB receipt produced by
-    that safety-checked pipeline. Later review/finalization stages can be supplied
-    through ``adapters``.
+    that safety-checked pipeline and can recover any partial checkpoint within
+    those first three stages. Later review/finalization stages can use ``adapters``.
 
     Each adapter must return non-empty durable ``output_files``. At least one
     completed stage must also return a complete ``ProductionResult`` so the
@@ -219,6 +297,12 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
                              if state['stage_records'][prior]['status'] == 'completed'}
                 break
 
+        if ('production_request' in current_inputs[STAGES[0]]
+                and _result_path(run).exists()
+                and _load_result(run, current_inputs) is None):
+            state = invalidate_from(run, STAGES[0], 'Production result evidence changed')
+            completed.clear()
+
         if (all(state['stage_records'][name]['status'] == 'completed' for name in STAGES)
                 and all(state['stage_records'][name]['input_fingerprint']
                         == _stage_fingerprint(name, current_inputs[name])
@@ -226,9 +310,11 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
             statuses = {name: 'completed' for name in STAGES}
             result = _load_result(run, current_inputs)
             if result is None:
-                raise ProductionError('preflight', 'durable_production_result_missing')
-            result.stage_statuses = statuses
-            return result
+                state = invalidate_from(run, STAGES[0], 'Production result evidence changed')
+                completed.clear()
+            else:
+                result.stage_statuses = statuses
+                return result
 
         results = []
         for name in STAGES:
@@ -240,23 +326,34 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
             stage = name
             stage_inputs = current_inputs[name]
             fingerprint = _stage_fingerprint(name, stage_inputs)
-            if name == STAGES[0] and 'production_request' in stage_inputs:
-                record_stage(run, name, status='running', input_fingerprint=fingerprint)
+            if (name in STAGES[:3]
+                    and 'production_request' in current_inputs[STAGES[0]]):
+                if state['stage_records'][name]['status'] != 'completed':
+                    record_stage(run, name, status='running', input_fingerprint=fingerprint)
                 try:
-                    result, outputs = _builtin_production(repository, run, stage_inputs, fingerprint)
+                    result, outputs = _builtin_production(
+                        repository, run, current_inputs[STAGES[0]],
+                        _stage_fingerprint(STAGES[0], current_inputs[STAGES[0]]))
                     for pipeline_stage, output in zip(STAGES[:2], outputs[:2]):
+                        pipeline_state = load_workflow_state(run)
+                        if pipeline_state['stage_records'][pipeline_stage]['status'] == 'completed':
+                            continue
                         record_stage(run, pipeline_stage, status='completed',
                                      input_fingerprint=_stage_fingerprint(
                                          pipeline_stage, current_inputs[pipeline_stage]),
                                      output_files=[output])
-                    record_stage(run, STAGES[2], status='completed',
-                                 input_fingerprint=_stage_fingerprint(STAGES[2], current_inputs[STAGES[2]]),
-                                 output_files=outputs[2:])
+                    pipeline_state = load_workflow_state(run)
+                    if pipeline_state['stage_records'][STAGES[2]]['status'] != 'completed':
+                        record_stage(run, STAGES[2], status='completed',
+                                     input_fingerprint=_stage_fingerprint(
+                                         STAGES[2], current_inputs[STAGES[2]]),
+                                     output_files=outputs[2:])
                     results.append({'result': result})
                     continue
                 except Exception as error:
-                    record_stage(run, name, status='failed', input_fingerprint=fingerprint,
-                                 error_summary='stage_execution_failed')
+                    if load_workflow_state(run)['stage_records'][name]['status'] != 'completed':
+                        record_stage(run, name, status='failed', input_fingerprint=fingerprint,
+                                     error_summary='stage_execution_failed')
                     if isinstance(error, ProductionError):
                         raise
                     raise ProductionError(name, 'production_contract_violation') from error
@@ -264,6 +361,9 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
             if not callable(handler):
                 saved_result = _result_value(results) or _load_result(run, current_inputs)
                 if saved_result is not None:
+                    if not _result_outputs_match(saved_result):
+                        invalidate_from(run, STAGES[0], 'Production result evidence changed')
+                        raise ProductionError('preflight', 'durable_production_result_missing')
                     state = load_workflow_state(run)
                     statuses = {stage_name: state['stage_records'][stage_name]['status']
                                 for stage_name in STAGES}
@@ -307,6 +407,9 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None) -> Producti
                     if statuses['semantic_review_passed'] != 'completed' else [])
         if prior_result is None:
             raise ProductionError(stage, 'durable_production_result_missing')
+        if not _result_outputs_match(prior_result):
+            invalidate_from(run, STAGES[0], 'Production result evidence changed')
+            raise ProductionError('preflight', 'durable_production_result_missing')
         return ProductionResult(run, prior_result.inventory, prior_result.artifact, statuses,
                                 findings or prior_result.findings, prior_result.fingerprint,
                                 delivery_eligible=False, resumable=True)

@@ -125,3 +125,23 @@ Full resume suite command: `pytest -q --basetemp .pytest-task3-rereview-final te
 ```
 
 The built-in `produce_release` integration and exact six-stage input mapping remain covered by the focused suite. No report outside Task 3 was changed for this review round.
+
+## Final scoped review fixes (base 2824d79)
+
+Addressed the three P2 findings in `resume_release.py`:
+
+- Durable results now verify every declared output filename/hash, reject undeclared output-directory entries, and verify the assembled SQL evidence hash before persistence or return. A stale result invalidates the production checkpoint; deletion is regenerated through `produce_release`, while changed output or immutable assembly evidence is rejected under the existing producer safety checks.
+- The built-in path is recognized at any incomplete source/fixture/local-validation checkpoint from the original `production_request`. The existing per-stage receipts let it finish the first three stages without unrelated adapters; production still runs through `produce_release` and its existing preflight and immutable evidence checks.
+- `artifact.findings` and `artifact.unit_mapping` are recursively JSON-validated and passed through the existing `redact_text` utility before the atomic result write. Unsupported values, non-string mapping keys, and non-finite numbers fail closed.
+
+Regression RED command selected the three initial cases from `tests/test_resumable_workflow.py`; result: **3 failed, 15 deselected**, with each failure showing the reported gap (partial checkpoint required an adapter, deleted generated output was accepted, and injected credentials remained in `production_result.json`).
+
+Additional focused tamper command selected `generated_document_forces` and `artifact_evidence_is_rejected`; result: **3 passed, 17 deselected**. It covers modified and deleted generated documents plus modified immutable SQL evidence.
+
+Final focused resume command: `python -X utf8 -m pytest -q tests/test_resumable_workflow.py`
+
+```text
+20 passed in 190.00s
+```
+
+The six-stage `current_inputs` contract and same-directory temporary write, `fsync`, and atomic replace behavior remain covered by this suite.
