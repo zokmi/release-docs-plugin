@@ -137,8 +137,10 @@ def _pipeline(tmp_path, adapter=_recorded_adapter, parameters=False, unguarded_e
                                        "sensitive": True, "new_value": "PARAMETER_SECRET", "format_example": "PARAMETER_SECRET",
                                        "apply": "secret store", "reload": "restart app", "validation": "health check"}]
     analysis.parameters_applicable = parameters
-    run = repo / ".release-docs/runs/e2e"
-    run.mkdir(parents=True)
+    from artifact_lifecycle import initialize
+    (repo / ".gitignore").write_text(".release-docs/\ndocs/release-artifacts/\n", encoding="utf-8")
+    run_info = initialize(repo)
+    run = repo / run_info["run_path"]
     fixture = run / "fixture.sql"
     _write(run / "baseline.sql", baseline.read_text())
     _write(fixture, "INSERT INTO dbo.Customer VALUES (1,0),(2,7),(3,NULL),(4,1),(5,-1);\n")
@@ -203,6 +205,10 @@ def test_collection_to_review_preserves_allowlist_and_localdb_evidence(tmp_path,
     assert exclusion["unit_ids"] == ["deferred"] and exclusion["dependency_impact"] == []
     assert exclusion["units"][0]["source_revision"] == analysis.source_scope["target_sha"]
     _write(run / "temporary/adapter.log", "temporary trace")
+    from workflow_state import STAGES, mark_workflow_status, record_stage
+    for stage in STAGES:
+        record_stage(run, stage, status="completed", input_fingerprint=f"test-{stage}")
+    mark_workflow_status(run, "finalized")
     assert finalize_lifecycle_run(run, review_status="success", delivery_status="success")
     assert not (run / "temporary").exists()
     assert (run / "fixture.sql").is_file() and (run / "localdb_validation.json").is_file()

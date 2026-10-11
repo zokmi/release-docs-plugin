@@ -150,14 +150,26 @@ def test_evidence_can_be_written_inside_lifecycle_only(tmp_path):
 
 
 def test_success_cleanup_removes_only_temporary_material(tmp_path):
+    import subprocess
+    from artifact_lifecycle import initialize
+    from workflow_state import STAGES, mark_workflow_status, record_stage
+
     lifecycle_spec = importlib.util.spec_from_file_location(
         "lifecycle_store_cleanup", ROOT / "skills/release-docs/scripts/lifecycle_store.py")
     lifecycle = importlib.util.module_from_spec(lifecycle_spec)
     lifecycle_spec.loader.exec_module(lifecycle)
-    run = tmp_path / ".release-docs" / "runs" / "run-cleanup"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".gitignore").write_text(".release-docs/\ndocs/release-artifacts/\n", encoding="utf-8")
+    run_info = initialize(repo)
+    run = repo / run_info["run_path"]
     (run / "temporary").mkdir(parents=True)
     (run / "temporary" / "sqlcmd.log").write_text("trace", encoding="utf-8")
     (run / "lifecycle_metadata.json").write_text("audit", encoding="utf-8")
+    for stage in STAGES:
+        record_stage(run, stage, status="completed", input_fingerprint=f"test-{stage}")
+    mark_workflow_status(run, "finalized")
     assert lifecycle.finalize_lifecycle_run(
         run, review_status="success", delivery_status="success") is True
     assert (run / "lifecycle_metadata.json").exists()
