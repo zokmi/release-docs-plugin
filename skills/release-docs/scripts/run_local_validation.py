@@ -136,11 +136,19 @@ def run_local_validation(
                     **preservation}
     data_units = [unit for unit in units if not isinstance(unit, dict)
                   or impacts.get(unit.get("unit_id")) != "non_mutating"]
-    expected_assertions = list(manifest_data.get("assertions", [])) if isinstance(manifest_data.get("assertions", []), list) else []
+    manifest_assertions = manifest_data.get("assertions", [])
+    if not isinstance(manifest_assertions, list):
+        result["reason"] = "Fixture assertion mapping must be a list; 待確認"
+        return result
+    expected_assertions = list(manifest_assertions)
     for unit in units:
-        if isinstance(unit, dict) and isinstance(unit.get("expected_assertions"), list):
-            expected_assertions.extend({**item, "unit_id": unit.get("unit_id")}
-                                       for item in unit["expected_assertions"] if isinstance(item, dict))
+        if isinstance(unit, dict) and "expected_assertions" in unit:
+            if not isinstance(unit["expected_assertions"], list):
+                result["reason"] = "Unit fixture assertions must be a list; 待確認"
+                return result
+            expected_assertions.extend(
+                {**item, "unit_id": unit.get("unit_id")} if isinstance(item, dict) else item
+                for item in unit["expected_assertions"])
     preserved_summary = manifest_data.get("expected_preserved_data_summary", {})
     if not preserved_summary:
         preserved_summary = {unit["unit_id"]: unit["expected_preserved_data_summary"]
@@ -208,9 +216,16 @@ def run_local_validation(
             result["reason"] = "資料異動缺少完整適用分支與邊界評估；待確認"
             return result
         seed_rows = manifest_data.get("seed_rows", [])
+        if not isinstance(seed_rows, list):
+            result["reason"] = "Fixture seed rows must be a list; 待確認"
+            return result
         valid_seed_rows = [row for row in seed_rows if isinstance(row, dict)
                            and row.get("unit_id") in unit_ids and row.get("row_id")
-                           and row.get("purpose")] if isinstance(seed_rows, list) else []
+                           and row.get("purpose")]
+        seed_ids = [(row["unit_id"], row["row_id"]) for row in valid_seed_rows]
+        if len(valid_seed_rows) != len(seed_rows) or len(seed_ids) != len(set(seed_ids)):
+            result["reason"] = "Fixture seed rows contain invalid or duplicate unit mappings; 待確認"
+            return result
         seed_purposes = {(row["unit_id"], row["row_id"]): row["purpose"] for row in valid_seed_rows}
         valid_assertions = [item for item in expected_assertions
                             if isinstance(item, dict) and item.get("unit_id") in unit_ids
@@ -220,6 +235,11 @@ def run_local_validation(
                             and all(isinstance(item["expected_by_round"].get(round_name), dict)
                                     and set(item["expected_by_round"][round_name]) == {"before", "after"}
                                     for round_name in ROUNDS)]
+        assertion_ids = [(item["unit_id"], item["id"]) for item in valid_assertions]
+        if (len(valid_assertions) != len(expected_assertions)
+                or len(assertion_ids) != len(set(assertion_ids))):
+            result["reason"] = "Fixture assertions contain invalid or duplicate unit mappings; 待確認"
+            return result
         covered = {item["unit_id"] for item in valid_assertions}
         def consistent_rounds(item: dict[str, Any]) -> bool:
             expected = item["expected_by_round"]

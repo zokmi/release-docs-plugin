@@ -272,6 +272,28 @@ def test_localdb_non_mutating_preservation_na_keeps_reason_without_inventing_res
                and row["fixture_manifest_sha256"] == manifest_hash for row in result["rounds"].values())
 
 
+@pytest.mark.parametrize("mapping_damage", ["unmapped_assertion", "invalid_seed_rows"])
+def test_localdb_unmapped_fixture_assertion_cannot_be_silently_ignored(tmp_path, mapping_damage):
+    artifact, baseline, fixture, manifest = _data_case(tmp_path)
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    if mapping_damage == "unmapped_assertion":
+        data["assertions"].append({**data["assertions"][0], "unit_id": "undeclared-unit"})
+    else:
+        data["seed_rows"] = None
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    calls = []
+    result = module.run_local_validation(
+        artifact, server="(localdb)\\MSSQLLocalDB", database="test",
+        baseline_source=str(baseline), fixture_source=str(fixture), fixture_manifest=manifest,
+        data_units=[{"unit_id": "customer-data"}], executor=lambda **kwargs: calls.append(kwargs),
+        adapter_provenance="fixture/1", provider_version="sql/1", tool_version="tool/1")
+
+    assert result["status"] == "not_run"
+    assert set(result["rounds"]) == {"validate_only", "commit", "rerun", "injected_failure"}
+    assert all(row["status"] == "not_run" for row in result["rounds"].values())
+    assert calls == []
+
+
 @pytest.mark.parametrize("damage", ["omitted", "nonexistent", "invalid_json", "non_object", "wrong_suffix"])
 def test_localdb_preservation_na_manifest_identity_is_required(tmp_path, damage):
     from validate_release_output import _deployment

@@ -809,6 +809,7 @@ def _validation_query_status(units, rounds):
     for name in ("validate_only", "commit", "rerun"):
         checks = rounds.get(name, {}).get("checks")
         results = checks.get("validation_queries") if isinstance(checks, dict) else None
+        declared = []
         for unit in units:
             queries = unit.get("validation_queries")
             if not isinstance(queries, list) or not queries:
@@ -820,6 +821,7 @@ def _validation_query_status(units, rounds):
                     statuses.append("待確認")
                     continue
                 digest = hashlib.sha256(query["query"].encode("utf-8")).hexdigest()
+                declared.append((unit.get("unit_id"), digest))
                 matches = [r for r in results if isinstance(r, dict)
                            and r.get("unit_id") == unit.get("unit_id")
                            and r.get("query_sha256") == digest] if isinstance(results, list) else []
@@ -838,6 +840,13 @@ def _validation_query_status(units, rounds):
                 statuses.append("通過" if result["passed"] and
                                 json.dumps(result["actual"], sort_keys=True) == json.dumps(query["expected"], sort_keys=True)
                                 else "未通過")
+        if len(declared) != len(set(declared)):
+            statuses.append("待確認")
+        if isinstance(results, list) and any(
+                not isinstance(result, dict)
+                or (result.get("unit_id"), result.get("query_sha256")) not in declared
+                for result in results):
+            statuses.append("待確認")
     return max(statuses or ["待確認"], key=STATUSES.index)
 
 

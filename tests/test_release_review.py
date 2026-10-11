@@ -1153,6 +1153,7 @@ def test_report_has_six_evidence_sections_and_domain_separated_findings(release)
 @pytest.mark.parametrize("damage, expected", [
     (None, "通過"), ("missing", "待確認"), ("static_only", "待確認"),
     ("wrong_query", "待確認"), ("wrong_source", "待確認"), ("duplicate", "待確認"),
+    ("unmapped_extra", "待確認"),
     ("wrong_expected", "待確認"), ("wrong_actual", "未通過"), ("false_passed", "未通過"),
     ("wrong_artifact", "待確認"), ("missing_round", "待確認"),
     ("injected_queries_not_run", "通過"),
@@ -1171,6 +1172,8 @@ def test_report_validation_sql_maps_only_current_executed_results(release, damag
         result["source_hash"] = "0" * 64
     elif damage == "duplicate":
         row["checks"]["validation_queries"].append(dict(result))
+    elif damage == "unmapped_extra":
+        row["checks"]["validation_queries"].append({**result, "unit_id": "undeclared-unit"})
     elif damage == "wrong_expected":
         result["expected"] = 2
     elif damage == "wrong_actual":
