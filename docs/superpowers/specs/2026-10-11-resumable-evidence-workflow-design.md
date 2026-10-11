@@ -17,6 +17,7 @@
 - DATA fixture／assertion 的完整性 gate。
 - 最終報告的 atomic finalize gate。
 - command、錯誤摘要與 evidence metadata 的 secret redaction。
+- metadata provider 的 operation-preserving SQL materialization，特別是 `sp_updateextendedproperty`。
 
 本設計不涵蓋：
 
@@ -24,6 +25,20 @@
 - 將 `business_data_validation` 升級為 SQL correctness blocker。
 - 自動推導未由 authoritative source 定義的業務規則。
 - 以 expected value 取代 runner 實際產生的 before／after 結果。
+
+## Provider correction priority
+
+Provider 修正是第一個可獨立交付的階段。來源 SQL 的 metadata operation 是 authoritative input；若來源使用 `sp_updateextendedproperty`，materialized execution body 必須保留 update operation，並由 provider 產生 `sp_updateextendedproperty`。只有明確的 `add` operation 才能產生 `sp_addextendedproperty`。
+
+Provider 不得以目前物件是否存在來改寫 operation 語意；存在性只用於 guarded execution 的 add／update fallback，不能把來源的 update 記錄成 add。provider provenance 必須保存 operation、source mapping、input/output hash 與 provider version，供重新產製、四輪 LocalDB 與 validator 核對。
+
+Provider correction 的最小驗證範圍：
+
+- parse `add`、`update`、`drop` 時 operation 正確保存。
+- `update` 來源產生 `sp_updateextendedproperty`，不得退化為單純 add。
+- generator 的 execution body、descriptor、provenance 與 SQL hash 一致。
+- 重新產製相同 source revision 時 output bytes 與 provenance 穩定。
+- provider 輸出通過 database-tool contract，未核准的 dynamic execution 仍阻擋。
 
 ## Design
 
@@ -123,6 +138,7 @@ created
 5. credential 出現在 command、exception 或 connection string 時不會寫入 durable evidence。
 6. `business_data_validation` finding 不會降低 `sql_content_status`。
 7. 舊 schema run 維持可讀但不能 resume。
+8. `sp_updateextendedproperty` source unit 重新產製後仍是 update operation，且其 artifact／provenance／hash 可被 validator 核對。
 
 ## Success criteria
 
@@ -131,3 +147,4 @@ created
 - evidence 缺口以精確 stage／finding 回報，而非泛化為 opaque 或 semantic pending。
 - 全部測試與現有 SQL correctness、validation SQL、LocalDB 四輪契約保持通過。
 - 任何 credential 不出現在 lifecycle evidence、review report 或 command log。
+- metadata provider 不會把來源 update operation 錯誤物化為 add operation。
