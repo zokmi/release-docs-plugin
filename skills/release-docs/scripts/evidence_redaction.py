@@ -12,8 +12,8 @@ _SENSITIVE = re.compile(
     r"user(?:[_ -]?(?:name|id))?|uid)(?:$|[^A-Za-z])", re.IGNORECASE,
 )
 _ASSIGNMENT = re.compile(
-    r"((?:password|passwd|pwd|token|secret|credential|connection.?string|api.?key|"
-    r"private.?key|access.?key|client.?secret|user(?:name)?|user[_ -]?id|uid)\s*[=:]\s*)"
+    r"(\[?(?:password|passwd|pwd|token|secret|credential|connection.?string|api.?key|"
+    r"private.?key|access.?key|auth(?:orization)?|client.?secret|user(?:name)?|user[_ -]?id|uid)\]?\s*[=:]\s*)"
     r"(\"(?:\"\"|[^\"])*\"|'(?:''|[^'])*'|[^\s;&|,'\"]+)",
     re.IGNORECASE,
 )
@@ -67,7 +67,7 @@ def normalize_secrets(secrets: Iterable[str] = ()) -> tuple[str, ...]:
 
 
 def _sql_update_set_targets(text: str) -> list[bool]:
-    """Mark assignment targets in uncommented UPDATE ... SET clauses."""
+    """Mark assignment targets in lexical UPDATE ... SET code regions."""
     positions = [False] * len(text)
     i = 0
     saw_update = False
@@ -78,18 +78,17 @@ def _sql_update_set_targets(text: str) -> list[bool]:
         if text.startswith("--", i):
             end = text.find("\n", i + 2)
             i = len(text) if end < 0 else end + 1
-            saw_update = in_set = target_expected = False
             continue
         if text.startswith("/*", i):
             end = text.find("*/", i + 2)
             i = len(text) if end < 0 else end + 2
-            saw_update = in_set = target_expected = False
             continue
-        if text[i] == "'":
+        if text[i] in "'\"":
+            quote = text[i]
             i += 1
             while i < len(text):
-                if text[i] == "'":
-                    if i + 1 < len(text) and text[i + 1] == "'":
+                if text[i] == quote:
+                    if i + 1 < len(text) and text[i + 1] == quote:
                         i += 2
                         continue
                     i += 1
@@ -97,6 +96,7 @@ def _sql_update_set_targets(text: str) -> list[bool]:
                 i += 1
             continue
         if text[i] == "[":
+            start = i
             i += 1
             while i < len(text):
                 if text[i] == "]":
@@ -106,6 +106,9 @@ def _sql_update_set_targets(text: str) -> list[bool]:
                     i += 1
                     break
                 i += 1
+            if target_expected:
+                positions[start] = True
+                target_expected = False
             continue
         if text[i] == ";":
             saw_update = in_set = target_expected = False
@@ -140,7 +143,7 @@ def _sql_update_set_targets(text: str) -> list[bool]:
 
 def _is_sql_user_id_identifier_assignment(text: str, match: re.Match,
                                           update_set_targets: list[bool] | None = None) -> bool:
-    key = match.group(1).split("=", 1)[0].split(":", 1)[0].strip().lower()
+    key = match.group(1).split("=", 1)[0].split(":", 1)[0].strip().lower().strip("[]")
     value = match.group(2)
     if (key not in {"user_id", "userid", "user id"}
             or not _SQL_IDENTIFIER.fullmatch(value)):

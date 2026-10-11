@@ -87,7 +87,7 @@ def _read(run):
     return state
 
 
-def initialize_workflow_state(run_root, run_id, workflow_fingerprint, stages):
+def initialize_workflow_state(run_root, run_id, workflow_fingerprint, stages, *, secrets=()):
     run, _ = _owned(run_root)
     if (run_id != run.name or list(stages) != list(STAGES)
             or not isinstance(workflow_fingerprint, str) or not workflow_fingerprint):
@@ -104,7 +104,9 @@ def initialize_workflow_state(run_root, run_id, workflow_fingerprint, stages):
                                        'output_files': {}, 'error_summary': '',
                                        'started_at': None, 'completed_at': None}
                                for stage in STAGES}}
-    _write(run, state)
+    from evidence_redaction import normalize_secrets
+    secrets = normalize_secrets(secrets)
+    _write(run, state, secrets=secrets)
     return state
 
 
@@ -151,7 +153,8 @@ def invalidate_from(run_root, stage, reason, *, secrets=()):
     state = _read(run)
     if state['status'] == 'finalized' or stage not in STAGES or not isinstance(reason, str):
         raise ValueError('Invalid stage or finalized run')
-    from evidence_redaction import redact_text
+    from evidence_redaction import normalize_secrets, redact_text
+    secrets = normalize_secrets(secrets)
     reason = redact_text(reason, secrets=secrets)
     _invalidate(state, stage, reason)
     _write(run, state, secrets=secrets)
@@ -167,7 +170,8 @@ def record_stage(run_root, stage, *, status, input_fingerprint, output_files=(),
             or not isinstance(error_summary, str)
             or not isinstance(input_fingerprint, str) or not input_fingerprint):
         raise ValueError('Invalid stage transition')
-    from evidence_redaction import redact_text
+    from evidence_redaction import normalize_secrets, redact_text
+    secrets = normalize_secrets(secrets)
     error_summary = redact_text(error_summary, secrets=secrets)
     index = STAGES.index(stage)
     if any(state['stage_records'][prior]['status'] != 'completed' for prior in STAGES[:index]):
@@ -175,7 +179,7 @@ def record_stage(run_root, stage, *, status, input_fingerprint, output_files=(),
     for prior in STAGES[:index]:
         if not _outputs_match(run, state['stage_records'][prior]):
             _invalidate(state, prior, 'Output hash changed')
-            _write(run, state)
+            _write(run, state, secrets=secrets)
             raise ValueError('Earlier stage output changed')
     outputs = dict(_hash_output(run, output) for output in output_files)
     record = state['stage_records'][stage]
@@ -208,15 +212,17 @@ def _outputs_match(run, record):
         return False
 
 
-def resume_checkpoint(run_root, current_fingerprint):
+def resume_checkpoint(run_root, current_fingerprint, *, secrets=()):
     run, _ = _owned(run_root)
     state = _read(run)
     if state['status'] == 'finalized' or not isinstance(current_fingerprint, str) or not current_fingerprint:
         raise ValueError('Finalized run or invalid fingerprint')
+    from evidence_redaction import normalize_secrets
+    secrets = normalize_secrets(secrets)
     if state['workflow_fingerprint'] != current_fingerprint:
         _invalidate(state, STAGES[0], 'Workflow fingerprint changed')
         state['workflow_fingerprint'] = current_fingerprint
-        _write(run, state)
+        _write(run, state, secrets=secrets)
         return STAGES[0]
     for stage in STAGES:
         record = state['stage_records'][stage]
@@ -224,12 +230,12 @@ def resume_checkpoint(run_root, current_fingerprint):
             return stage
         if not _outputs_match(run, record):
             _invalidate(state, stage, 'Output hash changed')
-            _write(run, state)
+            _write(run, state, secrets=secrets)
             return stage
     return STAGES[-1]
 
 
-def mark_workflow_status(run_root, status):
+def mark_workflow_status(run_root, status, *, secrets=()):
     run, _ = _owned(run_root)
     state = _read(run)
     if status not in {'failed', 'interrupted', 'finalized'} or state['status'] == 'finalized':
@@ -242,5 +248,7 @@ def mark_workflow_status(run_root, status):
             record['status'] = status
     state['status'] = status
     state['updated_at'] = _now()
-    _write(run, state)
+    from evidence_redaction import normalize_secrets
+    secrets = normalize_secrets(secrets)
+    _write(run, state, secrets=secrets)
     return state

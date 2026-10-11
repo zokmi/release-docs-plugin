@@ -43,6 +43,15 @@ def test_schema_and_atomic_creation(run):
     assert load_workflow_state(run) == state
 
 
+def test_initialize_workflow_state_redacts_known_secret(run):
+    (run / 'workflow_state.json').unlink()
+
+    initialize_workflow_state(run, run.name, 'initialize-secret', STAGES,
+                              secrets=('initialize-secret',))
+
+    assert load_workflow_state(run)['workflow_fingerprint'] == '[REDACTED]'
+
+
 def test_order_attempt_hash_and_invalidation(run):
     output = run / 'source.sql'
     output.write_text('SELECT 1')
@@ -71,6 +80,44 @@ def test_resume_invalidates_changed_workflow_and_rejects_legacy(run):
     (run / 'workflow_state.json').unlink()
     with pytest.raises(ValueError):
         resume_checkpoint(run, 'anything')
+
+
+def test_record_stage_rewrite_redacts_known_secret_before_raising(run):
+    output = run / 'source.sql'
+    output.write_text('SELECT 1')
+    record_stage(run, STAGES[0], status='completed', input_fingerprint='source',
+                 output_files=[output])
+    state = load_workflow_state(run)
+    state['workflow_fingerprint'] = 'record-secret'
+    (run / 'workflow_state.json').write_text(json.dumps(state))
+    output.write_text('SELECT 2')
+
+    with pytest.raises(ValueError, match='Earlier stage output changed'):
+        record_stage(run, STAGES[1], status='running', input_fingerprint='record-secret',
+                     secrets=('record-secret',))
+
+    raw_state = (run / 'workflow_state.json').read_text()
+    assert 'record-secret' not in raw_state
+    assert load_workflow_state(run)['workflow_fingerprint'] == '[REDACTED]'
+
+
+def test_resume_checkpoint_rewrite_redacts_known_secret(run):
+    assert resume_checkpoint(run, 'resume-secret', secrets=('resume-secret',)) == STAGES[0]
+
+    raw_state = (run / 'workflow_state.json').read_text()
+    assert 'resume-secret' not in raw_state
+    assert load_workflow_state(run)['workflow_fingerprint'] == '[REDACTED]'
+
+
+def test_mark_workflow_status_redacts_known_secret(run):
+    from workflow_state import mark_workflow_status
+    state = load_workflow_state(run)
+    state['workflow_fingerprint'] = 'status-secret'
+    (run / 'workflow_state.json').write_text(json.dumps(state))
+
+    mark_workflow_status(run, 'failed', secrets=('status-secret',))
+
+    assert load_workflow_state(run)['workflow_fingerprint'] == '[REDACTED]'
 
 
 def test_missing_lock_finalized_and_unsafe_outputs(run, tmp_path):

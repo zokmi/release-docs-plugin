@@ -292,7 +292,7 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None, secrets=())
         from evidence_redaction import normalize_secrets
         secrets = normalize_secrets(secrets)
         state = load_workflow_state(run)
-        stage = resume_checkpoint(run, state['workflow_fingerprint'])
+        stage = resume_checkpoint(run, state['workflow_fingerprint'], secrets=secrets)
         state = load_workflow_state(run)
         checkpoint = STAGES.index(stage)
         completed = {name for name in STAGES[:checkpoint]

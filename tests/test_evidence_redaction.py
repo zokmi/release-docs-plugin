@@ -65,6 +65,8 @@ def test_user_id_redaction_does_not_exempt_assignments_in_sql_comments():
 def test_user_id_redaction_masks_quoted_rhs_even_inside_update_set():
     assert evidence_redaction.redact_text("UPDATE users SET user_id='alice'") == \
         "UPDATE users SET user_id=[REDACTED]"
+    assert evidence_redaction.redact_text("UPDATE users SET [user_id]='alice'") == \
+        "UPDATE users SET [user_id]=[REDACTED]"
 
 
 def test_user_id_redaction_preserves_multiline_sql_identifier_rhs():
@@ -80,6 +82,25 @@ def test_user_id_redaction_does_not_treat_sql_looking_quoted_note_as_sql():
         "UPDATE t SET note = user_id=[REDACTED]"
 
 
+def test_double_quoted_sql_looking_note_does_not_create_sql_context():
+    value = 'note = "example ""quoted"" text: UPDATE users SET user_id=alice"'
+    assert evidence_redaction.redact_text(value) == \
+        'note = "example ""quoted"" text: UPDATE users SET user_id=[REDACTED]"'
+
+
+def test_comment_inside_set_preserves_sql_context_but_redacts_comment_prose():
+    value = "UPDATE users SET /* login user_id=comment-user */ user_id=source_user_id"
+    assert evidence_redaction.redact_text(value) == \
+        "UPDATE users SET /* login user_id=[REDACTED] */ user_id=source_user_id"
+
+
+def test_authorization_assignment_is_masked_and_raw_evidence_fails_closed():
+    value = "Authorization=opaque-value"
+    assert evidence_redaction.redact_text(value) == "Authorization=[REDACTED]"
+    with pytest.raises(ValueError, match="secret_redaction_required"):
+        evidence_redaction.assert_safe_evidence(value)
+
+
 def test_user_id_redaction_consumes_doubled_quote_sql_literals():
     value = "UPDATE users SET note = 'safe ''quoted'' user_id=alice'"
     assert evidence_redaction.redact_text(value) == \
@@ -91,6 +112,8 @@ def test_user_id_redaction_consumes_doubled_quote_sql_literals():
 def test_user_id_redaction_preserves_sql_server_bracketed_rhs_identifier():
     value = "UPDATE users SET user_id = [source_user_id]"
     assert evidence_redaction.redact_text(value) == value
+    bracketed_target = "UPDATE users SET [user_id] = [source_user_id]"
+    assert evidence_redaction.redact_text(bracketed_target) == bracketed_target
     assert evidence_redaction.redact_text("UPDATE users SET user_id = 'source_user_id'") == \
         "UPDATE users SET user_id = [REDACTED]"
     assert evidence_redaction.redact_text("SELECT 'O''Brien' AS note, [source_user_id] FROM users") == \
@@ -106,9 +129,13 @@ def test_user_id_redaction_scans_multiline_literals_but_not_comments_for_sql_con
 @pytest.mark.parametrize("value", [
     "UPDATE users -- note\nSET user_id = alice",
     "UPDATE users /* note */\nSET user_id = alice",
-    "UPDATE users;\nSET user_id = alice",
 ])
-def test_user_id_redaction_does_not_carry_sql_context_across_comments_or_statements(value):
+def test_user_id_redaction_treats_comments_as_whitespace_in_sql_context(value):
+    assert evidence_redaction.redact_text(value).endswith("user_id = alice")
+
+
+def test_user_id_redaction_does_not_carry_sql_context_across_statements():
+    value = "UPDATE users;\nSET user_id = alice"
     assert evidence_redaction.redact_text(value).endswith("user_id = [REDACTED]")
 
 
