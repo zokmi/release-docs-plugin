@@ -8,9 +8,11 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 
 _fingerprint_path = Path(__file__).with_name("review_fingerprint.py")
 _fingerprint_spec = importlib.util.spec_from_file_location("release_docs_review_fingerprint", _fingerprint_path)
@@ -972,6 +974,22 @@ def _report_section_status(findings, codes, complete=False):
                           + selected, "sql_correctness", "sql_content_status")
 
 
+def _atomic_write_text(path, text):
+    """Replace a report atomically without exposing a partial document."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + '.', suffix='.tmp', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='') as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def write_review_report(run_root, findings, fingerprint, *, repo=None, output_dir=None):
     """Write review evidence only in lifecycle; include codes, never source prose."""
     run = lifecycle_root(run_root)
@@ -1046,7 +1064,7 @@ def write_review_report(run_root, findings, fingerprint, *, repo=None, output_di
                         ("BUSINESSFINDINGS", "business_data_validation")):
         values[key] = "\n".join(lines[domain]) or "無此 domain 的審查發現；不代表未取得的證據已通過。"
     template = (Path(__file__).parents[1] / "assets/05_版更審查報告.md").read_text(encoding="utf-8")
-    report.write_text(re.sub(r"\{\{([A-Z]+)\}\}", lambda m: values[m[1]], template), encoding="utf-8")
+    _atomic_write_text(report, re.sub(r"\{\{([A-Z]+)\}\}", lambda m: values[m[1]], template))
     return report
 
 
