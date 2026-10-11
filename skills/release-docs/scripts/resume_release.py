@@ -250,11 +250,12 @@ def _builtin_production(repo, run, inputs, input_fingerprint, secrets=()):
         request_secrets = (request_secrets,)
     if isinstance(secrets, str):
         secrets = (secrets,)
+    combined_secrets = (*request_secrets, *secrets)
     if has_request_secrets or request_secrets or secrets:
-        request['secrets'] = (*request_secrets, *secrets)
+        request['secrets'] = combined_secrets
     result = produce_release(**request)
     result_file = _save_result(run, result, producer_stage=STAGES[0],
-                               input_fingerprint=input_fingerprint, secrets=secrets)
+                               input_fingerprint=input_fingerprint, secrets=combined_secrets)
     outputs = _builtin_production_outputs(run)
     if any(not path.is_file() for path in outputs):
         raise ValueError('Production pipeline omitted durable stage evidence')

@@ -266,6 +266,33 @@ def test_resume_can_enter_the_existing_production_pipeline_without_adapters(owne
     assert load_workflow_state(run)['stage_records'][STAGES[0]]['status'] == 'completed'
 
 
+def test_builtin_resume_redacts_production_request_secret_from_durable_result(owned_run, monkeypatch):
+    import json
+    import resume_release as resume_module
+
+    repo, run = owned_run
+    result = durable_result(
+        run, repo / 'output',
+        findings=[{'message': 'provider returned request-only-secret'}])
+    for name in ('source_unit_metadata.json', 'lifecycle_exclusion_manifest.json',
+                 'localdb_validation.json'):
+        (run / name).write_text('{}', encoding='utf-8')
+    request = {'repo': repo, 'evidence': {}, 'analysis': {}, 'release_id': 'release-1',
+               'run_root': run, 'output_dir': repo / 'output',
+               'baseline_source': repo / 'baseline.sql',
+               'secrets': ('request-only-secret',)}
+    monkeypatch.setattr(resume_module, 'produce_release', lambda **_kwargs: result)
+    inputs = {stage: {} for stage in STAGES}
+    inputs[STAGES[0]] = {'production_request': request}
+
+    resume_module.resume_release(repo, run, current_inputs=inputs)
+
+    result_path = run / 'production_result.json'
+    payload = json.loads(result_path.read_text(encoding='utf-8'))
+    assert payload['artifact']['findings'][0]['message'] == 'provider returned [REDACTED]'
+    assert 'request-only-secret' not in result_path.read_text(encoding='utf-8')
+
+
 def test_resume_runs_existing_production_pipeline_and_reconstructs_its_result(owned_run):
     import importlib.util
     from resume_release import resume_release

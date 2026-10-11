@@ -17,6 +17,8 @@ _ASSIGNMENT = re.compile(
     r"(\"[^\"]*\"|'[^']*'|[^\s;&|,]+)",
     re.IGNORECASE,
 )
+_SQL_UPDATE_SET = re.compile(r"\bUPDATE\b[\s\S]*\bSET\b[^;]*$", re.IGNORECASE)
+_SQL_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)*")
 _URL_CREDENTIALS = re.compile(r"(https?://)[^\s/@]+:[^\s/@]+@", re.IGNORECASE)
 _PEM_PRIVATE_KEY = re.compile(
     r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----.*?"
@@ -59,13 +61,30 @@ def _secret_values(secrets: Iterable[str]) -> list[str]:
     return sorted(set(values), key=len, reverse=True)
 
 
+def _is_sql_user_id_identifier_assignment(text: str, match: re.Match) -> bool:
+    key = match.group(1).split("=", 1)[0].split(":", 1)[0].strip().lower()
+    value = match.group(2).strip("\"'")
+    if key not in {"user_id", "userid", "user id"} or not _SQL_IDENTIFIER.fullmatch(value):
+        return False
+    statement_start = max(text.rfind(";", 0, match.start()), text.rfind("\n", 0, match.start())) + 1
+    return _SQL_UPDATE_SET.search(text[statement_start:match.start()]) is not None
+
+
+def _redact_assignments(text: str) -> str:
+    return _ASSIGNMENT.sub(
+        lambda match: match.group(0) if _is_sql_user_id_identifier_assignment(text, match)
+        else match.group(1) + REDACTED,
+        text,
+    )
+
+
 def _redact_text(value: str, secrets: list[str]) -> str:
     text = value
     for secret in secrets:
         text = text.replace(secret, REDACTED)
     text = _PEM_PRIVATE_KEY.sub(REDACTED, text)
     text = _URL_CREDENTIALS.sub(r"\1" + REDACTED + "@", text)
-    text = _ASSIGNMENT.sub(lambda match: match.group(1) + REDACTED, text)
+    text = _redact_assignments(text)
     text = _BEARER.sub(lambda match: match.group(1) + REDACTED, text)
     text = _COMMAND_ARGUMENT.sub(lambda match: match.group(1) + REDACTED, text)
     if (_UNCLASSIFIED_TOKEN.search(text)
@@ -138,6 +157,7 @@ def assert_safe_evidence(value: Any, secrets: Iterable[str] = ()) -> None:
                     or _PEM_PRIVATE_KEY.search(item)):
                 raise _fail_closed()
             if (any(match.group(2).strip("\"'") != REDACTED
+                    and not _is_sql_user_id_identifier_assignment(item, match)
                     for match in _ASSIGNMENT.finditer(item))
                     or any(match.group(2).strip("\"'") != REDACTED
                            for match in _COMMAND_ARGUMENT.finditer(item))
