@@ -8,6 +8,8 @@ from dataclasses import dataclass, asdict
 import hashlib
 import re
 
+from assemble_deployment_sql import _lex
+
 
 class MetadataProviderError(ValueError):
     pass
@@ -306,12 +308,26 @@ def transform_provider_sql(sql, *, source_path, unit_id, excluded_objects=()):
         operations = parse_metadata_operations(sql, source_path=source_path)
         for op in reversed(operations):
             sql = sql[:op.start] + render_metadata_operation(op) + sql[op.end:]
-    # A removed call can leave its surrounding guard or a cursor expansion
-    # referring to the excluded target. Fail closed rather than emit a partial
-    # statement whose scope can no longer be proven safe.
+    # The SQL lexer masks comments and ordinary string literals while keeping
+    # object identifiers and source offsets. OBJECT_ID takes an object name as
+    # a string, so inspect only literals in actual OBJECT_ID call positions.
+    code, malformed = _lex(sql, keep_identifiers=True)
+    if excluded and malformed:
+        raise MetadataProviderError("malformed_sql_lexeme")
     for name in excluded:
-        object_name = name.rsplit(".", 1)[-1].strip("[]")
-        if re.search(rf"(?<!\w)\[?{re.escape(object_name)}\]?(?!\w)", sql, re.I):
+        schema, object_name = (name.rsplit(".", 1) if "." in name else ("dbo", name))
+        schema, object_name = schema.strip("[]"), object_name.strip("[]")
+        schema_token = rf"(?:\[{re.escape(schema)}\]|{re.escape(schema)})"
+        object_token = rf"(?:\[{re.escape(object_name)}\]|{re.escape(object_name)})"
+        qualified = rf"(?<![\w@]){schema_token}\s*\.\s*{object_token}(?!\w)"
+        unqualified = rf"\b(?:FROM|JOIN|INTO|UPDATE|TABLE|REFERENCES)\s+{object_token}(?!\w)"
+        remaining_operation = any(op.qualified_object.casefold() == name for op in operations)
+        object_id_reference = any(
+            (literal := re.match(r"\s*N?'((?:''|[^'])*)'", sql[match.end():], re.I))
+            and literal.group(1).replace("[", "").replace("]", "").casefold() == f"{schema}.{object_name}".casefold()
+            for match in re.finditer(r"\bOBJECT_ID\s*\(", code, re.I))
+        if (remaining_operation or re.search(qualified, code, re.I)
+                or re.search(unqualified, code, re.I) or object_id_reference):
             raise MetadataProviderError("excluded_object_remains")
     # Variable/dynamic execution is never silently accepted.
     if re.search(r"\bEXEC(?:UTE)?\s*(?:\(|(?:sys\.)?sp_executesql\b)", sql, re.I):

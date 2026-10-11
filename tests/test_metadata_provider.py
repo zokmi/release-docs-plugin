@@ -151,3 +151,18 @@ CLOSE cur; DEALLOCATE cur; END"""
     with pytest.raises(MetadataProviderError, match="excluded_object_remains"):
         transform_provider_sql(source, source_path="sql/cursor.sql", unit_id="cursor",
                                excluded_objects={"dbo.Excluded"})
+
+
+@pytest.mark.parametrize("unrelated_text", [
+    "-- dbo.Excluded is documented here\n",
+    "/* dbo.Excluded is documented here */\n",
+    "SELECT N'dbo.Excluded' AS Note;\n",
+])
+def test_excluded_name_in_unrelated_text_does_not_block(unrelated_text):
+    source = (unrelated_text + "EXEC sp_addextendedproperty N'MS_Description', N'kept', "
+              "N'SCHEMA', N'dbo', N'TABLE', N'Kept';")
+    transformed, provenance = transform_provider_sql(
+        source, source_path="sql/kept.sql", unit_id="kept", excluded_objects={"dbo.Excluded"})
+    assert unrelated_text in transformed
+    assert "EXEC sys.sp_addextendedproperty" in transformed
+    assert [op["object_name"] for op in provenance["metadata_operations"]] == ["Kept"]
