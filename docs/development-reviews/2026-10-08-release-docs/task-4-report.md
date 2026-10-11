@@ -62,3 +62,9 @@ GREEN same command: 4 tests, 1.567s, OK. Full log task-4-fix-green.txt. Existing
 
 Verification: git diff --check passed. git diff --exit-code a9d85a9 -- evals/actual passed: all committed actual evidence unchanged. This fix changes only preparer, instructions and new focused tests. No installing, SQL, publishing, pushing, or subagents.
 Fix-round1 commit: d4c7a89. Working tree clean after commit. Important finding addressed; deferred Minor unchanged.
+
+## Task 4 scoped review fix — malformed assertion lists
+
+Fixed the scoped P2 where non-list `assertions` in the fixture manifest or non-list unit `expected_assertions` attempted to set a reason on an uninitialized result. Both inputs now return a structured `not_run` result with all four rounds `not_run`, before invoking the executor. The malformed assertion gate remains blocking.
+
+Added regression coverage for both malformed input locations. RED: focused tests failed with `UnboundLocalError` in both cases. GREEN: `tests/test_local_validation.py` and the Task 4 focused `tests/test_evaluation_fixture.py` suite passed together: 51 passed, 1 skipped. `git diff --check` passed.

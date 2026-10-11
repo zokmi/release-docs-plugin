@@ -306,6 +306,30 @@ def test_localdb_unmapped_fixture_assertion_cannot_be_silently_ignored(tmp_path,
     assert calls == []
 
 
+@pytest.mark.parametrize("malformed_source", ["manifest", "unit"])
+def test_localdb_non_list_assertions_return_not_run_before_executor(tmp_path, malformed_source):
+    artifact, baseline, fixture, manifest = _data_case(tmp_path)
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    units = [{"unit_id": "customer-data"}]
+    if malformed_source == "manifest":
+        data["assertions"] = {"id": "not-a-list"}
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+    else:
+        units[0]["expected_assertions"] = {"id": "not-a-list"}
+    calls = []
+
+    result = module.run_local_validation(
+        artifact, server="(localdb)\\MSSQLLocalDB", database="test",
+        baseline_source=str(baseline), fixture_source=str(fixture), fixture_manifest=manifest,
+        data_units=units, executor=lambda **kwargs: calls.append(kwargs),
+        adapter_provenance="fixture/1", provider_version="sql/1", tool_version="tool/1")
+
+    assert result["status"] == "not_run"
+    assert set(result["rounds"]) == {"validate_only", "commit", "rerun", "injected_failure"}
+    assert all(row["status"] == "not_run" for row in result["rounds"].values())
+    assert calls == []
+
+
 @pytest.mark.parametrize("damage", ["omitted", "nonexistent", "invalid_json", "non_object", "wrong_suffix"])
 def test_localdb_preservation_na_manifest_identity_is_required(tmp_path, damage):
     from validate_release_output import _deployment

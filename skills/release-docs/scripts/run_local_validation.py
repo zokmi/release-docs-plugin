@@ -137,18 +137,20 @@ def run_local_validation(
     data_units = [unit for unit in units if not isinstance(unit, dict)
                   or impacts.get(unit.get("unit_id")) != "non_mutating"]
     manifest_assertions = manifest_data.get("assertions", [])
+    assertion_error = ""
     if not isinstance(manifest_assertions, list):
-        result["reason"] = "Fixture assertion mapping must be a list; 待確認"
-        return result
-    expected_assertions = list(manifest_assertions)
+        assertion_error = "Fixture assertion mapping must be a list; 待確認"
+        expected_assertions = []
+    else:
+        expected_assertions = list(manifest_assertions)
     for unit in units:
         if isinstance(unit, dict) and "expected_assertions" in unit:
             if not isinstance(unit["expected_assertions"], list):
-                result["reason"] = "Unit fixture assertions must be a list; 待確認"
-                return result
-            expected_assertions.extend(
-                {**item, "unit_id": unit.get("unit_id")} if isinstance(item, dict) else item
-                for item in unit["expected_assertions"])
+                assertion_error = assertion_error or "Unit fixture assertions must be a list; 待確認"
+            else:
+                expected_assertions.extend(
+                    {**item, "unit_id": unit.get("unit_id")} if isinstance(item, dict) else item
+                    for item in unit["expected_assertions"])
     preserved_summary = manifest_data.get("expected_preserved_data_summary", {})
     if not preserved_summary:
         preserved_summary = {unit["unit_id"]: unit["expected_preserved_data_summary"]
@@ -185,6 +187,9 @@ def run_local_validation(
         "fixture_seed_rows": manifest_data.get("seed_rows", []),
         "rounds": rounds,
     }
+    if assertion_error:
+        result["reason"] = assertion_error
+        return result
     if executor is None:
         result["reason"] = "未提供隔離 LocalDB runner；未執行資料庫驗證"
         return result
