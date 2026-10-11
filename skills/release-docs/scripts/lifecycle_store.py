@@ -112,12 +112,13 @@ def cleanup_lifecycle_run(run_root, *, outcome):
     if not root.exists():
         return False
     workflow_path = root / 'workflow_state.json'
-    if workflow_path.exists():
-        if is_linked_path(workflow_path) or os.stat(workflow_path).st_nlink != 1:
-            raise ValueError('Linked workflow state is not permitted')
-        workflow = json.loads(workflow_path.read_text(encoding='utf-8'))
-        if workflow.get('schema_version') != 2 or workflow.get('status') != 'finalized':
-            raise ValueError('Workflow finalization must be durable before cleanup')
+    if not workflow_path.exists():
+        raise ValueError('Workflow state is required before cleanup')
+    if is_linked_path(workflow_path) or os.stat(workflow_path).st_nlink != 1:
+        raise ValueError('Linked workflow state is not permitted')
+    workflow = json.loads(workflow_path.read_text(encoding='utf-8'))
+    if workflow.get('schema_version') != 2 or workflow.get('status') != 'finalized':
+        raise ValueError('Workflow finalization must be durable before cleanup')
     removed = False
     for name in ("temporary", ".tmp"):
         child = root / name

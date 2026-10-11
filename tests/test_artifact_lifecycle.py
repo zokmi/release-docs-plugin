@@ -143,6 +143,19 @@ class LifecycleTests(unittest.TestCase):
             finalize_lifecycle_run(run, review_status='success', delivery_status='success')
         self.assertTrue((temporary / 'evidence.txt').exists())
 
+    def test_lifecycle_cleanup_rejects_missing_workflow_state(self):
+        sys.path.insert(0, str(SCRIPT.parent))
+        from lifecycle_store import cleanup_lifecycle_run
+        run = self.init()
+        temporary = run / 'temporary'
+        temporary.mkdir()
+        evidence = temporary / 'evidence.txt'
+        evidence.write_text('keep')
+        (run / 'workflow_state.json').unlink()
+        with self.assertRaisesRegex(ValueError, 'Workflow state is required'):
+            cleanup_lifecycle_run(run, outcome='success')
+        self.assertTrue(evidence.exists())
+
     def test_force_staged_legacy_artifact_blocks_init(self):
         legacy = self.repo / 'docs/release-artifacts/old.sql'
         legacy.parent.mkdir(parents=True)

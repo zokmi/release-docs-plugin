@@ -46,6 +46,13 @@ The test process exited successfully. Two tests were skipped by platform capabil
 - `artifact_lifecycle.initialize` defaults to the literal fingerprint `default-workflow`; callers needing code/config-sensitive resume behavior must supply a meaningful fingerprint.
 - The two platform skips and the non-failing Python console shutdown exception are recorded above. No broader test suite was run, as requested.
 
-## Commit
+## Original implementation commit
 
-Pending at report preparation; commit hash will be filled after the scoped commit.
+`367dff8` — `feat: add durable release workflow checkpoints`
+
+## Round 1 fix report
+
+- `cleanup_lifecycle_run` now raises when `workflow_state.json` is missing, before deleting any temporary evidence.
+- Added a regression test proving successful cleanup refuses a missing state file and preserves temporary evidence.
+- Previously passing focused command and result: `pytest.exe tests/test_workflow_state.py tests/test_artifact_lifecycle.py -q --basetemp .pytest-task2-debug2` → 45 passed, 2 skipped. The skips are platform capability checks. That run emitted a non-failing `pyreadline3` console shutdown warning (`OSError: [WinError -1073741816]`, `0xc0000008`).
+- Re-run after adding the regression test, using the same bounded basetemp command: 46 passed, 2 skipped in 118.97s. The skips are platform capability checks. It emitted the same non-failing `pyreadline3` console shutdown warning (`OSError: [WinError -1073741816]`, `0xc0000008`).
