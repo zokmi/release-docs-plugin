@@ -151,6 +151,20 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(state['stage_records']['delivery_finalized']['status'], 'completed')
         self.assertTrue((run / 'tool-output.sql').exists() and report.exists())
 
+    def test_cleanup_failure_leaves_retryable_cleanup_pending_manifest(self):
+        from artifact_lifecycle import finish
+        run = self.init()
+        docs, _, _ = self.receipt(run)
+        with patch('artifact_lifecycle.shutil.rmtree', side_effect=OSError('cleanup unavailable')):
+            with self.assertRaises(OSError):
+                finish(self.repo, run, docs)
+        manifest = json.loads((run / 'run.json').read_text())
+        self.assertEqual(manifest['status'], 'cleanup_pending')
+        self.assertFalse((run / '.lock').exists())
+        manifest['expires_at'] = '2000-01-01T00:00:00+00:00'
+        (run / 'run.json').write_text(json.dumps(manifest))
+        self.assertEqual(self.cli('prune')['removed'], [run.name])
+
     def test_legacy_manifest_readable_but_finalized_fail_is_rejected(self):
         run = self.init()
         (run / 'workflow_state.json').unlink()

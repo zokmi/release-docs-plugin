@@ -106,7 +106,7 @@ def prune(repo):
         for run in base.iterdir():
             try:
                 _, run, state = owned(repo, run)
-                if state['status'] not in ('failed', 'interrupted') or (run / LOCK).exists():
+                if state['status'] not in ('failed', 'interrupted', 'cleanup_pending') or (run / LOCK).exists():
                     continue
                 if datetime.fromisoformat(state['expires_at']) > datetime.now(timezone.utc):
                     continue
@@ -177,6 +177,10 @@ def finish(repo, run, documents):
     record_stage(run, 'delivery_finalized', status='completed',
                  input_fingerprint=hashlib.sha256(report.encode('utf-8')).hexdigest())
     mark_workflow_status(run, 'finalized')
+    state['status'] = 'cleanup_pending'
+    state['expires_at'] = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    save(run, state)
+    (run / LOCK).unlink(missing_ok=True)
     shutil.rmtree(run)
     return {'removed': run.name, 'documents_preserved': str(docs)}
 
