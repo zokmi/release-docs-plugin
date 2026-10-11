@@ -118,6 +118,13 @@ def prune(repo):
         for run in base.iterdir():
             try:
                 _, run, state = owned(repo, run)
+                workflow_path = run / 'workflow_state.json'
+                if state['status'] == 'running' and workflow_path.is_file():
+                    workflow = load_workflow_state(run)
+                    if workflow['status'] == 'finalized':
+                        state['status'] = 'cleanup_pending'
+                        state['expires_at'] = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+                        save(run, state)
                 if (state['status'] not in ('failed', 'interrupted', 'cleanup_pending')
                         or (state['status'] != 'cleanup_pending' and (run / LOCK).exists())):
                     continue
@@ -185,9 +192,8 @@ def finish(repo, run, documents):
         raise ValueError('Evidence hash inventory missing or changed')
     # Recheck ownership, aliases and Git membership immediately before deletion.
     owned(repo, run)
-    if workflow['stage_records']['report_finalized']['status'] != 'completed':
-        record_stage(run, 'report_finalized', status='completed',
-                     input_fingerprint=hashlib.sha256(report.encode('utf-8')).hexdigest())
+    record_stage(run, 'report_finalized', status='completed',
+                 input_fingerprint=hashlib.sha256(report.encode('utf-8')).hexdigest())
     record_stage(run, 'delivery_finalized', status='completed',
                  input_fingerprint=hashlib.sha256(report.encode('utf-8')).hexdigest())
     mark_workflow_status(run, 'finalized')

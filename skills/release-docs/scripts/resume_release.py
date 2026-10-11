@@ -126,7 +126,7 @@ def _sanitize_result_value(value, secrets=()):
     raise ValueError('Production result metadata must be JSON data')
 
 
-def _result_is_current(run, payload):
+def _result_is_current(run, payload, *, allow_uncheckpointed=False):
     producer = payload.get('producer')
     if not isinstance(producer, dict):
         return False
@@ -139,7 +139,8 @@ def _result_is_current(run, payload):
     except (ValueError, OSError, KeyError, TypeError):
         return False
     record = state['stage_records'][stage]
-    if record['status'] != 'completed' or record['input_fingerprint'] != input_fingerprint:
+    if ((not allow_uncheckpointed and record['status'] != 'completed')
+            or record['input_fingerprint'] not in ('', input_fingerprint)):
         return False
     result_path = _result_path(run)
     try:
@@ -147,9 +148,10 @@ def _result_is_current(run, payload):
         digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
     except (OSError, ValueError):
         return False
-    return any(stage_record['status'] == 'completed'
-               and stage_record['output_files'].get(relative) == digest
-               for stage_record in state['stage_records'].values())
+    checkpointed = any(stage_record['status'] == 'completed'
+                       and stage_record['output_files'].get(relative) == digest
+                       for stage_record in state['stage_records'].values())
+    return checkpointed or allow_uncheckpointed
 
 
 def _save_result(run, result, *, producer_stage, input_fingerprint, secrets=()):
@@ -203,7 +205,7 @@ def _save_result(run, result, *, producer_stage, input_fingerprint, secrets=()):
     return path
 
 
-def _load_result(run, current_inputs):
+def _load_result(run, current_inputs, *, allow_uncheckpointed=False):
     path = _result_path(run)
     if not path.is_file():
         return None
@@ -215,7 +217,7 @@ def _load_result(run, current_inputs):
     receipt_stages = [stage for stage in STAGES
                       if path.relative_to(run).as_posix()
                       in state['stage_records'][stage]['output_files']]
-    if (not _result_is_current(run, payload)
+    if (not _result_is_current(run, payload, allow_uncheckpointed=allow_uncheckpointed)
             or any(state['stage_records'][stage]['input_fingerprint']
                    != _stage_fingerprint(stage, current_inputs[stage])
                    for stage in [producer['stage'], *receipt_stages])):
@@ -263,11 +265,21 @@ def _redact_durable_files(run, files, secrets=()):
             original = path.read_text(encoding='utf-8')
         except (OSError, UnicodeDecodeError) as error:
             raise ValueError('Adapter evidence must be UTF-8 text') from error
-        cleaned = redact_text(original, secrets=secrets)
+        try:
+            cleaned = redact_text(original, secrets=secrets)
+        except ValueError:
+            path.unlink(missing_ok=True)
+            raise
         if cleaned != original:
             temporary = path.with_name(path.name + '.redact.tmp')
-            temporary.write_text(cleaned, encoding='utf-8', newline='')
-            os.replace(temporary, path)
+            try:
+                with temporary.open('w', encoding='utf-8', newline='') as stream:
+                    stream.write(cleaned)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
 
 
 def _builtin_production(repo, run, inputs, input_fingerprint, secrets=()):
@@ -374,7 +386,8 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None, secrets=())
             fingerprint = _stage_fingerprint(name, stage_inputs)
             if (name in STAGES[:3]
                     and 'production_request' in current_inputs[STAGES[0]]):
-                recovered = _load_result(run, current_inputs) if _result_path(run).exists() else None
+                recovered = (_load_result(run, current_inputs, allow_uncheckpointed=True)
+                             if _result_path(run).exists() else None)
                 builtin_outputs = _builtin_production_outputs(run)
                 if recovered is not None and all(path.is_file() for path in builtin_outputs):
                     for pipeline_stage, output in zip(STAGES[:3], builtin_outputs):
@@ -460,6 +473,8 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None, secrets=())
                              error_summary='stage_execution_failed', secrets=secrets)
                 if isinstance(error, ProductionError):
                     raise
+                if 'secret_redaction_required' in str(error):
+                    raise ProductionError(name, 'secret_redaction_required') from error
                 raise ProductionError(name, 'production_contract_violation') from error
 
         state = load_workflow_state(run)
