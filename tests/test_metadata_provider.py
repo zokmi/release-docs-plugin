@@ -137,6 +137,15 @@ def test_excluded_object_guard_cannot_survive_without_its_metadata_call():
                                excluded_objects={"dbo.Excluded"})
 
 
+def test_excluded_object_guard_with_comment_before_literal_is_blocked():
+    source = ("IF OBJECT_ID(/* reviewed guard */ N'dbo.Excluded', 'U') IS NOT NULL BEGIN\n"
+              "EXEC sp_addextendedproperty N'MS_Description', N'excluded', "
+              "N'SCHEMA', N'dbo', N'TABLE', N'Excluded';\nEND;")
+    with pytest.raises(MetadataProviderError, match="excluded_object_remains"):
+        transform_provider_sql(source, source_path="sql/guard.sql", unit_id="guard",
+                               excluded_objects={"dbo.Excluded"})
+
+
 def test_excluded_cursor_target_cannot_reappear_after_expansion():
     source = """IF OBJECT_ID(N'dbo.Excluded', 'U') IS NOT NULL BEGIN
 DECLARE @cols TABLE (name SYSNAME, descr NVARCHAR(400));

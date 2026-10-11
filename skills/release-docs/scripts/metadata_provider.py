@@ -208,6 +208,37 @@ def _operation_provenance(op):
             "fallback_policy": "add_if_missing" if op.operation == "update" else "none"}
 
 
+def _object_id_literal(sql, start):
+    """Read a static OBJECT_ID argument after SQL whitespace and comments."""
+    index = start
+    while index < len(sql):
+        if sql[index].isspace():
+            index += 1
+        elif sql.startswith("--", index):
+            end = sql.find("\n", index)
+            index = len(sql) if end < 0 else end + 1
+        elif sql.startswith("/*", index):
+            depth = 1
+            index += 2
+            while depth and index < len(sql):
+                if sql.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif sql.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            if depth:
+                return None
+        else:
+            break
+    if index < len(sql) and sql[index] in "Nn":
+        index += 1
+    literal = re.match(r"'((?:''|[^'])*)'", sql[index:])
+    return literal.group(1).replace("''", "'") if literal else None
+
+
 def render_dynamic_drop_constraint_provider():
     return ("DECLARE @ReleaseConstraint sysname;\n"
             "SELECT @ReleaseConstraint = dc.name\n"
@@ -323,8 +354,8 @@ def transform_provider_sql(sql, *, source_path, unit_id, excluded_objects=()):
         unqualified = rf"\b(?:FROM|JOIN|INTO|UPDATE|TABLE|REFERENCES)\s+{object_token}(?!\w)"
         remaining_operation = any(op.qualified_object.casefold() == name for op in operations)
         object_id_reference = any(
-            (literal := re.match(r"\s*N?'((?:''|[^'])*)'", sql[match.end():], re.I))
-            and literal.group(1).replace("[", "").replace("]", "").casefold() == f"{schema}.{object_name}".casefold()
+            (literal := _object_id_literal(sql, match.end())) is not None
+            and literal.replace("[", "").replace("]", "").casefold() == f"{schema}.{object_name}".casefold()
             for match in re.finditer(r"\bOBJECT_ID\s*\(", code, re.I))
         if (remaining_operation or re.search(qualified, code, re.I)
                 or re.search(unqualified, code, re.I) or object_id_reference):
