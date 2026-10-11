@@ -72,6 +72,37 @@ def test_user_id_redaction_preserves_multiline_sql_identifier_rhs():
     assert evidence_redaction.redact_text(value) == value
 
 
+def test_user_id_redaction_does_not_treat_sql_looking_quoted_note_as_sql():
+    value = "note = 'example: UPDATE users SET user_id=alice'"
+    assert evidence_redaction.redact_text(value) == \
+        "note = 'example: UPDATE users SET user_id=[REDACTED]'"
+    assert evidence_redaction.redact_text("UPDATE t SET note = user_id=alice") == \
+        "UPDATE t SET note = user_id=[REDACTED]"
+
+
+def test_user_id_redaction_consumes_doubled_quote_sql_literals():
+    value = "UPDATE users SET note = 'safe ''quoted'' user_id=alice'"
+    assert evidence_redaction.redact_text(value) == \
+        "UPDATE users SET note = 'safe ''quoted'' user_id=[REDACTED]'"
+    assert evidence_redaction.redact_text("UPDATE users SET user_id = 'ali''ce'") == \
+        "UPDATE users SET user_id = [REDACTED]"
+
+
+def test_user_id_redaction_preserves_sql_server_bracketed_rhs_identifier():
+    value = "UPDATE users SET user_id = [source_user_id]"
+    assert evidence_redaction.redact_text(value) == value
+    assert evidence_redaction.redact_text("UPDATE users SET user_id = 'source_user_id'") == \
+        "UPDATE users SET user_id = [REDACTED]"
+    assert evidence_redaction.redact_text("SELECT 'O''Brien' AS note, [source_user_id] FROM users") == \
+        "SELECT 'O''Brien' AS note, [source_user_id] FROM users"
+
+
+def test_user_id_redaction_scans_multiline_literals_but_not_comments_for_sql_context():
+    value = "UPDATE users /* setup */\nSET note = 'line one,\nUPDATE x SET user_id=alice' -- user_id=bob"
+    assert evidence_redaction.redact_text(value) == \
+        "UPDATE users /* setup */\nSET note = 'line one,\nUPDATE x SET user_id=[REDACTED]' -- user_id=[REDACTED]"
+
+
 @pytest.mark.parametrize("value", [
     "UPDATE users -- note\nSET user_id = alice",
     "UPDATE users /* note */\nSET user_id = alice",
