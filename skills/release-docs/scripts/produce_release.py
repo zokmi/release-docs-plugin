@@ -14,6 +14,7 @@ from parameter_metadata import sanitize_parameter_changes
 from render_release_documents import render_release_documents, _plain_path, KINDS, OutputInventory
 from run_local_validation import run_local_validation
 from derived_sources import verify_source
+from evidence_redaction import normalize_secrets
 
 
 class ProductionError(ValueError):
@@ -55,6 +56,7 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
                     validation_options=None, parent_run_id=None, secrets=()):
     stage = 'preflight'
     try:
+        secrets = normalize_secrets(secrets)
         repo, run, output = _plain_path(repo), _plain_path(run_root), _plain_path(output_dir)
         if (run.parent.name != 'runs' or run.parent.parent.name != '.release-docs'
                 or not run.is_relative_to(repo)

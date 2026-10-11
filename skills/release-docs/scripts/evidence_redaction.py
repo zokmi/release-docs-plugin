@@ -19,6 +19,7 @@ _ASSIGNMENT = re.compile(
 )
 _SQL_UPDATE_SET = re.compile(r"\bUPDATE\b[\s\S]*\bSET\b[^;]*$", re.IGNORECASE)
 _SQL_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)*")
+_SQL_COMMENT = re.compile(r"--[^\r\n]*|/\*.*?(?:\*/|$)", re.DOTALL)
 _URL_CREDENTIALS = re.compile(r"(https?://)[^\s/@]+:[^\s/@]+@", re.IGNORECASE)
 _PEM_PRIVATE_KEY = re.compile(
     r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----.*?"
@@ -61,16 +62,24 @@ def _secret_values(secrets: Iterable[str]) -> list[str]:
     return sorted(set(values), key=len, reverse=True)
 
 
+def normalize_secrets(secrets: Iterable[str] = ()) -> tuple[str, ...]:
+    """Materialize and validate secrets once for callers that reuse them."""
+    return tuple(_secret_values(secrets))
+
+
 def _is_sql_user_id_identifier_assignment(text: str, match: re.Match) -> bool:
     key = match.group(1).split("=", 1)[0].split(":", 1)[0].strip().lower()
-    value = match.group(2).strip("\"'")
+    value = match.group(2)
     if key not in {"user_id", "userid", "user id"} or not _SQL_IDENTIFIER.fullmatch(value):
         return False
-    statement_start = max(text.rfind(";", 0, match.start()), text.rfind("\n", 0, match.start())) + 1
-    preceding = text[statement_start:match.start()]
-    if re.search(r"--|/\*", preceding):
-        return False
-    return _SQL_UPDATE_SET.search(preceding) is not None
+    statement_start = text.rfind(";", 0, match.start()) + 1
+    statement = text[statement_start:match.start()]
+    comments = list(_SQL_COMMENT.finditer(statement))
+    if comments:
+        if comments[-1].end() == len(statement):
+            return False
+        statement = statement[comments[-1].end():]
+    return _SQL_UPDATE_SET.search(statement) is not None
 
 
 def _redact_assignments(text: str) -> str:

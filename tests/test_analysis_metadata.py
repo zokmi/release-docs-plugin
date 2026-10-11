@@ -27,6 +27,22 @@ def test_analysis_metadata_roundtrip_masks_secrets(tmp_path):
     assert '[REDACTED]' in saved['parameter_changes'][0]['apply']
 
 
+def test_lifecycle_redacts_generator_secrets_in_each_durable_document(tmp_path):
+    analysis = AnalysisResult()
+    analysis.findings = [{'blocking': False,
+                          'message': 'provider returned lifecycle-generator-secret'}]
+    manifest = write_lifecycle_run(
+        tmp_path / '.release-docs/runs/generator', analysis,
+        secrets=(secret for secret in ['lifecycle-generator-secret']))
+
+    for name in ('lifecycle_exclusion_manifest.json', 'source_unit_metadata.json',
+                 'lifecycle_metadata.json'):
+        content = (manifest.parent / name).read_text(encoding='utf-8')
+        assert 'lifecycle-generator-secret' not in content
+    assert 'provider returned [REDACTED]' in \
+        (manifest.parent / 'source_unit_metadata.json').read_text(encoding='utf-8')
+
+
 def test_unknown_parameter_applicability_is_persisted(tmp_path):
     analysis = AnalysisResult()
     manifest = write_lifecycle_run(tmp_path / '.release-docs/runs/one', analysis)

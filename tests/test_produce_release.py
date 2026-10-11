@@ -131,3 +131,18 @@ def test_produce_release_redacts_supplied_unlabelled_secret_from_lifecycle(tmp_p
     persisted = (args['run_root'] / 'source_unit_metadata.json').read_text(encoding='utf-8')
     assert 'opaque-production-secret' not in persisted
     assert 'provider returned [REDACTED]' in persisted
+
+
+def test_produce_release_reuses_generator_secrets_across_durable_lifecycle_writes(tmp_path):
+    from produce_release import produce_release
+    args = inputs(tmp_path)
+    args['analysis'].findings = [{'code': 'provider_warning', 'blocking': False,
+                                  'message': 'provider returned generator-production-secret'}]
+
+    produce_release(**args, secrets=(secret for secret in ['generator-production-secret']))
+
+    for name in ('source_unit_metadata.json', 'lifecycle_metadata.json'):
+        persisted = (args['run_root'] / name).read_text(encoding='utf-8')
+        assert 'generator-production-secret' not in persisted
+    persisted = (args['run_root'] / 'source_unit_metadata.json').read_text(encoding='utf-8')
+    assert 'provider returned [REDACTED]' in persisted

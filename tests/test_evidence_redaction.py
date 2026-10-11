@@ -62,6 +62,31 @@ def test_user_id_redaction_does_not_exempt_assignments_in_sql_comments():
         "UPDATE t SET user_id = source_user_id -- login failed user_id=[REDACTED]"
 
 
+def test_user_id_redaction_masks_quoted_rhs_even_inside_update_set():
+    assert evidence_redaction.redact_text("UPDATE users SET user_id='alice'") == \
+        "UPDATE users SET user_id=[REDACTED]"
+
+
+def test_user_id_redaction_preserves_multiline_sql_identifier_rhs():
+    value = "UPDATE users\nSET\n    user_id = source_user_id"
+    assert evidence_redaction.redact_text(value) == value
+
+
+@pytest.mark.parametrize("value", [
+    "UPDATE users -- note\nSET user_id = alice",
+    "UPDATE users /* note */\nSET user_id = alice",
+    "UPDATE users;\nSET user_id = alice",
+])
+def test_user_id_redaction_does_not_carry_sql_context_across_comments_or_statements(value):
+    assert evidence_redaction.redact_text(value).endswith("user_id = [REDACTED]")
+
+
+def test_user_id_redaction_keeps_comment_and_prose_assignments_masked():
+    value = "-- failed login user_id=alice\nUPDATE users SET user_id = source_user_id"
+    assert evidence_redaction.redact_text(value) == \
+        "-- failed login user_id=[REDACTED]\nUPDATE users SET user_id = source_user_id"
+
+
 def test_redact_mapping_recurses_and_preserves_safe_identifiers_hashes_paths_and_statuses():
     payload = {
         "finding": {"message": "token=abc123", "code": "business_data_validation"},

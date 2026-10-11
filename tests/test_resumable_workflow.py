@@ -476,6 +476,33 @@ def test_resume_api_redacts_supplied_unlabelled_secret_from_durable_result(owned
     assert 'opaque-resume-secret' not in (run / 'production_result.json').read_text(encoding='utf-8')
 
 
+def test_resume_reuses_generator_secrets_across_checkpoints_and_result_write(owned_run):
+    import json
+    from resume_release import resume_release
+
+    repo, run = owned_run
+    inputs = {stage: {'value': stage} for stage in STAGES}
+    result = durable_result(run, repo / 'deliverables',
+                            findings=[{'message': 'runner returned generator-resume-secret'}])
+
+    def adapter(stage):
+        def execute(run_root, _stage_inputs):
+            output = run_root / 'evidence' / f'{stage}.json'
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(stage, encoding='utf-8')
+            return {'output_files': [output], 'result': result}
+        return execute
+
+    resume_release(repo, run, current_inputs=inputs,
+                   adapters={stage: adapter(stage) for stage in STAGES},
+                   secrets=(secret for secret in ['generator-resume-secret']))
+
+    stored = (run / 'production_result.json').read_text(encoding='utf-8')
+    assert 'generator-resume-secret' not in stored
+    payload = json.loads(stored)
+    assert payload['artifact']['findings'][0]['message'] == 'runner returned [REDACTED]'
+
+
 def test_resumed_result_reconstructs_production_fields_from_durable_result(owned_run):
     from resume_release import resume_release
 

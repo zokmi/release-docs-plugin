@@ -27,3 +27,12 @@ Base: `d6b6c23`.
 - The direct `produce_release(..., secrets=...)` persistence assertion already covers secret forwarding and passed unchanged.
 - Focused verification: `pytest.exe tests/test_evidence_redaction.py tests/test_resumable_workflow.py tests/test_produce_release.py -q --basetemp .pytest-task5-comment-boundary-run1` → **50 passed** in 190.91s. A first attempt using Windows Temp failed to create pytest fixture directories under the sandbox; the workspace-basetemp rerun completed successfully. Pytest also emitted the existing non-failing `pyreadline3` Windows shutdown warning (`WinError 0xc0000008`).
 - Fix commit: `fix: bound SQL redaction exemption`.
+
+## Final review findings on `f26a175`
+
+- The SQL `user_id` exemption now preserves only an unquoted identifier RHS. Quoted values such as `UPDATE users SET user_id='alice'` are redacted. SQL-context matching spans line breaks and stops at comments and statement boundaries; comments and prose assignments remain redacted.
+- `produce_release`, `resume_release`, and `write_lifecycle_run` now materialize and validate secret iterables once as a reusable tuple before their durable writes. Generator inputs are covered at all three boundaries, including workflow checkpoints, lifecycle documents, and the durable production result.
+- Existing safe error summaries remain unchanged; raw exception details are not persisted. Public defaults remain `secrets=()`.
+- Regression tests were first run against the pre-fix implementation and failed on the quoted RHS, multiline SQL context, and generator-secret persistence cases. All added regressions passed after the fix.
+- Focused verification: `pytest.exe tests/test_evidence_redaction.py tests/test_resumable_workflow.py tests/test_produce_release.py tests/test_analysis_metadata.py tests/test_local_validation.py tests/test_artifact_lifecycle.py -q --basetemp .pytest-task5-final-review-focused` → **142 passed, 2 skipped** in 344.50s. The pytest process exited successfully; the existing `pyreadline3` Windows `Console.__del__` shutdown warning (`WinError 0xc0000008`) appeared afterward.
+- Diff whitespace verification: `git diff --check`.

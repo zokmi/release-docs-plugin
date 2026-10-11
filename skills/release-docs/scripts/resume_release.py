@@ -245,11 +245,9 @@ def _builtin_production(repo, run, inputs, input_fingerprint, secrets=()):
         raise ValueError('Production request ownership mismatch')
     request = dict(request)
     has_request_secrets = 'secrets' in request
-    request_secrets = request.get('secrets', ())
-    if isinstance(request_secrets, str):
-        request_secrets = (request_secrets,)
-    if isinstance(secrets, str):
-        secrets = (secrets,)
+    from evidence_redaction import normalize_secrets
+    request_secrets = normalize_secrets(request.get('secrets', ()))
+    secrets = normalize_secrets(secrets)
     combined_secrets = (*request_secrets, *secrets)
     if has_request_secrets or request_secrets or secrets:
         request['secrets'] = combined_secrets
@@ -291,6 +289,8 @@ def resume_release(repo, run_root, *, current_inputs, adapters=None, secrets=())
     if not isinstance(handlers, dict):
         raise ProductionError('preflight', 'production_contract_violation')
     try:
+        from evidence_redaction import normalize_secrets
+        secrets = normalize_secrets(secrets)
         state = load_workflow_state(run)
         stage = resume_checkpoint(run, state['workflow_fingerprint'])
         state = load_workflow_state(run)

@@ -6,13 +6,14 @@ import re
 import shutil
 from path_safety import is_linked_path
 from parameter_metadata import sanitize_parameter_changes
-from evidence_redaction import assert_safe_evidence, redact_mapping
+from evidence_redaction import assert_safe_evidence, normalize_secrets, redact_mapping
 
 
 def write_lifecycle_run(run_root, analysis_result, localdb_validation=None,
                         execution_artifact=None, operator_contract=None, parent_run_id=None,
                         *, secrets=()):
     """Persist deterministic metadata, rejecting operator paths and replacement."""
+    secrets = normalize_secrets(secrets)
     requested = Path(run_root)
     if ".." in requested.parts:
         raise ValueError("Traversal is not permitted in lifecycle paths")
