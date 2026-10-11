@@ -67,7 +67,10 @@ def _is_sql_user_id_identifier_assignment(text: str, match: re.Match) -> bool:
     if key not in {"user_id", "userid", "user id"} or not _SQL_IDENTIFIER.fullmatch(value):
         return False
     statement_start = max(text.rfind(";", 0, match.start()), text.rfind("\n", 0, match.start())) + 1
-    return _SQL_UPDATE_SET.search(text[statement_start:match.start()]) is not None
+    preceding = text[statement_start:match.start()]
+    if re.search(r"--|/\*", preceding):
+        return False
+    return _SQL_UPDATE_SET.search(preceding) is not None
 
 
 def _redact_assignments(text: str) -> str:

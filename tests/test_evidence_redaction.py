@@ -56,6 +56,12 @@ def test_user_id_redaction_preserves_sql_update_identifiers_and_masks_prose():
         "UPDATE t SET user_id = source_user_id; login failed user_id=[REDACTED]"
 
 
+def test_user_id_redaction_does_not_exempt_assignments_in_sql_comments():
+    value = "UPDATE t SET user_id = source_user_id -- login failed user_id=alice"
+    assert evidence_redaction.redact_text(value) == \
+        "UPDATE t SET user_id = source_user_id -- login failed user_id=[REDACTED]"
+
+
 def test_redact_mapping_recurses_and_preserves_safe_identifiers_hashes_paths_and_statuses():
     payload = {
         "finding": {"message": "token=abc123", "code": "business_data_validation"},

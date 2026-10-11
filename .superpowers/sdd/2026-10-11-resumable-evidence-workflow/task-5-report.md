@@ -20,3 +20,10 @@ Exception persistence remains limited to the existing non-sensitive stage summar
 - The Python test process emitted the existing `pyreadline3` `Console.__del__` Windows `WinError 0xc0000008` during teardown after successful runs; pytest exit status and test results were unaffected.
 
 Base: `d6b6c23`.
+
+## P2 follow-up on `323676a`
+
+- Bounded the SQL `user_id` identifier exemption at comment boundaries. Added a regression for `UPDATE t SET user_id = source_user_id -- login failed user_id=alice`; the source identifier remains byte-for-byte intact and `alice` is redacted.
+- The direct `produce_release(..., secrets=...)` persistence assertion already covers secret forwarding and passed unchanged.
+- Focused verification: `pytest.exe tests/test_evidence_redaction.py tests/test_resumable_workflow.py tests/test_produce_release.py -q --basetemp .pytest-task5-comment-boundary-run1` → **50 passed** in 190.91s. A first attempt using Windows Temp failed to create pytest fixture directories under the sandbox; the workspace-basetemp rerun completed successfully. Pytest also emitted the existing non-failing `pyreadline3` Windows shutdown warning (`WinError 0xc0000008`).
+- Fix commit: `fix: bound SQL redaction exemption`.
