@@ -16,9 +16,13 @@ class ParameterDiscoveryResult:
 
 def _flatten(value, prefix=""):
     if isinstance(value, dict):
+        if not value:
+            yield prefix, value
         for key in sorted(value):
             yield from _flatten(value[key], f"{prefix}:{key}" if prefix else str(key))
     elif isinstance(value, list):
+        if not value:
+            yield prefix, value
         for index, item in enumerate(value):
             yield from _flatten(item, f"{prefix}:{index}" if prefix else str(index))
     else:
@@ -26,11 +30,17 @@ def _flatten(value, prefix=""):
 
 
 def _document(source):
+    if source is None:
+        raise ValueError("source is absent")
     value = source.get("content", source.get("bytes", source.get("data")))
+    if value is None:
+        raise ValueError("source content is missing")
     if isinstance(value, bytes):
         value = value.decode("utf-8-sig")
     if isinstance(value, str):
-        return json.loads(value)
+        value = json.loads(value)
+    if not isinstance(value, dict):
+        raise ValueError("source content must be a JSON object")
     return value
 
 
@@ -39,13 +49,23 @@ def _source_ref(source):
 
 
 def _scope(source, consumer_sources):
-    environment = source.get("environment")
-    service = source.get("service")
-    for consumer in consumer_sources:
-        if consumer.get("path") == source.get("path"):
-            environment = environment or consumer.get("environment")
-            service = service or consumer.get("service")
-    return environment, service
+    matching = [consumer for consumer in consumer_sources
+                if consumer.get("path") == source.get("path")]
+    values = {}
+    conflicts = []
+    for field_name in ("environment", "service"):
+        candidates = {item.get(field_name) for item in [source, *matching]
+                      if isinstance(item.get(field_name), str) and item[field_name].strip()}
+        values[field_name] = next(iter(candidates)) if len(candidates) == 1 else None
+        if len(candidates) > 1:
+            conflicts.append(field_name)
+    return values["environment"], values["service"], conflicts
+
+
+def _same_json_value(left, right):
+    if isinstance(left, bool) != isinstance(right, bool):
+        return False
+    return left == right
 
 
 def discover_parameter_changes(base_sources: list[dict], target_sources: list[dict], *,
@@ -75,14 +95,15 @@ def discover_parameter_changes(base_sources: list[dict], target_sources: list[di
                                     "message": f"Unable to parse pinned JSON source: {error}"})
             continue
         changed_keys = sorted(key for key in set(before) | set(after)
-                              if before.get(key, _MISSING) != after.get(key, _MISSING))
+                              if not _same_json_value(before.get(key, _MISSING),
+                                                      after.get(key, _MISSING)))
         for key in changed_keys:
             detected = True
             old = before.get(key, _MISSING)
             new = after.get(key, _MISSING)
             kind = "add" if old is _MISSING else "remove" if new is _MISSING else "update"
             owner = after_source or before_source
-            environment, service = _scope(owner, consumers)
+            environment, service, scope_conflicts = _scope(owner, consumers)
             descriptor = {"environment": environment, "service": service, "key": key,
                           "change": kind, "source_reference": {
                               "base": _source_ref(before_source) if before_source else None,
@@ -99,6 +120,11 @@ def discover_parameter_changes(base_sources: list[dict], target_sources: list[di
                 result.findings.append({"blocking": True, "source": path, "key": key,
                                         "missing": missing,
                                         "message": "Parameter descriptor is incomplete"})
+            if scope_conflicts:
+                unresolved = True
+                result.findings.append({"blocking": True, "source": path, "key": key,
+                                        "missing": ["scope"], "conflicts": scope_conflicts,
+                                        "message": "Conflicting consumer scope evidence"})
 
     for source in deployments:
         variables = source.get("environment_variables", {})
@@ -107,15 +133,13 @@ def discover_parameter_changes(base_sources: list[dict], target_sources: list[di
                 continue
             detected = True
             key = variable.replace("__", ":")
-            environment, service = _scope(source, consumers)
+            environment, service, scope_conflicts = _scope(source, consumers)
+            unresolved = True
             missing = [field for field, field_value in (("environment", environment), ("service", service))
                        if not isinstance(field_value, str) or not field_value.strip()]
-            unresolved = True
-            result.changes.append({"environment": environment, "service": service, "key": key,
-                                   "new_value": value, "change": "add",
-                                   "source_reference": {"deployment": _source_ref(source)}})
             result.findings.append({"blocking": True, "source": source.get("path"), "key": key,
-                                    "missing": missing or ["provider_precedence", "base_value"],
+                                    "missing": missing + ["provider_precedence", "base_value"],
+                                    "conflicts": scope_conflicts,
                                     "message": "Environment variable mapping found; provider or base evidence unresolved"})
 
     if detected:

@@ -21,5 +21,21 @@ Completed Task 1: added a pinned-source JSON configuration diff and parameter di
 
 ## Concerns
 
-- Environment variable deployment mappings are represented as unresolved `add` candidates because this interface receives no paired deployment base/target data or provider-precedence evidence. A downstream integration should keep the blocking finding authoritative until such evidence is supplied.
+- The initial implementation represented deployment mappings as unresolved `add` candidates. The review fix below removes that unsupported change assertion; provider/base evidence is still required to confirm a change.
 - Pytest printed a Windows `pyreadline3` `Console.__del__` `OSError` after reporting all five tests passed; it did not affect the test result.
+
+## Review fixes (2026-10-12)
+
+Implemented the five requested review corrections using TDD:
+
+- Added explicit JSON value comparison so booleans are distinct from numbers (`false` no longer compares equal to `0`).
+- Missing source objects/content, invalid JSON, and non-object roots now produce blocking findings and keep applicability unresolved.
+- Empty objects and arrays now survive flattening as explicit container values. Empty-to-nonempty transitions are represented by a container removal plus child additions.
+- Deployment environment variable mappings now produce only a blocking unresolved finding with the mapped key. They do not create an unsupported `add` descriptor.
+- Environment/service scope is collected across the source and matching consumer evidence. Conflicting values result in unresolved scope and a blocking finding rather than input-order selection.
+
+### Review fix verification
+
+- RED: focused tests exposed 4 failures covering bool/number equality, empty containers, asserted deployment addition, and conflicting consumer scope. The missing-content regression was included and confirmed blocking behavior.
+- GREEN: `pytest tests/test_parameter_discovery.py -q` — 10 passed.
+- `git diff --check` passed. Pytest still emits the Windows `pyreadline3` console cleanup warning after the passing summary.

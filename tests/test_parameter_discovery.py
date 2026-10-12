@@ -48,10 +48,10 @@ def test_environment_double_underscore_maps_to_nested_key_without_inventing_scop
     result = discover_parameter_changes(
         [], [], deployment_sources=[{"path": "deployment.yaml", "revision": "pinned",
                                     "environment_variables": {"Foo__Bar": "value"}}])
-    assert result.changes
-    assert result.changes[0]["key"] == "Foo:Bar"
+    assert result.changes == []
     assert result.applicable is None
-    assert any(finding.get("blocking") for finding in result.findings)
+    assert any(finding.get("blocking") and finding.get("key") == "Foo:Bar"
+               for finding in result.findings)
 
 
 def test_config_change_with_missing_environment_or_service_is_blocked():
@@ -62,4 +62,51 @@ def test_config_change_with_missing_environment_or_service_is_blocked():
     assert "environment" in result.findings[0]["missing"]
     assert "service" in result.findings[0]["missing"]
     assert result.applicable is None
+
+
+def test_boolean_and_number_transitions_are_distinct_json_changes():
+    result = discover_parameter_changes([source('{"Value":false}')],
+                                        [source('{"Value":0}')])
+    assert len(result.changes) == 1
+    assert result.changes[0]["change"] == "update"
+    assert result.changes[0]["old_value"] is False
+    assert result.changes[0]["new_value"] == 0
+    assert type(result.changes[0]["new_value"]) is int
+
+
+def test_missing_source_content_is_blocking_and_not_a_no_change_result():
+    result = discover_parameter_changes([{"path": "appsettings.json", "revision": "base"}],
+                                        [source('{"A":1}')])
+    assert result.applicable is None
+    assert any(finding.get("blocking") for finding in result.findings)
+
+
+def test_empty_objects_and_arrays_are_preserved_as_container_changes():
+    result = discover_parameter_changes([source('{"Object":{},"Array":[]}')],
+                                        [source('{"Object":{"A":1},"Array":[1]}')])
+    assert [(change["key"], change["change"]) for change in result.changes] == [
+        ("Array", "remove"), ("Array:0", "add"), ("Object", "remove"), ("Object:A", "add")]
+
+
+def test_environment_mapping_does_not_claim_an_unsupported_addition():
+    result = discover_parameter_changes(
+        [], [], deployment_sources=[{"path": "deployment.yaml", "revision": "pinned",
+                                    "environment_variables": {"Foo__Bar": "value"}}])
+    assert result.changes == []
+    assert result.applicable is None
+    assert any(finding.get("blocking") and finding.get("key") == "Foo:Bar"
+               for finding in result.findings)
+
+
+def test_conflicting_consumer_scopes_are_blocked_instead_of_order_dependent():
+    consumers = [{"path": "appsettings.json", "environment": "Production", "service": "API"},
+                 {"path": "appsettings.json", "environment": "Staging", "service": "Worker"}]
+    result = discover_parameter_changes([source('{"A":1}', environment=None, service=None)],
+                                        [source('{"A":2}', environment=None, service=None)],
+                                        consumer_sources=consumers)
+    assert result.changes[0]["environment"] is None
+    assert result.changes[0]["service"] is None
+    assert result.applicable is None
+    assert any(finding.get("blocking") and "scope" in finding.get("missing", [])
+               for finding in result.findings)
 
