@@ -234,8 +234,8 @@ def _metadata(repo, revision, path, kind):
 
 def _config_path(path):
     name = PurePosixPath(path).name.lower()
-    return (name.endswith('.config') or
-            (name.endswith('.json') and (name.startswith('appsettings') or name.startswith('settings'))))
+    return (name.endswith('.json') and
+            (name.startswith('appsettings') or name.startswith('settings')))
 
 
 def _deployment_path(path):

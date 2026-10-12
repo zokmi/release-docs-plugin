@@ -5,7 +5,8 @@ import sys
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / 'skills/release-docs/scripts'))
-from analyze_release_units import AnalysisResult, analyze_release_units
+from analyze_release_units import (AnalysisResult, _parameter_changed_paths,
+                                   analyze_release_units)
 from lifecycle_store import write_lifecycle_run
 from collect_release_evidence import collect_release_evidence
 import subprocess
@@ -140,6 +141,16 @@ def test_no_config_change_retains_checked_diff_evidence(tmp_path):
     assert analysis.parameters_applicable is False
     assert analysis.checked_parameter_sources
     assert analysis.checked_parameter_sources[0]['role'] == 'diff'
+
+
+def test_inventory_listed_config_is_a_parameter_source():
+    config, deployment = _parameter_changed_paths(
+        [{'status': 'M', 'path': 'client.config'},
+         {'status': 'M', 'path': 'web.config'}],
+        {'web.config': {'environment': 'Production', 'service': 'CustomerAPI'}})
+
+    assert config == {'web.config'}
+    assert deployment == set()
 
 
 @pytest.mark.parametrize('source_path', ['deployment.yaml', 'docker-compose.yml', '.env.production'])
