@@ -234,8 +234,9 @@ def _metadata(repo, revision, path, kind):
 
 def _config_path(path):
     name = PurePosixPath(path).name.lower()
-    return (name.endswith('.json') and
-            (name.startswith('appsettings') or name.startswith('settings')))
+    return (name in ('web.config', 'app.config') or
+            (name.endswith('.json') and
+             (name.startswith('appsettings') or name.startswith('settings'))))
 
 
 def _deployment_path(path):
@@ -360,7 +361,9 @@ def _analyze_parameters(result, repo, evidence):
         metadata = inventory.get(change['source_reference']['target']['path']
                                  if change['source_reference']['target'] else
                                  change['source_reference']['base']['path'], {})
-        for field_name in ('format_example', 'apply', 'reload', 'validation'):
+        for field_name in ('format_example', 'apply', 'reload', 'validation',
+                           'parameter_group', 'business_context', 'module', 'users',
+                           'impact', 'environment_variable'):
             if field_name in metadata:
                 change[field_name] = metadata[field_name]
     for finding in discovery.findings:

@@ -12,20 +12,21 @@ from collect_release_evidence import collect_release_evidence
 import subprocess
 
 
-def _config_evidence(tmp_path, before, after):
+def _config_evidence(tmp_path, before, after, source_path='appsettings.json'):
     def git(*args):
         return subprocess.run(['git', '-C', str(tmp_path), *args], check=True,
                               capture_output=True, text=True).stdout.strip()
     git('init', '-q')
     git('config', 'user.name', 'Fixture')
     git('config', 'user.email', 'fixture@example.invalid')
-    config = tmp_path / 'appsettings.json'
+    config = tmp_path / source_path
+    config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(before, encoding='utf-8')
-    git('add', 'appsettings.json')
+    git('add', source_path)
     git('commit', '-qm', 'base')
     base = git('rev-parse', 'HEAD')
     config.write_text(after, encoding='utf-8')
-    git('add', 'appsettings.json')
+    git('add', source_path)
     git('commit', '--allow-empty', '-qm', 'target')
     target = git('rev-parse', 'HEAD')
     return collect_release_evidence(tmp_path, base, target)
@@ -36,7 +37,10 @@ def test_pinned_appsettings_change_populates_analysis_without_worktree_content(t
                                 '{"Cache":{"TTL":120}}')
     (tmp_path / 'appsettings.json').write_text('{"Cache":{"TTL":999}}', encoding='utf-8')
     evidence['parameter_source_inventory'] = {
-        'appsettings.json': {'environment': 'Production', 'service': 'CustomerAPI'}}
+        'appsettings.json': {'environment': 'Production', 'service': 'CustomerAPI',
+                             'parameter_group': 'Cache', 'business_context': '快取查詢',
+                             'module': '查詢 API', 'users': '客服',
+                             'impact': '快取期限改為 120 秒'}}
     baseline = tmp_path / 'baseline.sql'
     baseline.write_text('', encoding='utf-8')
 
@@ -47,6 +51,10 @@ def test_pinned_appsettings_change_populates_analysis_without_worktree_content(t
             for item in analysis.parameter_changes] == [('Cache:TTL', 60, 120)]
     assert {'base', 'target'} <= {item['role'] for item in analysis.checked_parameter_sources}
     assert all('content' not in item for item in analysis.checked_parameter_sources)
+    assert {field: analysis.parameter_changes[0][field] for field in (
+        'parameter_group', 'business_context', 'module', 'users', 'impact')} == {
+        'parameter_group': 'Cache', 'business_context': '快取查詢',
+        'module': '查詢 API', 'users': '客服', 'impact': '快取期限改為 120 秒'}
 
 
 def test_unchanged_pinned_config_is_confirmed_false_with_checked_sources(tmp_path):
@@ -147,10 +155,44 @@ def test_inventory_listed_config_is_a_parameter_source():
     config, deployment = _parameter_changed_paths(
         [{'status': 'M', 'path': 'client.config'},
          {'status': 'M', 'path': 'web.config'}],
-        {'web.config': {'environment': 'Production', 'service': 'CustomerAPI'}})
+        {'client.config': {'environment': 'Production', 'service': 'CustomerAPI'}})
 
-    assert config == {'web.config'}
+    assert config == {'client.config', 'web.config'}
     assert deployment == set()
+
+
+@pytest.mark.parametrize('source_path', ['Web.config', 'service/wEb.CoNfIg',
+                                       'App.config', 'service/aPP.CONFIG'])
+@pytest.mark.parametrize('with_inventory', [False, True])
+def test_canonical_config_without_parser_blocks_analysis(tmp_path, source_path, with_inventory):
+    evidence = _config_evidence(tmp_path, '<configuration/>',
+                                '<configuration><appSettings/></configuration>', source_path)
+    if with_inventory:
+        evidence['parameter_source_inventory'] = {
+            source_path: {'environment': 'Production', 'service': 'API'}}
+    baseline = tmp_path / 'baseline.sql'
+    baseline.write_text('', encoding='utf-8')
+
+    analysis = analyze_release_units(tmp_path, evidence, baseline, None)
+
+    assert analysis.blocked
+    assert analysis.parameters_applicable is None
+    assert {'code': 'unsupported_parameter_source', 'blocking': True,
+            'source_path': source_path} in analysis.findings
+
+
+@pytest.mark.parametrize('source_path', ['client.config', 'packages.config', 'service/PACKAGES.CONFIG'])
+def test_unlisted_noncanonical_config_does_not_block_analysis(tmp_path, source_path):
+    evidence = _config_evidence(tmp_path, '<configuration/>',
+                                '<configuration><runtime/></configuration>', source_path)
+    baseline = tmp_path / 'baseline.sql'
+    baseline.write_text('', encoding='utf-8')
+
+    analysis = analyze_release_units(tmp_path, evidence, baseline, None)
+
+    assert not analysis.blocked
+    assert analysis.parameters_applicable is False
+    assert analysis.parameter_changes == []
 
 
 @pytest.mark.parametrize('source_path', ['deployment.yaml', 'docker-compose.yml', '.env.production'])
