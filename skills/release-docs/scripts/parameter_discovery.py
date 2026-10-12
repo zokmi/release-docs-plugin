@@ -45,6 +45,14 @@ def _document(source):
     return value
 
 
+def _containers(value, prefix=""):
+    if isinstance(value, (dict, list)):
+        yield prefix, value
+        items = value.items() if isinstance(value, dict) else enumerate(value)
+        for key, child in items:
+            yield from _containers(child, f"{prefix}:{key}" if prefix else str(key))
+
+
 def _source_ref(source):
     return dict(source)
 
@@ -101,7 +109,8 @@ def discover_parameter_changes(base_sources: list[dict], target_sources: list[di
         before_source = base_by_path.get(path)
         after_source = target_by_path.get(path)
         try:
-            before = dict(_flatten(_document(before_source))) if before_source else {}
+            before_document = _document(before_source) if before_source else {}
+            before = dict(_flatten(before_document)) if before_source else {}
             target_document = _document(after_source) if after_source else {}
             after = dict(_flatten(target_document)) if after_source else {}
         except (ValueError, TypeError, UnicodeError) as error:
@@ -109,6 +118,19 @@ def discover_parameter_changes(base_sources: list[dict], target_sources: list[di
             result.findings.append({"blocking": True, "source": path,
                                     "message": f"Unable to parse pinned JSON source: {error}"})
             continue
+        before_containers = dict(_containers(before_document))
+        after_containers = dict(_containers(target_document))
+        type_changes = sorted(key for key in before_containers.keys() & after_containers.keys()
+                              if type(before_containers[key]) is not type(after_containers[key]))
+        # Report the outermost replaced container once, retaining its typed values.
+        type_changes = [key for key in type_changes if not any(
+            key.startswith(parent + ':') for parent in type_changes if parent != key)]
+        for key in type_changes:
+            before = {path: value for path, value in before.items()
+                      if not path.startswith(key + ':')}
+            after = {path: value for path, value in after.items()
+                     if not path.startswith(key + ':')}
+            before[key], after[key] = before_containers[key], after_containers[key]
         changed_keys = sorted(key for key in set(before) | set(after)
                               if not _same_json_value(before.get(key, _MISSING),
                                                       after.get(key, _MISSING)))

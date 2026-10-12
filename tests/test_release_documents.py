@@ -758,6 +758,16 @@ def test_localdb_round_without_explicit_error_output_summary_remains_pending(tmp
     assert "LocalDB：待確認" in text and "LocalDB：通過" not in text
 
 
+def test_bearer_credentials_in_parameter_keys_are_masked():
+    module = api()
+    change = {'environment': 'Production', 'service': 'API', 'key': 'Bearer abc.def',
+              'change': 'add', 'new_value': 'ok', 'format_example': 'text',
+              'apply': 'configure', 'reload': 'restart', 'validation': 'health',
+              'target_config': {'Bearer abc.def': 'ok'}}
+    projected = module._parameter_projection([change])
+    assert 'abc.def' not in json.dumps(projected)
+
+
 def test_injected_failure_without_recorded_expected_error_remains_pending(tmp_path):
     module = api()
     analysis, artifact, manifest = inputs(tmp_path)

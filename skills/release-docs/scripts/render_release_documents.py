@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import stat
 from parameter_metadata import redact_text, sanitize_parameter_changes, SENSITIVE as PARAMETER_SENSITIVE
-from evidence_redaction import redact_text as redact_evidence_text, normalize_secrets
+from evidence_redaction import redact_text as redact_evidence_text, normalize_secrets, _BEARER
 
 GUIDE = "00_上線指引.md"
 SQL = "01_部署SQL.sql"
@@ -241,6 +241,12 @@ def _current_evidence_hash(source, expected):
         return False
 
 
+def _safe_parameter_key(value, secrets=()):
+    # Configuration identifiers such as Auth:JwtSecret are not assignments.
+    return _BEARER.sub(lambda match: match.group(1) + '[REDACTED]',
+                       redact_text(value, secrets))
+
+
 def _safe_parameter_value(value, secrets=()):
     """Keep JSON types while removing credentials from every output surface."""
     if isinstance(value, str):
@@ -250,7 +256,7 @@ def _safe_parameter_value(value, secrets=()):
     if isinstance(value, list):
         return [_safe_parameter_value(item, secrets) for item in value]
     if isinstance(value, dict):
-        return {redact_text(key, secrets):
+        return {_safe_parameter_key(key, secrets):
                 ("[REDACTED]" if PARAMETER_SENSITIVE.search(str(key)) else
                  _safe_parameter_value(item, secrets))
                 for key, item in value.items()}
@@ -296,7 +302,7 @@ def _parameter_projection(changes, secrets=()):
     base = sanitize_parameter_changes(safe_input)
     projected = []
     for raw, clean in zip(changes, base):
-        item = {key: (redact_text(value, secrets) if key == "key"
+        item = {key: (_safe_parameter_key(value, secrets) if key == 'key'
                       else _safe_parameter_value(value, secrets)) for key, value in clean.items()}
         item["change"] = _safe_parameter_value(raw.get("change", "待確認"), secrets)
         item["source_reference"] = _source_reference(raw.get("source_reference"), secrets)

@@ -10,6 +10,15 @@ def source(content, **metadata):
             "environment": "Production", "service": "CustomerAPI", **metadata}
 
 
+def test_equal_leaves_do_not_hide_array_object_type_changes():
+    for before, after in ((["same"], {"0": "same"}), ({"0": "same"}, ["same"])):
+        result = discover_parameter_changes([source({"Items": before})],
+                                            [source({"Items": after})])
+        assert result.applicable is True
+        assert [(item['key'], item['change']) for item in result.changes] == [('Items', 'update')]
+        assert result.changes[0]['target_config'] == {'Items': after}
+
+
 def test_discovery_preserves_complete_target_array_context():
     result = discover_parameter_changes([source({"Items": ["old", "keep"]})],
                                         [source({"Items": ["new", "keep"]})])
