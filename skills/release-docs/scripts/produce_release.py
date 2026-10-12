@@ -15,7 +15,8 @@ from render_release_documents import render_release_documents, _plain_path, KIND
 from run_local_validation import run_local_validation
 from derived_sources import verify_source
 from evidence_redaction import normalize_secrets
-from analyze_release_units import _config_path
+from analyze_release_units import (_pinned_change_evidence, _parameter_changed_paths,
+                                   _deployment_variables)
 from parameter_discovery import discover_parameter_changes
 import json
 
@@ -101,26 +102,64 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
                                      capture_output=True, check=True).stdout
             if hashlib.sha256(raw).hexdigest() != unit.get('source_hash'):
                 raise ValueError('Source hash mismatch')
+        actual_changes, diff_hash = _pinned_change_evidence(repo, scope)
+        inventory = evidence.get('parameter_source_inventory', {})
+        if not isinstance(inventory, dict):
+            raise ValueError('Invalid parameter source inventory')
+        changed_config, changed_deployment = _parameter_changed_paths(actual_changes, inventory)
+        supplied = evidence.get('committed_changes')
+        if supplied is None:
+            if changed_config or changed_deployment:
+                raise ValueError('Missing committed change evidence')
+        else:
+            declared_config, declared_deployment = _parameter_changed_paths(supplied, inventory)
+            if changed_config - declared_config or changed_deployment - declared_deployment:
+                raise ValueError('Incomplete committed change evidence')
         checked = getattr(clean, 'checked_parameter_sources', [])
-        changed_config = {item['path'] for item in evidence.get('committed_changes', [])
-                          if _config_path(item['path'])}
+        if set(inventory) - {item.get('path') for item in checked
+                             if isinstance(item, dict) and item.get('role') in ('base', 'target')}:
+            raise ValueError('Unresolved parameter source inventory')
         if changed_config - {item.get('path') for item in checked if isinstance(item, dict)}:
             raise ValueError('Unresolved configuration source')
+        if changed_deployment - {item.get('path') for item in checked
+                                 if isinstance(item, dict) and item.get('role') == 'deployment'}:
+            raise ValueError('Unresolved deployment source')
+        if not checked:
+            checked = [{'role': 'diff', 'base_revision': scope['base_sha'],
+                        'target_revision': scope['target_sha'], 'source_hash': diff_hash}]
+            clean.checked_parameter_sources = checked
         pinned_sources = {'base': [], 'target': []}
+        deployment_sources = {}
         for source in checked:
             path, revision, role = source.get('path'), source.get('revision'), source.get('role')
+            if role == 'diff':
+                if (source.get('base_revision') != scope['base_sha']
+                        or source.get('target_revision') != scope['target_sha']
+                        or source.get('source_hash') != diff_hash):
+                    raise ValueError('Pinned diff evidence mismatch')
+                continue
             if (not isinstance(path, str) or not path or '\\' in path or ':' in path
                     or Path(path).is_absolute() or '..' in Path(path).parts
-                    or role not in pinned_sources or revision != scope[role + '_sha']):
+                    or role not in (*pinned_sources, 'deployment')
+                    or (role in pinned_sources and revision != scope[role + '_sha'])
+                    or (role == 'deployment' and revision not in (scope['base_sha'], scope['target_sha']))):
                 raise ValueError('Unpinned configuration source')
             raw = subprocess.run(['git', '-C', str(repo), 'show', revision + ':' + path],
                                  capture_output=True, check=True).stdout
             if hashlib.sha256(raw).hexdigest() != source.get('source_hash'):
                 raise ValueError('Configuration source hash mismatch')
-            pinned_sources[role].append({**{key: value for key, value in source.items()
-                                            if key != 'role'}, 'content': raw})
+            if role == 'deployment':
+                deployment_sources.setdefault(path, {}).update(_deployment_variables(raw))
+            else:
+                pinned_sources[role].append({**{key: value for key, value in source.items()
+                                                if key != 'role'}, 'content': raw})
+        if changed_deployment and any(not deployment_sources.get(path) for path in changed_deployment):
+            raise ValueError('Unresolved deployment source')
         if checked:
-            discovered = discover_parameter_changes(pinned_sources['base'], pinned_sources['target'])
+            discovered = discover_parameter_changes(
+                pinned_sources['base'], pinned_sources['target'],
+                deployment_sources=[{'path': path, 'environment_variables': variables}
+                                    for path, variables in sorted(deployment_sources.items())])
             if discovered.findings or discovered.applicable != clean.parameters_applicable:
                 raise ValueError('Unresolved configuration discovery')
             fields = ('environment', 'service', 'key', 'change', 'old_value', 'new_value')

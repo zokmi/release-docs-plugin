@@ -44,7 +44,7 @@ def test_pinned_appsettings_change_populates_analysis_without_worktree_content(t
     assert analysis.parameters_applicable is True
     assert [(item['key'], item['old_value'], item['new_value'])
             for item in analysis.parameter_changes] == [('Cache:TTL', 60, 120)]
-    assert {item['role'] for item in analysis.checked_parameter_sources} == {'base', 'target'}
+    assert {'base', 'target'} <= {item['role'] for item in analysis.checked_parameter_sources}
     assert all('content' not in item for item in analysis.checked_parameter_sources)
 
 
@@ -60,7 +60,7 @@ def test_unchanged_pinned_config_is_confirmed_false_with_checked_sources(tmp_pat
 
     assert analysis.parameters_applicable is False
     assert analysis.parameter_changes == []
-    assert {item['role'] for item in analysis.checked_parameter_sources} == {'base', 'target'}
+    assert {'base', 'target'} <= {item['role'] for item in analysis.checked_parameter_sources}
 
 
 def test_config_without_scope_stays_unresolved_and_blocks_analysis(tmp_path):
@@ -74,6 +74,95 @@ def test_config_without_scope_stays_unresolved_and_blocks_analysis(tmp_path):
     assert analysis.parameters_applicable is None
     assert analysis.blocked
     assert analysis.checked_parameter_sources
+
+
+@pytest.mark.parametrize('supplied_changes', [None, []])
+def test_missing_or_incomplete_change_list_does_not_hide_pinned_appsettings(tmp_path, supplied_changes):
+    evidence = _config_evidence(tmp_path, '{"Cache":{"TTL":60}}',
+                                '{"Cache":{"TTL":120}}')
+    if supplied_changes is None:
+        evidence.pop('committed_changes')
+    else:
+        evidence['committed_changes'] = supplied_changes
+    baseline = tmp_path / 'baseline.sql'
+    baseline.write_text('', encoding='utf-8')
+
+    analysis = analyze_release_units(tmp_path, evidence, baseline, None)
+
+    assert analysis.parameters_applicable is None
+    assert analysis.blocked
+    assert any(item.get('path') == 'appsettings.json'
+               for item in analysis.checked_parameter_sources)
+
+
+def test_renamed_appsettings_to_unrecognized_json_is_inspected(tmp_path):
+    evidence = _config_evidence(tmp_path, '{"Cache":{"TTL":60}}',
+                                '{"Cache":{"TTL":60}}')
+    def git(*args):
+        return subprocess.run(['git', '-C', str(tmp_path), *args], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    git('mv', 'appsettings.json', 'runtime.json')
+    git('commit', '-qm', 'rename config')
+    evidence = collect_release_evidence(tmp_path, evidence['base_sha'], git('rev-parse', 'HEAD'))
+    baseline = tmp_path / 'baseline.sql'
+    baseline.write_text('', encoding='utf-8')
+
+    analysis = analyze_release_units(tmp_path, evidence, baseline, None)
+
+    assert analysis.parameters_applicable is None
+    assert analysis.blocked
+    assert {'appsettings.json', 'runtime.json'} <= {
+        item.get('path') for item in analysis.checked_parameter_sources}
+
+
+def test_missing_inventory_path_is_unresolved_not_confirmed_no_change(tmp_path):
+    evidence = _config_evidence(tmp_path, '{"Cache":{"TTL":60}}',
+                                '{"Cache":{"TTL":60}}')
+    evidence['parameter_source_inventory'] = {
+        'missing.json': {'environment': 'Production', 'service': 'API'}}
+    baseline = tmp_path / 'baseline.sql'
+    baseline.write_text('', encoding='utf-8')
+
+    analysis = analyze_release_units(tmp_path, evidence, baseline, None)
+
+    assert analysis.parameters_applicable is None
+    assert any(f['code'] == 'unavailable_parameter_source' for f in analysis.findings)
+
+
+def test_no_config_change_retains_checked_diff_evidence(tmp_path):
+    evidence = _config_evidence(tmp_path, '{"Cache":{"TTL":60}}',
+                                '{"Cache":{"TTL":60}}')
+    baseline = tmp_path / 'baseline.sql'
+    baseline.write_text('', encoding='utf-8')
+
+    analysis = analyze_release_units(tmp_path, evidence, baseline, None)
+
+    assert analysis.parameters_applicable is False
+    assert analysis.checked_parameter_sources
+    assert analysis.checked_parameter_sources[0]['role'] == 'diff'
+
+
+@pytest.mark.parametrize('source_path', ['deployment.yaml', 'docker-compose.yml', '.env.production'])
+def test_changed_deployment_mapping_reaches_discovery_and_blocks(tmp_path, source_path):
+    evidence = _config_evidence(tmp_path, '{"Cache":{"TTL":60}}',
+                                '{"Cache":{"TTL":60}}')
+    def git(*args):
+        return subprocess.run(['git', '-C', str(tmp_path), *args], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    (tmp_path / source_path).write_text('env:\n  Foo__Bar: value\n', encoding='utf-8')
+    git('add', source_path)
+    git('commit', '-qm', 'deployment mapping')
+    evidence = collect_release_evidence(tmp_path, evidence['base_sha'], git('rev-parse', 'HEAD'))
+    baseline = tmp_path / 'baseline.sql'
+    baseline.write_text('', encoding='utf-8')
+
+    analysis = analyze_release_units(tmp_path, evidence, baseline, None)
+
+    assert analysis.parameters_applicable is None
+    assert analysis.blocked
+    assert any(item['role'] == 'deployment' and item['path'] == source_path
+               for item in analysis.checked_parameter_sources)
+    assert any(f.get('key') == 'Foo:Bar' for f in analysis.findings)
 
 
 def test_checked_parameter_sources_are_persisted_without_raw_secret(tmp_path):

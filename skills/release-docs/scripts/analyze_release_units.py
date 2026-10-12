@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 import re
 import subprocess
 from assemble_deployment_sql import _hazards
+from collect_release_evidence import parse_changes
 from parameter_discovery import discover_parameter_changes
 
 PHASES = ("SCHEMA", "REPAIR", "DATA", "VALIDATION")
@@ -237,26 +238,73 @@ def _config_path(path):
             (name.endswith('.json') and (name.startswith('appsettings') or name.startswith('settings'))))
 
 
+def _deployment_path(path):
+    name = PurePosixPath(path).name.lower()
+    return (name == '.env' or name.startswith('.env.') or
+            name in ('compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml') or
+            (name.endswith(('.yaml', '.yml', '.json')) and
+             any(part in path.lower() for part in ('deploy', 'manifest', 'values', 'k8s', 'helm'))))
+
+
+def _pinned_change_evidence(repo, scope):
+    base, target = scope['base_sha'], scope['target_sha']
+    raw = subprocess.run(
+        ['git', '-C', str(repo), 'diff', '--no-ext-diff', '--no-textconv',
+         '--name-status', '-z', '--find-renames', base, target, '--'],
+        capture_output=True, check=True).stdout
+    return parse_changes(raw), hashlib.sha256(raw).hexdigest()
+
+
+def _parameter_changed_paths(changes, inventory):
+    config, deployment = set(), set()
+    for change in changes:
+        paths = {_safe_path(change['path'])}
+        if change.get('old_path'):
+            paths.add(_safe_path(change['old_path']))
+        if any(_config_path(path) or path in inventory for path in paths):
+            config.update(paths)
+        if any(_deployment_path(path) for path in paths):
+            deployment.update(paths)
+    return config, deployment
+
+
+def _deployment_variables(raw):
+    text = raw.decode('utf-8-sig')
+    names = set(re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*(?:__[A-Za-z_][A-Za-z0-9_]*)+\b', text))
+    return {name: '[pinned source]' for name in names}
+
+
 def _analyze_parameters(result, repo, evidence):
     inventory = evidence.get('parameter_source_inventory', {})
     if not isinstance(inventory, dict):
         _finding(result, 'invalid_parameter_source_inventory')
         return
-    changed = {_safe_path(item['path']) for item in evidence.get('committed_changes', [])
-               if _config_path(item['path'])}
-    paths = changed | {_safe_path(path) for path in inventory}
-    if not paths and 'committed_changes' not in evidence:
-        return
-    base_sources, target_sources = [], []
     try:
+        pinned_changes, diff_hash = _pinned_change_evidence(repo, evidence)
         base_paths = _tree_paths(repo, evidence['base_sha'])
         target_paths = _tree_paths(repo, evidence['target_sha'])
-    except (KeyError, ValueError):
+        changed, deployment_paths = _parameter_changed_paths(pinned_changes, inventory)
+        paths = changed | {_safe_path(path) for path in inventory}
+        supplied = evidence.get('committed_changes')
+        if supplied is not None:
+            declared_config, declared_deployment = _parameter_changed_paths(supplied, inventory)
+            if (changed - declared_config) or (deployment_paths - declared_deployment):
+                _finding(result, 'incomplete_committed_change_evidence')
+        elif changed or deployment_paths:
+            _finding(result, 'missing_committed_change_evidence')
+    except (KeyError, ValueError, subprocess.CalledProcessError):
         _finding(result, 'unavailable_parameter_source_tree')
         return
+    scan = {'role': 'diff', 'base_revision': evidence['base_sha'],
+            'target_revision': evidence['target_sha'], 'source_hash': diff_hash}
+    base_sources, target_sources, deployment_sources = [], [], []
+    result.checked_parameter_sources = [scan]
     for path in sorted(paths):
         if not path.lower().endswith('.json'):
             _finding(result, 'unsupported_parameter_source', path)
+            continue
+        if path not in base_paths and path not in target_paths:
+            _finding(result, 'unavailable_parameter_source', path)
             continue
         metadata = inventory.get(path, {})
         if not isinstance(metadata, dict):
@@ -276,10 +324,33 @@ def _analyze_parameters(result, repo, evidence):
                             'source_hash': hashlib.sha256(raw).hexdigest(),
                             'environment': metadata.get('environment'),
                             'service': metadata.get('service')})
-    discovery = discover_parameter_changes(base_sources, target_sources)
-    result.checked_parameter_sources = [
+    for path in sorted(deployment_paths):
+        if path not in base_paths and path not in target_paths:
+            _finding(result, 'unavailable_deployment_source', path)
+            continue
+        variables = {}
+        for revision, tree in ((evidence['base_sha'], base_paths),
+                               (evidence['target_sha'], target_paths)):
+            if path not in tree:
+                continue
+            try:
+                sha, raw = _read_revision(repo, revision, path)
+                variables.update(_deployment_variables(raw))
+            except (ValueError, UnicodeError):
+                _finding(result, 'unavailable_deployment_source', path)
+                continue
+            result.checked_parameter_sources.append({
+                'role': 'deployment', 'path': path, 'revision': sha,
+                'source_hash': hashlib.sha256(raw).hexdigest()})
+        if variables:
+            deployment_sources.append({'path': path, 'environment_variables': variables})
+        else:
+            _finding(result, 'unresolved_deployment_source', path)
+    discovery = discover_parameter_changes(base_sources, target_sources,
+                                           deployment_sources=deployment_sources)
+    result.checked_parameter_sources.extend(
         {key: value for key, value in source.items() if key not in ('content', 'bytes', 'data')}
-        for source in discovery.checked_sources]
+        for source in discovery.checked_sources if source.get('role') != 'deployment')
     result.parameter_changes = discovery.changes
     for change in result.parameter_changes:
         change['source_reference'] = {
@@ -292,13 +363,14 @@ def _analyze_parameters(result, repo, evidence):
         for field_name in ('format_example', 'apply', 'reload', 'validation'):
             if field_name in metadata:
                 change[field_name] = metadata[field_name]
-    result.parameters_applicable = discovery.applicable if not result.blocked else None
     for finding in discovery.findings:
         result.findings.append({'code': 'unresolved_parameter_change',
                                 'blocking': bool(finding.get('blocking')),
                                 'source_path': finding.get('source'),
+                                'key': finding.get('key'),
                                 'missing': finding.get('missing', []),
                                 'message': finding.get('message')})
+    result.parameters_applicable = discovery.applicable if not result.blocked else None
 
 
 def _method_body(source, method):
