@@ -153,7 +153,7 @@ def test_parameter_document_is_optional_and_masks_secret_values(tmp_path):
         assert expected in text
     for secret in ("SUPER_SECRET", "URL_PASSWORD", "QUERY_SECRET"):
         assert secret not in text
-    assert "### 待確認" in text
+    assert '### ["Production","CustomerAPI","待確認"]' in text
     assert "### Auth" not in text
     assert set(inventory.files) == {"00_上線指引.md", "01_部署SQL.sql", "02_參數異動.md"}
 
@@ -184,8 +184,8 @@ def test_parameter_document_template_order_and_copyable_grouped_json(tmp_path):
                "## 脫敏異動 descriptor JSON"]
     assert [content.index(item) for item in ordered] == sorted(content.index(item) for item in ordered)
     assert "| 參數區塊 | 使用業務情境 | 使用模組／功能 | 主要使用者 | 異動影響 |" in content
-    assert "| Cache | 待確認 | 待確認 | 待確認 | 待確認 |" in content
-    assert content.count("### Endpoints") == 1
+    assert '| ["Production","CustomerAPI","Cache"] | 待確認 | 待確認 | 待確認 | 待確認 |' in content
+    assert content.count('### ["Production","CustomerAPI","Endpoints"]') == 1
     assert "1. " in content.split("## 參數部署查核", 1)[1]
     blocks = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", content, re.S)]
     assert blocks[0] == {"Endpoints": [{"Url": "https://new.test/", "Enabled": False}]}
@@ -215,15 +215,37 @@ def test_same_parameter_group_in_different_scopes_has_separate_sections(tmp_path
             ("Production", "Worker", 60, "批次作業"))]
     module.render_release_documents(analysis, artifact, manifest, tmp_path / "operator")
     content = (tmp_path / "operator/02_參數異動.md").read_text(encoding="utf-8")
-    assert content.count("### Production / API / Cache") == 1
-    assert content.count("### Staging / API / Cache") == 1
-    assert content.count("### Production / Worker / Cache") == 1
-    assert "| Production / API / Cache | 線上查詢 |" in content
-    assert "| Staging / API / Cache | 測試查詢 |" in content
-    assert "| Production / Worker / Cache | 批次作業 |" in content
+    labels = ['["Production","API","Cache"]', '["Staging","API","Cache"]',
+              '["Production","Worker","Cache"]']
+    for label in labels:
+        assert content.count("### " + label) == 1
+    assert '| ' + labels[0] + ' | 線上查詢 |' in content
+    assert '| ' + labels[1] + ' | 測試查詢 |' in content
+    assert '| ' + labels[2] + ' | 批次作業 |' in content
     blocks = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", content, re.S)]
     assert blocks[:3] == [{"Cache": {"TTL": 120}}, {"Cache": {"TTL": 30}},
                           {"Cache": {"TTL": 60}}]
+
+
+def test_parameter_labels_are_injective_when_group_contains_scope_separator(tmp_path):
+    module = api()
+    analysis, artifact, manifest = inputs(tmp_path)
+    analysis.parameter_changes = [
+        {"environment": environment, "service": service, "parameter_group": group,
+         "key": key, "change": "update", "new_value": value,
+         "business_context": context}
+        for environment, service, group, key, value, context in (
+            ("Production", "API", "Cache", "Cache:TTL", 120, "API cache"),
+            ("Staging", "API", "Cache", "Cache:TTL", 30, "Staging cache"),
+            ("Development", "Worker", "Production / API / Cache",
+             "Production / API / Cache:TTL", 10, "Literal separator group"))]
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / "operator")
+    content = (tmp_path / "operator/02_參數異動.md").read_text(encoding="utf-8")
+    labels = ['["Production","API","Cache"]', '["Staging","API","Cache"]',
+              '["Development","Worker","Production / API / Cache"]']
+    for label in labels:
+        assert content.count("### " + label) == 1
+        assert content.count("| " + label + " |") == 1
 
 
 def test_sparse_array_index_is_pending_partial_json_without_null_padding(tmp_path):
@@ -234,7 +256,7 @@ def test_sparse_array_index_is_pending_partial_json_without_null_padding(tmp_pat
         "key": "Endpoints:3:Url", "change": "add", "new_value": "https://new.test/"}]
     module.render_release_documents(analysis, artifact, manifest, tmp_path / "operator")
     content = (tmp_path / "operator/02_參數異動.md").read_text(encoding="utf-8")
-    assert "待確認" in content.split("### Endpoints", 1)[1].split("## 參數部署查核", 1)[0]
+    assert "待確認" in content.split('### ["Production","API","Endpoints"]', 1)[1].split("## 參數部署查核", 1)[0]
     assert "不可直接套用" in content
     blocks = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", content, re.S)]
     assert blocks[0] == {"Endpoints": {"3": {"Url": "https://new.test/"}}}

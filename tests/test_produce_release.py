@@ -225,7 +225,7 @@ def test_production_preserves_safe_parameter_projection_for_renderer(tmp_path):
 
     content = (args['output_dir'] / '02_參數異動.md').read_text(encoding='utf-8')
     assert '02_參數異動.md' in result.inventory.files
-    assert '| Runtime | 線上查詢 | API 查詢 | 客服 | 快取期限 |' in content
+    assert '| ["Production","API","Runtime"] | 線上查詢 | API 查詢 | 客服 | 快取期限 |' in content
     assert '| Production | API | Cache:TTL | add | — → 120 |' in content
     assert '"change": "add"' in content and '"new_value": 120' in content
     assert 'PRIVATE_VALUE' not in content

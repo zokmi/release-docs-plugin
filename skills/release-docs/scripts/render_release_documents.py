@@ -381,11 +381,8 @@ def _parameters(changes, analysis, artifact):
     for item in descriptors:
         identity = (item["environment"], item["service"], item["parameter_group"])
         groups.setdefault(identity, []).append(item)
-    group_names = [identity[2] for identity in groups]
     def label(identity):
-        environment, service, name = identity
-        return (name if group_names.count(name) == 1 else
-                environment + " / " + service + " / " + name)
+        return json.dumps(identity, ensure_ascii=False, separators=(",", ":"))
     for identity, items in groups.items():
         mapping.append("| " + " | ".join(_text(value) for value in (
             label(identity), items[0]["business_context"], items[0]["module"],

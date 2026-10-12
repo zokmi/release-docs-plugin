@@ -161,3 +161,15 @@ Focused command: `pytest.exe tests/test_release_documents.py tests/test_produce_
 ```
 
 The selected tests emitted a non-failing `pyreadline3` console shutdown warning (`OSError: [WinError -1073741816]`, `0xc0000008`). The requested `task-3-brief.md` was not present in this repository; the implementation scope was taken from the user's explicit fix list and the current diff/regression tests. No full suite was run.
+
+## Final label collision fix
+
+Parameter mapping and section labels now serialize the complete `(environment, service, parameter_group)` identity as compact JSON. This keeps labels injective when group names contain the former ` / ` scope separator. The regression case includes both ordinary scoped groups and a separator-containing group. A stale expectation for an incomplete descriptor was updated to retain its known environment and service in the composite label.
+
+Requested focused command: `pytest.exe tests/test_release_documents.py -q --basetemp=.tmp-task3-label-final`
+
+```text
+63 passed, 3 skipped in 14.97s
+```
+
+The first run exposed the stale incomplete-descriptor assertion; after updating it, the requested command passed. Pytest emitted a non-failing `pyreadline3` shutdown warning (`OSError: [WinError -1073741816]`, `0xc0000008`). No other test command was run for this fix.
