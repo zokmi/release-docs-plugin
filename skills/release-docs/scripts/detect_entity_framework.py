@@ -23,10 +23,16 @@ class EFDetection:
 
 
 def _git(repo, *args):
-    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, check=False)
-    if result.returncode:
-        raise ValueError("Unable to read pinned Git source evidence")
-    return result.stdout
+    command = ["git", "-C", str(repo), *args]
+    for attempt in range(3):
+        result = subprocess.run(command, capture_output=True, check=False)
+        if not result.returncode:
+            return result.stdout
+        # Windows can abort a subprocess without output; repeat the identical read.
+        # Ordinary Git failures and partial output must never be treated as transient.
+        if (result.returncode not in (-1, 0xFFFFFFFF) or result.stdout or result.stderr
+                or attempt == 2):
+            raise ValueError("Unable to read pinned Git source evidence")
 
 
 def _source_paths(repo, revision):

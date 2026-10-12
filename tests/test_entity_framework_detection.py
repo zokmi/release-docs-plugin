@@ -10,6 +10,33 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "skills/release-docs/scripts"
 from detect_entity_framework import detect_entity_framework
 
 
+def test_git_retries_only_empty_abnormal_process_exit(monkeypatch):
+    import detect_entity_framework as detector
+    calls = []
+    results = iter([subprocess.CompletedProcess([], 4294967295, b'', b''),
+                    subprocess.CompletedProcess([], 0, b'pinned source', b'')])
+    def run(command, **kwargs):
+        calls.append(command)
+        return next(results)
+    monkeypatch.setattr(detector.subprocess, 'run', run)
+    assert detector._git('repo', 'show', 'fixed-sha:file') == b'pinned source'
+    assert calls == [['git', '-C', 'repo', 'show', 'fixed-sha:file']] * 2
+
+
+def test_git_abnormal_retry_is_bounded_and_normal_errors_are_not_retried(monkeypatch):
+    import detect_entity_framework as detector
+    import pytest
+    for code, stderr, expected_calls in ((4294967295, b'', 3), (128, b'bad revision', 1)):
+        calls = []
+        def run(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, code, b'', stderr)
+        monkeypatch.setattr(detector.subprocess, 'run', run)
+        with pytest.raises(ValueError, match='pinned Git source'):
+            detector._git('repo', 'show', 'fixed-sha:file')
+        assert len(calls) == expected_calls
+
+
 def git(repo, *args):
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True).stdout.decode().strip()
 
