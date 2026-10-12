@@ -26,6 +26,8 @@
 
 ## 4. 自動建立 fixture、預期與設定說明
 
+runtime `.config` 自動候選限定 `Web.config`／`App.config`（不分大小寫），其他經核對的 `.config` 由 inventory 納入；無關檔案與 `packages.config` 不只憑副檔名阻擋。未解析的候選仍須保持 blocking finding。JSON discovery 同時保留 `target_config` 的原始型別及完整陣列；production 再依 pinned source 核對，renderer 才可標為可複製設定。
+
 依主技能四輪推導契約，先解析 DATA predicates、轉換與保留規則，產生 fixture SQL、seed rows、coverage、expected_assertions 與 expected_preserved_data_summary。每個適用 case 對應明確 seed_row_id；不適用有來源理由，未知不能填不適用。物化 fixture 前先核對 baseline constraints、FK 順序、必填值與唯一性，使用合成資料，不複製正式資料或機密。先固定預期，再取得實測；不是只產出 remediation-plan.md。
 
 先從 pinned base／target tree 與 diff 建立設定來源清單；對 `appsettings*.json`、`settings*.json` 與其他經核對的 JSON 設定來源，於 `evidence["parameter_source_inventory"]` 按 path 記錄有證據的 environment、service、格式、套用、reload 與驗證 metadata。核對 consumer／provider／部署來源及優先序；部署 manifest 的 `Foo__Bar` 對應完整鍵 `Foo:Bar`，無法證明 provider 順序或 base value 時保留阻擋 finding，不推定正式覆寫值。`.config` 或無法解析的來源仍需列在未解析清單，不能當作無異動。不得讀工作區版本替代 pinned blob，也不得只憑檔名、key 或 commit 標題推測業務情境、模組、使用者與影響；缺證據標「待確認」。

@@ -112,6 +112,8 @@ renderer 寫入前檢查全部輸入與輸出，拒絕 traversal、symlink、jun
 
 ### 自動參數異動與 `02` 文件
 
+自動盤點包含 canonical `Web.config`／`App.config`（不分大小寫）；其他 `.config` 以已核對 inventory 納入，`packages.config` 不因副檔名自動列為 runtime 參數。缺 parser 的 runtime 設定保留 unresolved finding。production 核對每個來源在 pinned base／target tree 的完整角色與 hash，並核對 discovery 的 `target_config`。此片段保留原始 object/list 型別與完整 target 陣列，避免複製 JSON 遺漏未變動元素；舊 descriptors 缺容器證據時顯示索引對照及不可直接套用的說明。
+
 在 analyzer 前，以已核對的 consumer、部署與設定來源建立 `evidence["parameter_source_inventory"]`，依來源路徑提供可證明的 `environment`、`service`、`format_example`、`apply`、`reload`、`validation` 等 metadata；不得由 key 名稱猜測環境、服務或業務用途。analyzer 自動比對 pinned base／target Git blob 的 `appsettings*.json`、`settings*.json` 與已確認 JSON 設定來源，記錄 `checked_parameter_sources`，產生 `parameter_changes` 與 `parameters_applicable`。巢狀物件與陣列保留完整鍵路徑；部署來源中的 `Foo__Bar` 映射為 `Foo:Bar`，provider 優先序或 base value 未證明時保留 blocking finding。工作區內容不取代 pinned revision。
 
 一筆已確認異動即須產出 `02_參數異動.md`，不得因上游未傳 descriptor 靜默交付 SQL-only 目錄。每項 descriptor 記錄環境、服務、完整設定鍵、add／update／remove、前後值、格式、套用、reload、驗證、來源，以及有證據的參數區塊／業務情境／模組／使用者／影響。後五項缺證據時標「待確認」並保留 finding；`environment`、`service` 或 `key` 不完整、設定 diff 未核對、descriptor 與 pinned source 不一致或適用性未知時，在 operator output 寫入前停止。確認無異動時保存查核範圍與 `parameters_applicable=false`，只交付 `00`、`01`。

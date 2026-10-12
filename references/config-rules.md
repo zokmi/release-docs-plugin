@@ -1,5 +1,15 @@
 # appsettings 與實際設定來源
 
+## `02_參數異動.md` 交付結構
+
+確認 pinned codebase diff 有參數異動時，必須產出 `02_參數異動.md`。依序包含：日期／release 與 base/target 來源範圍、安全與套用前提、業務情境與模組對照、參數區塊、部署查核，以及末尾完整脫敏 descriptor JSON array。
+
+業務對照表欄位固定為「參數區塊、使用業務情境、使用模組／功能、主要使用者、異動影響」。各區塊列完整鍵、add/update/remove、前後值、用途與影響、可解析的階層 JSON、適用時的環境變數 `text` 範例、套用位置、reload／重啟與驗證。業務欄位依核對證據填入；未知標待確認。
+
+設定 JSON、表格與 canonical descriptors 從同一批脫敏資料生成。陣列須保留完整 target 元素與實際容器型別，避免複製片段時刪除未變動元素；缺少容器證據時明示索引對照不能整段取代設定。數字 object key 仍是 object key。密鑰與 Bearer credential、已知秘密值均遮罩，遮罩字串不可當正式值。
+
+自動盤點 `appsettings*.json`／`settings*.json`、canonical `Web.config`／`App.config` 與已核對 inventory；其他 `.config` 由 inventory 納入。無法解析的 runtime 設定需保留 unresolved finding，不能聲稱無異動。只有核對 base/target 與 diff 後，才可標 `parameters_applicable=false`。
+
 比較 base/target 的完整配置與消費程式，再查本次環境變數、容器／部署設定、命令列、secret provider、其他配置檔与加载程式。Git 已提交來源与 index／working-tree 分開，刪除讀舊版，rename 保留舊路徑；不得用目前 appsettings 代替指定舊 revision。
 
 ## 鍵與差異
