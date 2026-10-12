@@ -58,6 +58,7 @@ def write_lifecycle_run(run_root, analysis_result, localdb_validation=None,
             "structure_changes": getattr(analysis_result, 'structure_changes', []),
             "parameter_changes": changes,
             "parameters_applicable": applicable,
+            "checked_parameter_sources": getattr(analysis_result, 'checked_parameter_sources', []),
         },
         "lifecycle_metadata.json": lifecycle_metadata,
     }

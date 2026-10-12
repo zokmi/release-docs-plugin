@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 import re
 import subprocess
 from assemble_deployment_sql import _hazards
+from parameter_discovery import discover_parameter_changes
 
 PHASES = ("SCHEMA", "REPAIR", "DATA", "VALIDATION")
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_.:-]*\Z")
@@ -34,6 +35,7 @@ class AnalysisResult:
     structure_changes: list = field(default_factory=list)
     data_changes: list = field(default_factory=list)
     parameter_changes: list = field(default_factory=list)
+    checked_parameter_sources: list = field(default_factory=list)
     parameters_applicable: bool | None = None
     analysis_confidence: str = "blocked"
 
@@ -227,6 +229,76 @@ def _metadata(repo, revision, path, kind):
     sha, raw = _read_revision(repo, revision, path)
     return {"source_path": path, "source_revision": sha,
             "source_hash": hashlib.sha256(raw).hexdigest(), "kind": kind}, raw.decode("utf-8-sig")
+
+
+def _config_path(path):
+    name = PurePosixPath(path).name.lower()
+    return (name.endswith('.config') or
+            (name.endswith('.json') and (name.startswith('appsettings') or name.startswith('settings'))))
+
+
+def _analyze_parameters(result, repo, evidence):
+    inventory = evidence.get('parameter_source_inventory', {})
+    if not isinstance(inventory, dict):
+        _finding(result, 'invalid_parameter_source_inventory')
+        return
+    changed = {_safe_path(item['path']) for item in evidence.get('committed_changes', [])
+               if _config_path(item['path'])}
+    paths = changed | {_safe_path(path) for path in inventory}
+    if not paths and 'committed_changes' not in evidence:
+        return
+    base_sources, target_sources = [], []
+    try:
+        base_paths = _tree_paths(repo, evidence['base_sha'])
+        target_paths = _tree_paths(repo, evidence['target_sha'])
+    except (KeyError, ValueError):
+        _finding(result, 'unavailable_parameter_source_tree')
+        return
+    for path in sorted(paths):
+        if not path.lower().endswith('.json'):
+            _finding(result, 'unsupported_parameter_source', path)
+            continue
+        metadata = inventory.get(path, {})
+        if not isinstance(metadata, dict):
+            _finding(result, 'invalid_parameter_source_inventory', path)
+            continue
+        for role, revision, tree, sources in (
+                ('base', evidence['base_sha'], base_paths, base_sources),
+                ('target', evidence['target_sha'], target_paths, target_sources)):
+            if path not in tree:
+                continue
+            try:
+                sha, raw = _read_revision(repo, revision, path)
+            except (ValueError, TypeError):
+                _finding(result, 'unavailable_parameter_source', path)
+                continue
+            sources.append({'path': path, 'revision': sha, 'content': raw,
+                            'source_hash': hashlib.sha256(raw).hexdigest(),
+                            'environment': metadata.get('environment'),
+                            'service': metadata.get('service')})
+    discovery = discover_parameter_changes(base_sources, target_sources)
+    result.checked_parameter_sources = [
+        {key: value for key, value in source.items() if key not in ('content', 'bytes', 'data')}
+        for source in discovery.checked_sources]
+    result.parameter_changes = discovery.changes
+    for change in result.parameter_changes:
+        change['source_reference'] = {
+            role: ({key: value for key, value in source.items()
+                    if key not in ('content', 'bytes', 'data')} if source else None)
+            for role, source in change['source_reference'].items()}
+        metadata = inventory.get(change['source_reference']['target']['path']
+                                 if change['source_reference']['target'] else
+                                 change['source_reference']['base']['path'], {})
+        for field_name in ('format_example', 'apply', 'reload', 'validation'):
+            if field_name in metadata:
+                change[field_name] = metadata[field_name]
+    result.parameters_applicable = discovery.applicable if not result.blocked else None
+    for finding in discovery.findings:
+        result.findings.append({'code': 'unresolved_parameter_change',
+                                'blocking': bool(finding.get('blocking')),
+                                'source_path': finding.get('source'),
+                                'missing': finding.get('missing', []),
+                                'message': finding.get('message')})
 
 
 def _method_body(source, method):
@@ -596,6 +668,7 @@ def analyze_release_units(repo, evidence, baseline_schema, exclusion_intent, *, 
         _finding(result, "missing_baseline_schema")
     result.source_scope = {k: evidence[k] for k in (
         "base_sha", "target_sha", "requested_base_sha", "diff_base_sha", "diff_mode", "workspace_policy") if k in evidence}
+    _analyze_parameters(result, repo, evidence)
     ef_covered = set()
     if ef_detection is not None:
         try:

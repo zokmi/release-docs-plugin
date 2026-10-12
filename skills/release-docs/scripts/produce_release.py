@@ -15,6 +15,9 @@ from render_release_documents import render_release_documents, _plain_path, KIND
 from run_local_validation import run_local_validation
 from derived_sources import verify_source
 from evidence_redaction import normalize_secrets
+from analyze_release_units import _config_path
+from parameter_discovery import discover_parameter_changes
+import json
 
 
 class ProductionError(ValueError):
@@ -98,9 +101,42 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
                                      capture_output=True, check=True).stdout
             if hashlib.sha256(raw).hexdigest() != unit.get('source_hash'):
                 raise ValueError('Source hash mismatch')
+        checked = getattr(clean, 'checked_parameter_sources', [])
+        changed_config = {item['path'] for item in evidence.get('committed_changes', [])
+                          if _config_path(item['path'])}
+        if changed_config - {item.get('path') for item in checked if isinstance(item, dict)}:
+            raise ValueError('Unresolved configuration source')
+        pinned_sources = {'base': [], 'target': []}
+        for source in checked:
+            path, revision, role = source.get('path'), source.get('revision'), source.get('role')
+            if (not isinstance(path, str) or not path or '\\' in path or ':' in path
+                    or Path(path).is_absolute() or '..' in Path(path).parts
+                    or role not in pinned_sources or revision != scope[role + '_sha']):
+                raise ValueError('Unpinned configuration source')
+            raw = subprocess.run(['git', '-C', str(repo), 'show', revision + ':' + path],
+                                 capture_output=True, check=True).stdout
+            if hashlib.sha256(raw).hexdigest() != source.get('source_hash'):
+                raise ValueError('Configuration source hash mismatch')
+            pinned_sources[role].append({**{key: value for key, value in source.items()
+                                            if key != 'role'}, 'content': raw})
+        if checked:
+            discovered = discover_parameter_changes(pinned_sources['base'], pinned_sources['target'])
+            if discovered.findings or discovered.applicable != clean.parameters_applicable:
+                raise ValueError('Unresolved configuration discovery')
+            fields = ('environment', 'service', 'key', 'change', 'old_value', 'new_value')
+            def signature(changes):
+                return sorted(json.dumps({key: item[key] for key in fields if key in item},
+                                         sort_keys=True, ensure_ascii=True) for item in changes)
+            if signature(discovered.changes) != signature(clean.parameter_changes):
+                raise ValueError('Incomplete or mismatched parameter descriptors')
         clean.parameter_changes = sanitize_parameter_changes(clean.parameter_changes)
         if type(clean.parameters_applicable) is not bool or clean.parameters_applicable != bool(clean.parameter_changes):
             raise ValueError('Unknown or conflicting parameter applicability')
+        if clean.parameters_applicable and any(
+                not isinstance(change.get(field), str) or not change[field].strip()
+                for change in analysis.parameter_changes
+                for field in ('environment', 'service', 'key', 'format_example', 'apply', 'reload', 'validation')):
+            raise ValueError('Incomplete parameter descriptor')
         if parent_run_id is not None and (not isinstance(parent_run_id, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', parent_run_id)):
             raise ValueError('Invalid parent run')
         excluded = {uid for entry in clean.exclusions for uid in entry['unit_ids']}

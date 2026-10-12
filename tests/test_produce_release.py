@@ -55,6 +55,109 @@ def test_preflight_failure_does_not_produce_sql(tmp_path, damage):
     assert not args['run_root'].exists()
 
 
+def test_confirmed_appsettings_diff_cannot_be_delivered_as_sql_only(tmp_path):
+    from produce_release import produce_release, ProductionError
+    args = inputs(tmp_path)
+    def git(*parts):
+        return subprocess.run(['git', '-C', str(tmp_path), *parts], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    base = args['evidence']['base_sha']
+    (tmp_path / 'appsettings.json').write_text('{"Cache":{"TTL":120}}', encoding='utf-8')
+    git('add', 'appsettings.json')
+    git('commit', '-qm', 'config change')
+    target = git('rev-parse', 'HEAD')
+    args['evidence']['target_sha'] = target
+    args['evidence']['committed_changes'] = [{'path': 'appsettings.json', 'status': 'A'}]
+    args['analysis'].source_scope['target_sha'] = target
+
+    with pytest.raises(ProductionError) as error:
+        produce_release(**args)
+
+    assert error.value.stage == 'preflight'
+    assert not args['run_root'].exists()
+    assert not args['output_dir'].exists()
+
+
+@pytest.mark.parametrize('missing', ['environment', 'service', 'key'])
+def test_incomplete_parameter_descriptor_blocks_before_output(tmp_path, missing):
+    from produce_release import produce_release, ProductionError
+    args = inputs(tmp_path)
+    descriptor = {'environment': 'Production', 'service': 'API', 'key': 'Cache:TTL'}
+    descriptor.pop(missing)
+    args['analysis'].parameter_changes = [descriptor]
+    args['analysis'].parameters_applicable = True
+
+    with pytest.raises(ProductionError) as error:
+        produce_release(**args)
+
+    assert error.value.stage == 'preflight'
+    assert not args['run_root'].exists()
+    assert not args['output_dir'].exists()
+
+
+def test_partial_descriptors_cannot_hide_a_pinned_config_change(tmp_path):
+    from produce_release import produce_release, ProductionError
+    args = inputs(tmp_path)
+    def git(*parts):
+        return subprocess.run(['git', '-C', str(tmp_path), *parts], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    config = tmp_path / 'appsettings.json'
+    config.write_text('{"Cache":{"TTL":120,"Enabled":true}}', encoding='utf-8')
+    git('add', 'appsettings.json')
+    git('commit', '-qm', 'config change')
+    target = git('rev-parse', 'HEAD')
+    args['evidence']['target_sha'] = target
+    args['evidence']['committed_changes'] = [{'path': 'appsettings.json', 'status': 'A'}]
+    args['analysis'].source_scope['target_sha'] = target
+    args['analysis'].checked_parameter_sources = [{
+        'role': 'target', 'path': 'appsettings.json', 'revision': target,
+        'source_hash': hashlib.sha256(config.read_bytes()).hexdigest(),
+        'environment': 'Production', 'service': 'API'}]
+    args['analysis'].parameters_applicable = True
+    args['analysis'].parameter_changes = [{
+        'environment': 'Production', 'service': 'API', 'key': 'Cache:TTL',
+        'change': 'add', 'new_value': 120, 'format_example': 'integer',
+        'apply': 'update config', 'reload': 'restart', 'validation': 'health'}]
+
+    with pytest.raises(ProductionError) as error:
+        produce_release(**args)
+
+    assert error.value.stage == 'preflight'
+    assert not args['run_root'].exists()
+    assert not args['output_dir'].exists()
+
+
+def test_pinned_config_analysis_produces_parameter_document_and_checked_scope(tmp_path):
+    from analyze_release_units import analyze_release_units
+    from produce_release import produce_release
+    args = inputs(tmp_path)
+    def git(*parts):
+        return subprocess.run(['git', '-C', str(tmp_path), *parts], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    (tmp_path / 'appsettings.json').write_text('{"Cache":{"TTL":120}}', encoding='utf-8')
+    git('add', 'appsettings.json')
+    git('commit', '-qm', 'config change')
+    target = git('rev-parse', 'HEAD')
+    args['evidence']['target_sha'] = target
+    args['evidence']['committed_changes'] = [{'path': 'appsettings.json', 'status': 'A'}]
+    args['evidence']['parameter_source_inventory'] = {'appsettings.json': {
+        'environment': 'Production', 'service': 'API', 'format_example': 'integer',
+        'apply': 'update config', 'reload': 'restart', 'validation': 'health'}}
+    analysis = analyze_release_units(tmp_path, args['evidence'], args['baseline_source'], None)
+    analysis.units = args['analysis'].units
+    analysis.structure_changes = args['analysis'].structure_changes
+    args['analysis'] = analysis
+
+    result = produce_release(**args)
+
+    assert analysis.parameters_applicable is True
+    assert '02_參數異動.md' in result.inventory.files
+    saved = json.loads((args['run_root'] / 'source_unit_metadata.json').read_text())
+    assert saved['parameters_applicable'] is True
+    assert len(saved['checked_parameter_sources']) == 1
+    assert saved['checked_parameter_sources'][0]['revision'] == target
+
+
 def test_delivery_preserves_bytes_and_no_adapter_is_not_run(tmp_path):
     from produce_release import produce_release
     args = inputs(tmp_path)
