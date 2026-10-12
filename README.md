@@ -129,13 +129,16 @@ SQL 內容審核與部署驗證分開回報「通過」「待確認」「未通�
 
 目前插件版本以三份 manifest 為準。此分支改採單一交易 SQL 與 lifecycle evidence；舊版 01_結構SQL／02_資料SQL／03_例外排除／04_參數異動不再是新流程的交付契約。正式執行與人工簽核由上板流程另行保存證據。
 
-需要 Python 3.11–3.13 與 Git；腳本僅用標準函式庫。CI 在 Linux／Windows 執行：
+需要 Python 3.11–3.13 與 Git；插件腳本僅用標準函式庫。測試相依固定於 `requirements-test.txt`，不屬於插件執行相依。CI／Release 保留 Linux／Windows × Python 3.11／3.12／3.13 六組完整測試；Windows 使用兩個隔離 worker，Linux 維持單程序。每組輸出最慢 30 項耗時並保存 JUnit artifact，失敗仍阻擋發布，不因平行化略過測試。
 
 ```text
-python -X utf8 -m pytest tests -q
+python -m pip install -r requirements-test.txt
+python -X utf8 -m pytest tests -q -n 2 --dist worksteal --durations=30 --junitxml=test-results.xml
 claude plugin validate .claude-plugin/plugin.json --json --strict
 claude plugin validate .claude-plugin/marketplace.json --json --strict
 ```
+
+量測單程序基準時將 `-n 2 --dist worksteal` 換成 `-n 0`，並使用同一 Python／相依版本與測試範圍。不得共用可修改的 Git repo、暫存目錄或資料庫；xdist 的 worker 暫存區由 pytest 隔離。版本探測的 timeout／啟動錯誤／非零退出會明示為不可用並保留來源清單，不代表工具驗證通過。
 
 發布前同時更新 `plugin.json`、`.claude-plugin/plugin.json`、`.codex-plugin/plugin.json` 的版本，更新 README，執行測試，review 後合併到 main，再建立 annotated tag：
 

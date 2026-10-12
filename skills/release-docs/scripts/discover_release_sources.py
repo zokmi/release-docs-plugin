@@ -71,12 +71,22 @@ def _capabilities():
     result = {}
     for name in names:
         path = shutil.which(name)
-        item = {"available": bool(path), "path": path}
+        item = {"available": False, "found": bool(path), "path": path,
+                "probe_status": "not_found"}
         if path:
-            probe = subprocess.run([path, "--version"], capture_output=True,
-                                   text=False, check=False, timeout=10)
-            raw = probe.stdout or probe.stderr or b""
-            item["version"] = raw.decode("utf-8", errors="replace").strip()[:300]
+            try:
+                probe = subprocess.run([path, "--version"], capture_output=True,
+                                       text=False, check=False, timeout=10)
+                raw = probe.stdout or probe.stderr or b""
+                version = raw.decode("utf-8", errors="replace").strip()[:300]
+                item['available'] = probe.returncode == 0 and bool(version)
+                item['probe_status'] = 'verified' if item['available'] else 'failed'
+                if item['available']:
+                    item['version'] = version
+            except subprocess.TimeoutExpired:
+                item['probe_status'] = 'timeout'
+            except OSError:
+                item['probe_status'] = 'error'
         result[name] = item
     return result
 

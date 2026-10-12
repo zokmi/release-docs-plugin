@@ -285,7 +285,7 @@ def test_unprovable_ef_column_definition_blocks_before_assembly(tmp_path):
     assert "unsupported_migration_operation" in {item["code"] for item in analysis.findings}
 
 
-def _pinned_parameter_case(tmp_path, before, after, *, inventory=True):
+def _pinned_parameter_case(tmp_path, before, after, *, inventory=True, sha_marker=None):
     """Run the parameter path through Git collection, analysis and production."""
     from test_produce_release import inputs
     from collect_release_evidence import collect_release_evidence
@@ -301,6 +301,20 @@ def _pinned_parameter_case(tmp_path, before, after, *, inventory=True):
     _git(tmp_path, "add", "appsettings.json")
     _git(tmp_path, "commit", "--allow-empty", "-qm", "pinned target config")
     target = _git(tmp_path, "rev-parse", "HEAD")
+    if sha_marker:
+        payload = subprocess.run(['git', '-C', str(tmp_path), 'cat-file', '-p', target],
+                                 check=True, capture_output=True).stdout
+        algorithm = _git(tmp_path, 'rev-parse', '--show-object-format')
+        for nonce in range(10000):
+            candidate = payload + f'\nfixture nonce {nonce}\n'.encode()
+            digest = hashlib.new(algorithm, b'commit ' + str(len(candidate)).encode() + b'\0' + candidate).hexdigest()
+            if sha_marker in digest:
+                target = subprocess.run(['git', '-C', str(tmp_path), 'hash-object', '-t', 'commit', '-w', '--stdin'],
+                                        input=candidate, check=True, capture_output=True).stdout.decode().strip()
+                assert target == digest
+                break
+        else:
+            raise AssertionError('Unable to prepare marked commit fixture')
     evidence = collect_release_evidence(tmp_path, base, target)
     evidence["workspace_policy"] = "excluded"
     if inventory:
@@ -325,11 +339,12 @@ def _pinned_parameter_case(tmp_path, before, after, *, inventory=True):
     ('{"Cache":{"Keep":1,"TTL":60}}', '{"Cache":{"Keep":1,"TTL":120}}', "update", 60, 120),
     ('{"Cache":{"Keep":1,"TTL":60}}', '{"Cache":{"Keep":1}}', "remove", 60, None),
 ])
+@pytest.mark.parametrize('sha_marker', [None, '999'])
 def test_pinned_appsettings_changes_deliver_three_operator_files(
-        tmp_path, before, after, change, old_value, new_value):
+        tmp_path, before, after, change, old_value, new_value, sha_marker):
     from produce_release import produce_release
 
-    args = _pinned_parameter_case(tmp_path, before, after)
+    args = _pinned_parameter_case(tmp_path, before, after, sha_marker=sha_marker)
     result = produce_release(**args)
 
     expected_files = {"00_上線指引.md", "01_部署SQL.sql", "02_參數異動.md"}
@@ -350,7 +365,12 @@ def test_pinned_appsettings_changes_deliver_three_operator_files(
         assert descriptors[0]["old_value"] == old_value
     if new_value is not None:
         assert descriptors[0]["new_value"] == new_value
-    assert "999" not in document
+    expected_config = {} if change == 'remove' else {'Cache': {'TTL': new_value}}
+    assert json.loads(blocks[0]) == expected_config
+    assert descriptors[0]['target_config'] == expected_config
+    if change == 'remove':
+        assert 'new_value' not in descriptors[0]
+    assert args['evidence']['target_sha'] in document
 
 
 def test_pinned_appsettings_no_change_delivers_only_guide_and_sql(tmp_path):

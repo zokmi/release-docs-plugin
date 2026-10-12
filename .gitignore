@@ -1,5 +1,8 @@
 __pycache__/
 *.pyc
+/.tmp-release-speed-env/
+/test-results.xml
+/.tmp-speed-env-options-results.xml
 .superpowers/
 
 # release-docs runtime evidence (never commit)

@@ -52,8 +52,18 @@ jobs:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
         run: python -X utf8 scripts/check_plugin_release.py --tag "$RELEASE_TAG"
         shell: bash
-      - run: python -m pip install pytest
-      - run: python -X utf8 -m pytest tests -q
+      - run: python -m pip install -r requirements-test.txt
+      - name: Run full regression with timings
+        env:
+          PYTEST_ADDOPTS: ${{ runner.os == 'Windows' && '-n 2 --dist worksteal' || '-n 0' }}
+        run: python -X utf8 -m pytest tests -q --durations=30 --junitxml=test-results.xml
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ runner.os }}-python-${{ matrix.python }}
+          path: test-results.xml
+          if-no-files-found: error
   release:
     needs: [validate, test]
     runs-on: ubuntu-latest
