@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import re
 import stat
-from parameter_metadata import sanitize_parameter_changes
+from parameter_metadata import redact_text, sanitize_parameter_changes, SENSITIVE as PARAMETER_SENSITIVE
 
 GUIDE = "00_上線指引.md"
 SQL = "01_部署SQL.sql"
@@ -240,17 +240,168 @@ def _current_evidence_hash(source, expected):
         return False
 
 
-def _parameters(changes):
+def _safe_parameter_value(value, secrets=()):
+    """Keep JSON types while removing credentials from every output surface."""
+    if isinstance(value, str):
+        value = redact_text(value, secrets)
+        return re.sub(r"([a-z][a-z0-9+.-]*://)[^\s/@]+:[^\s/@]+@",
+                      r"\1[REDACTED]@", value, flags=re.I)
+    if isinstance(value, list):
+        return [_safe_parameter_value(item, secrets) for item in value]
+    if isinstance(value, dict):
+        return {_safe_parameter_value(key, secrets):
+                ("[REDACTED]" if PARAMETER_SENSITIVE.search(str(key)) else
+                 _safe_parameter_value(item, secrets))
+                for key, item in value.items()}
+    return value
+
+
+def _nested_parameter_secrets(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if PARAMETER_SENSITIVE.search(str(key)) and isinstance(item, str) and item:
+                yield item
+            else:
+                yield from _nested_parameter_secrets(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _nested_parameter_secrets(item)
+
+
+def _source_reference(value, secrets):
+    if not isinstance(value, dict):
+        return _safe_parameter_value(value, secrets) if value is not None else "待確認"
+    # Discovery references can carry full source bytes. Only provenance belongs here.
+    return {role: ({field: _safe_parameter_value(source[field], secrets)
+                    for field in ("path", "revision", "line") if field in source}
+                   if isinstance(source, dict) else None)
+            for role, source in value.items() if role in ("base", "target")}
+
+
+def _parameter_projection(changes):
     if not isinstance(changes, list):
         raise ValueError("Parameter changes must be explicit descriptors")
-    rows = ["| 環境 | 服務 | 完整設定鍵 | 格式範例 | 套用方式 | 重新載入要求 | 驗證 |",
-            "| --- | --- | --- | --- | --- | --- | --- |"]
-    for change in sanitize_parameter_changes(changes):
-        values = [change['environment'], change['service'], change['key'],
-                  change.get('format_example', '待確認'), change.get('apply', '待確認'),
-                  change.get('reload', '待確認'), change.get('validation', '待確認')]
-        rows.append('| ' + ' | '.join(_text(value) for value in values) + ' |')
-    return "\n".join(rows)
+    secrets = {value for item in changes if isinstance(item, dict)
+               and (PARAMETER_SENSITIVE.search(str(item.get("key", ""))) or item.get("sensitive") is True)
+               for field in ("value", "raw_value", "old_value", "new_value", "format_example")
+               for value in [item.get(field)] if isinstance(value, str) and value}
+    secrets.update(secret for item in changes if isinstance(item, dict)
+                   for field in ("value", "raw_value", "old_value", "new_value")
+                   for secret in _nested_parameter_secrets(item.get(field)))
+    safe_input = [{key: value for key, value in item.items() if key != "source_reference"}
+                  if isinstance(item, dict) else item for item in changes]
+    base = sanitize_parameter_changes(safe_input)
+    projected = []
+    for raw, clean in zip(changes, base):
+        item = {key: _safe_parameter_value(value, secrets) for key, value in clean.items()}
+        item["change"] = _safe_parameter_value(raw.get("change", "待確認"), secrets)
+        item["source_reference"] = _source_reference(raw.get("source_reference"), secrets)
+        for field in ("old_value", "new_value"):
+            if field in raw:
+                item[field] = ("[REDACTED]" if item["sensitive"]
+                               else _safe_parameter_value(raw[field], secrets))
+        if "new_value" not in item and "value" in raw and item["change"] != "remove":
+            item["new_value"] = ("[REDACTED]" if item["sensitive"]
+                                 else _safe_parameter_value(raw["value"], secrets))
+        for field in ("parameter_group", "business_context", "module", "users", "impact",
+                      "environment_variable"):
+            value = raw.get(field)
+            item[field] = (_safe_parameter_value(value, secrets)
+                           if isinstance(value, str) and value.strip() else "待確認")
+        projected.append(item)
+    return projected
+
+
+def _source_label(reference):
+    if isinstance(reference, str):
+        return reference
+    return "; ".join(f"{role}:{source.get('path', '待確認')}:{source.get('line', '待確認')}"
+                     for role, source in reference.items() if source) or "待確認"
+
+
+def _json_block(value):
+    return "```json\n" + json.dumps(value, ensure_ascii=False, indent=2) + "\n```"
+
+
+def _insert_config(root, key, value):
+    parts = key.split(":")
+    cursor = root
+    for index, part in enumerate(parts):
+        last = index == len(parts) - 1
+        slot = int(part) if isinstance(cursor, list) else part
+        if isinstance(cursor, list):
+            while len(cursor) <= slot:
+                cursor.append(None)
+        if last:
+            cursor[slot] = value
+        else:
+            following = [] if parts[index + 1].isdigit() else {}
+            if isinstance(cursor, list):
+                if cursor[slot] is None:
+                    cursor[slot] = following
+            else:
+                cursor.setdefault(slot, following)
+            cursor = cursor[slot]
+
+
+def _parameters(changes, analysis, artifact):
+    descriptors = _parameter_projection(changes)
+    paths = sorted({source["path"] for item in descriptors
+                    if isinstance(item["source_reference"], dict)
+                    for source in item["source_reference"].values()
+                    if source and isinstance(source.get("path"), str)})
+    scope = analysis.source_scope
+    source_scope = ("Release：" + _text(artifact.release_id) + "；base → target：" +
+                    _text(scope.get("base_sha", "待確認")) + " → " +
+                    _text(scope.get("target_sha", "待確認")) + "\n\n設定來源：" +
+                    ("、".join(_text(path) for path in paths) or "待確認"))
+    mapping = ["| 參數區塊 | 使用業務情境 | 使用模組／功能 | 主要使用者 | 異動影響 |",
+               "| --- | --- | --- | --- | --- |"]
+    groups = {}
+    for item in descriptors:
+        groups.setdefault(item["parameter_group"], []).append(item)
+    for name, items in groups.items():
+        mapping.append("| " + " | ".join(_text(value) for value in (
+            name, items[0]["business_context"], items[0]["module"],
+            items[0]["users"], items[0]["impact"])) + " |")
+    rows = ["| 環境 | 服務 | 完整設定鍵 | 異動類型 | 前值 → 後值 | 格式範例 | 套用方式 | 重新載入要求 | 驗證 | 來源 |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for item in descriptors:
+        before = item.get("old_value", "—")
+        after = item.get("new_value", "—")
+        rows.append("| " + " | ".join(_text(value) for value in (
+            item["environment"], item["service"], item["key"], item["change"],
+            f"{before} → {after}", item.get("format_example", "待確認"),
+            item.get("apply", "待確認"), item.get("reload", "待確認"),
+            item.get("validation", "待確認"), _source_label(item["source_reference"]))) + " |")
+    sections = ["\n".join(rows)]
+    checklist = ["1. 核對 release、base/target 與設定來源，確認完整設定鍵及異動類型。"]
+    for number, (name, items) in enumerate(groups.items(), 2):
+        config = {}
+        for item in items:
+            if item["change"] != "remove":
+                _insert_config(config, item["key"], item.get("new_value", "[待確認]"))
+        summary = "；".join(_text(item["change"] + " " + item["key"]) for item in items)
+        instructions = "\n".join("- " + _text(item["key"]) + "：用途／行為影響 " +
+                                 _text(item["impact"]) + "；套用 " +
+                                 _text(item.get("apply", "待確認")) + "；重新載入／重啟 " +
+                                 _text(item.get("reload", "待確認")) + "；驗證 " +
+                                 _text(item.get("validation", "待確認"))
+                                 for item in items)
+        env = [item["environment_variable"] + "=" + str(item.get("new_value", "[待確認]"))
+               for item in items if item["environment_variable"] != "待確認"
+               and item["change"] != "remove"]
+        section = ("### " + _text(name) + "\n\n異動摘要：" + summary +
+                   "\n\n完整設定鍵、用途與操作：\n\n" + instructions +
+                   "\n\n可複製設定 JSON（remove 項請從設定來源刪除）：\n\n" + _json_block(config))
+        if env:
+            section += "\n\n環境變數／部署平台覆寫範例：\n\n```text\n" + "\n".join(env) + "\n```"
+        sections.append(section)
+        checklist.append(str(number) + ". 核對 " + _text(name) + " 的設定來源與機密值注入；依上節 reload／重啟要求操作，逐項執行驗證。")
+    checklist.append(str(len(checklist) + 1) + ". 未核准或待確認的值維持安全預設／暫不套用；保存不含機密原值的驗證紀錄。")
+    return {"SCOPE": source_scope, "MAPPING": "\n".join(mapping),
+            "PARAMETERS": "\n\n".join(sections), "CHECKLIST": "\n".join(checklist),
+            "DESCRIPTORS": _json_block(descriptors)}
 
 
 def _change_tables(analysis, excluded):
@@ -297,7 +448,7 @@ def render_release_documents(analysis, deployment_artifact, lifecycle_record, ou
     Optional analysis.structure_changes (or units[].structure_changes) contains
     kind/name/description/impact dictionaries; parameter_changes contains
     environment/service/key/format_example/apply/reload/validation dictionaries.
-    Raw old/new/value fields are never output. lifecycle_record is Task 2's
+    Old/new/value fields are redacted before output. lifecycle_record is Task 2's
     manifest Path or its run directory; exclusions are read from disk only.
     OutputInventory.files maps the delivered filenames to their SHA-256 hashes.
     """
@@ -344,9 +495,8 @@ def render_release_documents(analysis, deployment_artifact, lifecycle_record, ou
         "STATUS": _status(metadata, deployment_artifact,
                           {uid for uid, unit in expected.items() if unit.get("phase") == "DATA"})})}
     changes = getattr(analysis, "parameter_changes", [])
-    parameters = _parameters(changes)
     if changes:
-        documents[PARAMETERS] = _template(PARAMETERS, {"PARAMETERS": parameters})
+        documents[PARAMETERS] = _template(PARAMETERS, _parameters(changes, analysis, deployment_artifact))
     if output.exists():
         for path in output.iterdir():
             _plain_path(path)

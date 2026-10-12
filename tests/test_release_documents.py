@@ -4,6 +4,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 import pytest
@@ -69,10 +70,11 @@ def test_output_has_only_operator_files_and_preserves_sql_bytes(tmp_path):
     assert inventory.files["01_部署SQL.sql"] == artifact.sha256
 
 
-def test_review_report_keeps_internal_evidence_out_of_operator_delivery(tmp_path):
+def test_review_report_keeps_internal_evidence_out_of_operator_delivery(tmp_path, monkeypatch):
     from types import SimpleNamespace
     import importlib.util
     review_path = SCRIPTS.parents[1] / "release-docs-review/scripts/validate_release_output.py"
+    monkeypatch.syspath_prepend(str(review_path.parent))
     spec = importlib.util.spec_from_file_location("task3_document_review", review_path)
     review = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(review)
@@ -151,7 +153,98 @@ def test_parameter_document_is_optional_and_masks_secret_values(tmp_path):
         assert expected in text
     for secret in ("SUPER_SECRET", "URL_PASSWORD", "QUERY_SECRET"):
         assert secret not in text
+    assert "### 待確認" in text
+    assert "### Auth" not in text
     assert set(inventory.files) == {"00_上線指引.md", "01_部署SQL.sql", "02_參數異動.md"}
+
+
+def test_parameter_document_template_order_and_copyable_grouped_json(tmp_path):
+    module = api()
+    analysis, artifact, manifest = inputs(tmp_path)
+    common = {"environment": "Production", "service": "CustomerAPI",
+              "parameter_group": "Endpoints", "business_context": "對外查詢",
+              "module": "查詢服務", "users": "客服", "impact": "切換查詢端點",
+              "apply": "更新設定來源", "reload": "重啟 CustomerAPI",
+              "validation": "檢查健康端點", "source_reference": "target:appsettings.json:12"}
+    analysis.parameter_changes = [
+        dict(common, key="Endpoints:0:Url", change="update", old_value="https://old.test/",
+             new_value="https://new.test/", format_example="URL",
+             environment_variable="Endpoints__0__Url"),
+        dict(common, key="Endpoints:0:Enabled", change="add", new_value=False,
+             format_example="布林值"),
+        dict(common, key="Endpoints:1:Url", change="remove", old_value="https://retired.test/"),
+        {**common, "parameter_group": "Cache", "business_context": "", "module": "",
+         "users": "", "impact": "", "key": "Cache:TTL", "change": "update",
+         "old_value": 60, "new_value": 120},
+    ]
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / "operator")
+    content = (tmp_path / "operator/02_參數異動.md").read_text(encoding="utf-8")
+    ordered = ["# 參數異動", "## 來源範圍", "## 安全與套用前提",
+               "## 業務情境與模組對照", "## 參數區塊", "## 參數部署查核",
+               "## 脫敏異動 descriptor JSON"]
+    assert [content.index(item) for item in ordered] == sorted(content.index(item) for item in ordered)
+    assert "| 參數區塊 | 使用業務情境 | 使用模組／功能 | 主要使用者 | 異動影響 |" in content
+    assert "| Cache | 待確認 | 待確認 | 待確認 | 待確認 |" in content
+    assert content.count("### Endpoints") == 1
+    assert "1. " in content.split("## 參數部署查核", 1)[1]
+    blocks = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", content, re.S)]
+    assert blocks[0] == {"Endpoints": [{"Url": "https://new.test/", "Enabled": False}]}
+    assert blocks[1] == {"Cache": {"TTL": 120}}
+    descriptors = blocks[-1]
+    assert [(item["key"], item["change"]) for item in descriptors] == [
+        ("Endpoints:0:Url", "update"), ("Endpoints:0:Enabled", "add"),
+        ("Endpoints:1:Url", "remove"), ("Cache:TTL", "update")]
+    assert descriptors[0]["old_value"] == "https://old.test/"
+    assert descriptors[0]["new_value"] == blocks[0]["Endpoints"][0]["Url"]
+    assert descriptors[0]["source_reference"] == "target:appsettings.json:12"
+    assert "Endpoints__0__Url=https://new.test/" in content
+    assert "```text\n" in content
+    assert "| Production | CustomerAPI | Endpoints:0:Url | update | https://old.test/ → https://new.test/ |" in content
+
+
+def test_parameter_json_and_environment_examples_redact_known_secrets(tmp_path):
+    module = api()
+    analysis, artifact, manifest = inputs(tmp_path)
+    analysis.parameter_changes = [
+        {"environment": "Production", "service": "CustomerAPI", "key": "Auth:JwtSecret",
+         "change": "update", "old_value": "OLD_PRIVATE", "new_value": "NEW_PRIVATE",
+         "format_example": "NEW_PRIVATE", "environment_variable": "Auth__JwtSecret",
+         "apply": "由機密儲存注入 NEW_PRIVATE", "reload": "重啟", "validation": "驗證登入"},
+        {"environment": "Production", "service": "CustomerAPI", "key": "Service:Url",
+         "change": "add", "new_value": "https://user:URL_PASSWORD@example.test/?api_key=QUERY_SECRET",
+         "environment_variable": "Service__Url", "source_reference": "target:settings.json:4"},
+    ]
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / "operator")
+    content = (tmp_path / "operator/02_參數異動.md").read_text(encoding="utf-8")
+    for secret in ("OLD_PRIVATE", "NEW_PRIVATE", "URL_PASSWORD", "QUERY_SECRET"):
+        assert secret not in content
+    blocks = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", content, re.S)]
+    assert blocks[0]["Auth"]["JwtSecret"] == "[REDACTED]"
+    assert blocks[-1][0]["old_value"] == blocks[-1][0]["new_value"] == "[REDACTED]"
+    assert blocks[-1][1]["new_value"] == blocks[0]["Service"]["Url"]
+    assert "Auth__JwtSecret=[REDACTED]" in content
+    assert "待確認" in content
+
+
+def test_nested_configuration_secret_and_source_payload_never_reach_document(tmp_path):
+    module = api()
+    analysis, artifact, manifest = inputs(tmp_path)
+    analysis.parameter_changes = [{
+        "environment": "Production", "service": "CustomerAPI", "key": "Provider",
+        "change": "add", "new_value": {"endpoint": "postgres://user:DB_PASSWORD@db.test/main",
+                                        "password": "NESTED_SECRET", "enabled": True},
+        "source_reference": {"target": {"path": "settings.json", "revision": "a" * 40,
+                                        "content": "SOURCE_PAYLOAD_SECRET"}},
+    }]
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / "operator")
+    content = (tmp_path / "operator/02_參數異動.md").read_text(encoding="utf-8")
+    for secret in ("DB_PASSWORD", "NESTED_SECRET", "SOURCE_PAYLOAD_SECRET"):
+        assert secret not in content
+    blocks = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", content, re.S)]
+    assert blocks[0]["Provider"]["password"] == "[REDACTED]"
+    assert blocks[0]["Provider"]["enabled"] is True
+    assert blocks[-1][0]["source_reference"]["target"] == {
+        "path": "settings.json", "revision": "a" * 40}
 
 
 @pytest.mark.parametrize("name", ["lifecycle_exclusion_manifest.json", "source_unit_metadata.json", "surprise.txt", "02_資料SQL.sql"])
