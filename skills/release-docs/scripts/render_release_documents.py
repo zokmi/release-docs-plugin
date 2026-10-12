@@ -323,6 +323,9 @@ def _json_block(value):
     return "```json\n" + json.dumps(value, ensure_ascii=False, indent=2) + "\n```"
 
 
+_ARRAY_GAP = object()
+
+
 def _insert_config(root, key, value):
     parts = key.split(":")
     cursor = root
@@ -331,17 +334,34 @@ def _insert_config(root, key, value):
         slot = int(part) if isinstance(cursor, list) else part
         if isinstance(cursor, list):
             while len(cursor) <= slot:
-                cursor.append(None)
+                cursor.append(_ARRAY_GAP)
         if last:
             cursor[slot] = value
         else:
             following = [] if parts[index + 1].isdigit() else {}
             if isinstance(cursor, list):
-                if cursor[slot] is None:
+                if cursor[slot] is _ARRAY_GAP:
                     cursor[slot] = following
             else:
                 cursor.setdefault(slot, following)
             cursor = cursor[slot]
+
+
+def _safe_config_shape(value):
+    """Expose sparse arrays by index without suggesting null padding is deployable."""
+    if isinstance(value, dict):
+        children = {key: _safe_config_shape(item) for key, item in value.items()}
+        return {key: item for key, (item, _) in children.items()}, any(
+            pending for _, pending in children.values())
+    if isinstance(value, list):
+        sparse = _ARRAY_GAP in value
+        children = [(index, _safe_config_shape(item)) for index, item in enumerate(value)
+                    if item is not _ARRAY_GAP]
+        pending = sparse or any(flag for _, (_, flag) in children)
+        if sparse:
+            return {str(index): item for index, (item, _) in children}, pending
+        return [item for _, (item, _) in children], pending
+    return value, False
 
 
 def _parameters(changes, analysis, artifact):
@@ -359,10 +379,16 @@ def _parameters(changes, analysis, artifact):
                "| --- | --- | --- | --- | --- |"]
     groups = {}
     for item in descriptors:
-        groups.setdefault(item["parameter_group"], []).append(item)
-    for name, items in groups.items():
+        identity = (item["environment"], item["service"], item["parameter_group"])
+        groups.setdefault(identity, []).append(item)
+    group_names = [identity[2] for identity in groups]
+    def label(identity):
+        environment, service, name = identity
+        return (name if group_names.count(name) == 1 else
+                environment + " / " + service + " / " + name)
+    for identity, items in groups.items():
         mapping.append("| " + " | ".join(_text(value) for value in (
-            name, items[0]["business_context"], items[0]["module"],
+            label(identity), items[0]["business_context"], items[0]["module"],
             items[0]["users"], items[0]["impact"])) + " |")
     rows = ["| 環境 | 服務 | 完整設定鍵 | 異動類型 | 前值 → 後值 | 格式範例 | 套用方式 | 重新載入要求 | 驗證 | 來源 |",
             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
@@ -376,11 +402,13 @@ def _parameters(changes, analysis, artifact):
             item.get("validation", "待確認"), _source_label(item["source_reference"]))) + " |")
     sections = ["\n".join(rows)]
     checklist = ["1. 核對 release、base/target 與設定來源，確認完整設定鍵及異動類型。"]
-    for number, (name, items) in enumerate(groups.items(), 2):
+    for number, (identity, items) in enumerate(groups.items(), 2):
+        name = label(identity)
         config = {}
         for item in items:
             if item["change"] != "remove":
                 _insert_config(config, item["key"], item.get("new_value", "[待確認]"))
+        config, partial = _safe_config_shape(config)
         summary = "；".join(_text(item["change"] + " " + item["key"]) for item in items)
         instructions = "\n".join("- " + _text(item["key"]) + "：用途／行為影響 " +
                                  _text(item["impact"]) + "；套用 " +
@@ -391,9 +419,12 @@ def _parameters(changes, analysis, artifact):
         env = [item["environment_variable"] + "=" + str(item.get("new_value", "[待確認]"))
                for item in items if item["environment_variable"] != "待確認"
                and item["change"] != "remove"]
+        config_note = ("部分設定 JSON：陣列索引不連續，缺少的項目待確認；此區塊不可直接套用，"
+                       "請核對完整陣列後再設定。" if partial else
+                       "可複製設定 JSON（remove 項請從設定來源刪除）：")
         section = ("### " + _text(name) + "\n\n異動摘要：" + summary +
                    "\n\n完整設定鍵、用途與操作：\n\n" + instructions +
-                   "\n\n可複製設定 JSON（remove 項請從設定來源刪除）：\n\n" + _json_block(config))
+                   "\n\n" + config_note + "\n\n" + _json_block(config))
         if env:
             section += "\n\n環境變數／部署平台覆寫範例：\n\n```text\n" + "\n".join(env) + "\n```"
         sections.append(section)

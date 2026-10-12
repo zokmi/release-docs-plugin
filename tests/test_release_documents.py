@@ -202,6 +202,45 @@ def test_parameter_document_template_order_and_copyable_grouped_json(tmp_path):
     assert "| Production | CustomerAPI | Endpoints:0:Url | update | https://old.test/ → https://new.test/ |" in content
 
 
+def test_same_parameter_group_in_different_scopes_has_separate_sections(tmp_path):
+    module = api()
+    analysis, artifact, manifest = inputs(tmp_path)
+    analysis.parameter_changes = [
+        {"environment": environment, "service": service, "parameter_group": "Cache",
+         "key": "Cache:TTL", "change": "update", "new_value": value,
+         "business_context": context}
+        for environment, service, value, context in (
+            ("Production", "API", 120, "線上查詢"),
+            ("Staging", "API", 30, "測試查詢"),
+            ("Production", "Worker", 60, "批次作業"))]
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / "operator")
+    content = (tmp_path / "operator/02_參數異動.md").read_text(encoding="utf-8")
+    assert content.count("### Production / API / Cache") == 1
+    assert content.count("### Staging / API / Cache") == 1
+    assert content.count("### Production / Worker / Cache") == 1
+    assert "| Production / API / Cache | 線上查詢 |" in content
+    assert "| Staging / API / Cache | 測試查詢 |" in content
+    assert "| Production / Worker / Cache | 批次作業 |" in content
+    blocks = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", content, re.S)]
+    assert blocks[:3] == [{"Cache": {"TTL": 120}}, {"Cache": {"TTL": 30}},
+                          {"Cache": {"TTL": 60}}]
+
+
+def test_sparse_array_index_is_pending_partial_json_without_null_padding(tmp_path):
+    module = api()
+    analysis, artifact, manifest = inputs(tmp_path)
+    analysis.parameter_changes = [{
+        "environment": "Production", "service": "API", "parameter_group": "Endpoints",
+        "key": "Endpoints:3:Url", "change": "add", "new_value": "https://new.test/"}]
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / "operator")
+    content = (tmp_path / "operator/02_參數異動.md").read_text(encoding="utf-8")
+    assert "待確認" in content.split("### Endpoints", 1)[1].split("## 參數部署查核", 1)[0]
+    assert "不可直接套用" in content
+    blocks = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", content, re.S)]
+    assert blocks[0] == {"Endpoints": {"3": {"Url": "https://new.test/"}}}
+    assert blocks[-1][0]["key"] == "Endpoints:3:Url"
+
+
 def test_parameter_json_and_environment_examples_redact_known_secrets(tmp_path):
     module = api()
     analysis, artifact, manifest = inputs(tmp_path)

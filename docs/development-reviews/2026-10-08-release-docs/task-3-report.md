@@ -145,3 +145,19 @@ Final focused resume command: `python -X utf8 -m pytest -q tests/test_resumable_
 ```
 
 The six-stage `current_inputs` contract and same-directory temporary write, `fsync`, and atomic replace behavior remain covered by this suite.
+
+## Task 3 parameter-document fix
+
+Addressed the requested parameter-document review findings in `render_release_documents.py` and the production sanitization handoff:
+
+- Renderer metadata is preserved through sanitization and remains available to the business/module table and grouped sections; sensitive values continue through the shared redaction projection.
+- Parameter sections are grouped by `(environment, service, parameter_group)`, so equal group names in different scopes cannot merge.
+- Sparse array indexes are represented as keyed JSON with a pending/incomplete warning, without synthetic `null` entries or a suggestion that the partial JSON is directly applicable.
+
+Focused command: `pytest.exe tests/test_release_documents.py tests/test_produce_release.py -q --basetemp=.tmp-task3-fix-final`
+
+```text
+84 passed, 3 skipped in 49.80s
+```
+
+The selected tests emitted a non-failing `pyreadline3` console shutdown warning (`OSError: [WinError -1073741816]`, `0xc0000008`). The requested `task-3-brief.md` was not present in this repository; the implementation scope was taken from the user's explicit fix list and the current diff/regression tests. No full suite was run.

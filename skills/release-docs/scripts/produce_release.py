@@ -10,8 +10,7 @@ from pathlib import Path
 
 from assemble_deployment_sql import assemble_deployment_sql, _validate_units
 from lifecycle_store import write_lifecycle_run
-from parameter_metadata import sanitize_parameter_changes
-from render_release_documents import render_release_documents, _plain_path, KINDS, OutputInventory
+from render_release_documents import render_release_documents, _parameter_projection, _plain_path, KINDS, OutputInventory
 from run_local_validation import run_local_validation
 from derived_sources import verify_source
 from evidence_redaction import normalize_secrets
@@ -168,7 +167,7 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
                                          sort_keys=True, ensure_ascii=True) for item in changes)
             if signature(discovered.changes) != signature(clean.parameter_changes):
                 raise ValueError('Incomplete or mismatched parameter descriptors')
-        clean.parameter_changes = sanitize_parameter_changes(clean.parameter_changes)
+        clean.parameter_changes = _parameter_projection(clean.parameter_changes)
         if type(clean.parameters_applicable) is not bool or clean.parameters_applicable != bool(clean.parameter_changes):
             raise ValueError('Unknown or conflicting parameter applicability')
         if clean.parameters_applicable and any(

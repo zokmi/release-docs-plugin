@@ -196,6 +196,47 @@ def test_pinned_config_analysis_produces_parameter_document_and_checked_scope(tm
                for item in saved['checked_parameter_sources'])
 
 
+def test_production_preserves_safe_parameter_projection_for_renderer(tmp_path):
+    from analyze_release_units import analyze_release_units
+    from produce_release import produce_release
+    args = inputs(tmp_path)
+    def git(*parts):
+        return subprocess.run(['git', '-C', str(tmp_path), *parts], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    config = tmp_path / 'appsettings.json'
+    config.write_text('{"Cache":{"TTL":120},"Auth":{"JwtSecret":"PRIVATE_VALUE"}}', encoding='utf-8')
+    git('add', 'appsettings.json')
+    git('commit', '-qm', 'config change')
+    target = git('rev-parse', 'HEAD')
+    args['evidence']['target_sha'] = target
+    args['evidence']['committed_changes'] = [{'path': 'appsettings.json', 'status': 'A'}]
+    args['evidence']['parameter_source_inventory'] = {'appsettings.json': {
+        'environment': 'Production', 'service': 'API', 'format_example': 'integer',
+        'apply': 'update config', 'reload': 'restart', 'validation': 'health'}}
+    analysis = analyze_release_units(tmp_path, args['evidence'], args['baseline_source'], None)
+    analysis.units = args['analysis'].units
+    analysis.structure_changes = args['analysis'].structure_changes
+    for change in analysis.parameter_changes:
+        change.update(parameter_group='Runtime', business_context='線上查詢',
+                      module='API 查詢', users='客服', impact='快取期限')
+    args['analysis'] = analysis
+
+    result = produce_release(**args)
+
+    content = (args['output_dir'] / '02_參數異動.md').read_text(encoding='utf-8')
+    assert '02_參數異動.md' in result.inventory.files
+    assert '| Runtime | 線上查詢 | API 查詢 | 客服 | 快取期限 |' in content
+    assert '| Production | API | Cache:TTL | add | — → 120 |' in content
+    assert '"change": "add"' in content and '"new_value": 120' in content
+    assert 'PRIVATE_VALUE' not in content
+    saved = (args['run_root'] / 'source_unit_metadata.json').read_text(encoding='utf-8')
+    assert 'PRIVATE_VALUE' not in saved
+    descriptor = next(item for item in json.loads(saved)['parameter_changes']
+                      if item['key'] == 'Cache:TTL')
+    assert descriptor['key'] == 'Cache:TTL'
+    assert 'new_value' not in descriptor
+
+
 def test_delivery_preserves_bytes_and_no_adapter_is_not_run(tmp_path):
     from produce_release import produce_release
     args = inputs(tmp_path)
