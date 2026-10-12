@@ -8,24 +8,24 @@
 
 ## Verification
 
+The end-to-end test reads for UTF-8 fixture files and generated artifacts now specify `encoding="utf-8"`, so decoding is independent of the Windows locale. No production code or Task 2/3 code was changed.
+
 Command run exactly as requested:
 
 ```text
-pytest.exe tests/test_end_to_end.py tests/test_packaging.py -q --basetemp=.tmp-task4-final2
+pytest.exe tests/test_end_to_end.py tests/test_packaging.py -q --basetemp=.tmp-task4-fix-final
 ```
 
-Result: **6 failed, 16 passed** in 144.22s.
-
-All six failures are existing end-to-end checks that call `Path.read_text()` without an encoding for generated UTF-8 Chinese Markdown. On this Windows environment Python uses cp950 as the locale encoding, producing `UnicodeDecodeError` (`0x8a`). The added Task 4 parameter discovery cases did not appear among the failures. No additional test commands were run.
+Result: **22 passed** in 260.62s. Pytest exited successfully. Python emitted a shutdown-time `pyreadline3` `Console.__del__` `OSError` (`WinError 0xc0000008`) after the passing summary; it did not change the exit status.
 
 `git diff --check` completed without whitespace errors.
 
 ## Concerns
 
-- The specified test command is not fully green because of the cp950/UTF-8 decoding failures above.
+- The passing run emitted the non-fatal `pyreadline3` shutdown warning noted above.
 - `skills/release-docs/scripts/parameter_discovery.py` is already tracked and has no current diff, so it is not part of this Task 4 commit.
 - Existing unrelated Task 2/3 edits, temporary directories, plans, and reports were left untouched and excluded from the commit.
 
 ## Commit
 
-The Task 4 documentation, tests, and this report are committed together.
+Commit: pending.

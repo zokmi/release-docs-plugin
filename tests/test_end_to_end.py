@@ -90,7 +90,7 @@ def _pipeline(tmp_path, adapter=_recorded_adapter, parameters=False, unguarded_e
     baseline = repo / "baseline.sql"
     _write(baseline, "CREATE TABLE dbo.Customer (Id int NOT NULL PRIMARY KEY, Flag int NULL);\n")
     for name in ("efcore_project.csproj", "efcore_context.cs"):
-        _write(repo / name, (PLUGIN / "tests/fixtures/ef" / name).read_text())
+        _write(repo / name, (PLUGIN / "tests/fixtures/ef" / name).read_text(encoding="utf-8"))
     with (repo / "efcore_context.cs").open("a", encoding="utf-8") as stream:
         stream.write('services.AddDbContext<AppDbContext>(o => o.UseSqlServer(configuration.GetConnectionString("MainDb")));')
     _write(repo / "appsettings.json", '{"ConnectionStrings":{"MainDb":"Server=localhost;Database=ReleaseDb;Password=SOURCE_SECRET"}}')
@@ -98,7 +98,7 @@ def _pipeline(tmp_path, adapter=_recorded_adapter, parameters=False, unguarded_e
     _git(repo, "commit", "-qm", "baseline")
     base = _git(repo, "rev-parse", "HEAD")
     for name in ("20260101000000_AddWidget.cs", "20260101000000_AddWidget.Designer.cs", "AppDbContextModelSnapshot.cs"):
-        _write(repo / name, (PLUGIN / "tests/fixtures/ef" / name).read_text())
+        _write(repo / name, (PLUGIN / "tests/fixtures/ef" / name).read_text(encoding="utf-8"))
     descriptors = []
     for uid, phase, obj, sql, issues, dependencies in (
         ("backfill", "DATA", "dbo.Customer", "UPDATE dbo.Customer SET Flag=1 WHERE Id=1 AND Flag=0;", [], []),
@@ -143,7 +143,7 @@ def _pipeline(tmp_path, adapter=_recorded_adapter, parameters=False, unguarded_e
     run_info = initialize(repo)
     run = repo / run_info["run_path"]
     fixture = run / "fixture.sql"
-    _write(run / "baseline.sql", baseline.read_text())
+    _write(run / "baseline.sql", baseline.read_text(encoding="utf-8"))
     _write(fixture, "INSERT INTO dbo.Customer VALUES (1,0),(2,7),(3,NULL),(4,1),(5,-1);\n")
     fixture_manifest = run / "fixture.json"
     _write(fixture_manifest, json.dumps({"usage": "Backfill target, preserved rows, NULL, existing target, boundary and row counts",
@@ -183,7 +183,7 @@ def test_collection_to_review_preserves_allowlist_and_localdb_evidence(tmp_path,
     assert {p.name for p in output.iterdir()} == ({"00_上線指引.md", "01_部署SQL.sql"}
                                                 | ({"02_參數異動.md"} if parameters else set()))
     assert (output / "01_部署SQL.sql").read_bytes() == (run / "01_部署SQL.sql").read_bytes()
-    sql = (output / "01_部署SQL.sql").read_text()
+    sql = (output / "01_部署SQL.sql").read_text(encoding="utf-8")
     assert "dbo.Deferred" not in sql
     assert "Widgets" in sql and "UPDATE dbo.Customer" in sql
     assert [call["round_name"] for call in calls] == list(ROUNDS)
@@ -198,11 +198,11 @@ def test_collection_to_review_preserves_allowlist_and_localdb_evidence(tmp_path,
                                ("fixture_manifest", "fixture_manifest_sha256")):
             assert row[digest] == hashlib.sha256(Path(row[source]).read_bytes()).hexdigest()
         assert row["preserved_data_summary"] == PRESERVED
-    delivered = "\n".join(path.read_text() for path in output.iterdir())
+    delivered = "\n".join(path.read_text(encoding="utf-8") for path in output.iterdir())
     for forbidden in ("SOURCE_SECRET", "PARAMETER_SECRET", "lifecycle_exclusion_manifest.json", str(tmp_path),
                       ".release-docs/runs", "recorded-adapter"):
         assert forbidden not in delivered
-    exclusion = json.loads((run / "lifecycle_exclusion_manifest.json").read_text())["exclusions"][0]
+    exclusion = json.loads((run / "lifecycle_exclusion_manifest.json").read_text(encoding="utf-8"))["exclusions"][0]
     assert exclusion["unit_ids"] == ["deferred"] and exclusion["dependency_impact"] == []
     assert exclusion["units"][0]["source_revision"] == analysis.source_scope["target_sha"]
     _write(run / "temporary/adapter.log", "temporary trace")
@@ -245,7 +245,7 @@ def test_incomplete_adapter_evidence_cannot_claim_deployment_pass(tmp_path, dama
     findings = validate_release_output(output, run)
     assert next(f["status"] for f in findings if f["code"] == "deployment_validation_status") == "待確認"
     assert next(f["status"] for f in findings if f["code"] == "sql_content_status") == "待確認"
-    assert "LocalDB：通過" not in (output / "00_上線指引.md").read_text()
+    assert "LocalDB：通過" not in (output / "00_上線指引.md").read_text(encoding="utf-8")
 
 
 def test_deliberate_adapter_failure_is_retained_without_deployment_success(tmp_path):
@@ -275,7 +275,7 @@ def test_unprovable_ef_column_definition_blocks_before_assembly(tmp_path):
     from analyze_release_units import analyze_release_units
     repo, evidence, baseline, detection = ef_case(tmp_path)
     migration = repo / "20260101000000_AddWidget.cs"
-    _write(migration, migration.read_text().replace('type: "int"', 'type: "datetime2"'))
+    _write(migration, migration.read_text(encoding="utf-8").replace('type: "int"', 'type: "datetime2"'))
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "unsupported column shape")
     evidence["target_sha"] = _git(repo, "rev-parse", "HEAD")
