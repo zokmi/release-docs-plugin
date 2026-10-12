@@ -768,6 +768,38 @@ def test_bearer_credentials_in_parameter_keys_are_masked():
     assert 'abc.def' not in json.dumps(projected)
 
 
+@pytest.mark.parametrize('private_value', [
+    ['SYNTHETIC_PRIVATE'], {'Plain': 'SYNTHETIC_PRIVATE'}, 654321, True, None])
+def test_explicit_sensitive_parameter_masks_complete_target_context(tmp_path, private_value):
+    module = api()
+    analysis, artifact, manifest = inputs(tmp_path)
+    analysis.parameter_changes = [{'environment': 'Production', 'service': 'API',
+        'key': 'Items', 'sensitive': True, 'change': 'add', 'new_value': private_value,
+        'target_config': {'Items': private_value},
+        'business_context': 'SYNTHETIC_PRIVATE' if isinstance(private_value, (list, dict)) else 'confirmed'}]
+    projected = module._parameter_projection(analysis.parameter_changes)
+    assert projected[0]['target_config'] == {'Items': '[REDACTED]'}
+    assert module._parameter_projection(projected)[0]['target_config'] == {'Items': '[REDACTED]'}
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / 'private-context')
+    content = (tmp_path / 'private-context/02_參數異動.md').read_text(encoding='utf-8')
+    blocks = [json.loads(block) for block in re.findall(r'```json\n(.*?)\n```', content, re.S)]
+    assert blocks[0] == {'Items': '[REDACTED]'}
+    assert 'SYNTHETIC_PRIVATE' not in content
+
+
+def test_sensitive_context_masks_all_colon_and_nested_aliases():
+    module = api()
+    context = {'A:B:C': 123, 'A:B': {'C': 123},
+               'A': {'B:C': 123, 'B': {'C': 123}}, 'Keep': 456}
+    change = {'environment': 'Production', 'service': 'API', 'key': 'A:B:C',
+              'sensitive': True, 'change': 'add', 'new_value': 123,
+              'target_config': context}
+    safe = module._parameter_projection([change])[0]['target_config']
+    assert safe == {'A:B:C': '[REDACTED]', 'A:B': {'C': '[REDACTED]'},
+                    'A': {'B:C': '[REDACTED]', 'B': {'C': '[REDACTED]'}}, 'Keep': 456}
+    assert context['A:B:C'] == 123
+
+
 def test_injected_failure_without_recorded_expected_error_remains_pending(tmp_path):
     module = api()
     analysis, artifact, manifest = inputs(tmp_path)

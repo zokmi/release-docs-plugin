@@ -64,6 +64,7 @@
    - fenced `json` block：每個參數分節的可套用設定範例，與該分節的異動 descriptor 對應。
    - fenced `json` block：在文件末尾提供完整脫敏 descriptor array，供工具或審查流程複製解析。
 4. 敏感 key、URL credential、secret assignment 與已知 secret 一律遮罩；不得將 raw old/new value 寫入 operator document。
+   明確 `sensitive=true` 的值包含複合型別時，對應完整 `target_config` 值也必須遮罩；邏輯設定鍵的字面冒號、巢狀與混合表示須全部遮罩，保留非敏感鄰近設定與原始來源不變。
 5. 確認無參數異動時不產出 `02_參數異動.md`，但 lifecycle metadata 必須保存已檢查範圍與 `parameters_applicable=false`。
 6. 若 diff 顯示設定異動但無法建立完整 descriptor，產製必須失敗並回報缺少欄位或來源，不得產出只有 SQL 的不完整交付物。
 

@@ -50,4 +50,42 @@ The user requested a pause at an appropriate checkpoint. No merge, push, or rele
 - `git diff --check` and package resources/version check for v0.1.34 passed. The tag/remote-main publication gate was not run for this unreleased branch.
 - Existing sandbox link-creation skips and non-fatal pyreadline3 shutdown warnings remain recorded. Existing invalid `main.broken` ref and unrelated user changes were preserved.
 
-Final whole-suite sign-off remains pending; targeted fixes are verified.
+At the pause checkpoint, final whole-suite sign-off was pending; targeted fixes had been verified.
+
+## Resumed verification
+
+The user resumed work after the pause checkpoint. On `d56e9de`, the remaining review partition was run outside the filesystem sandbox so its hardlink security cases could execute:
+
+```text
+pytest.exe tests/test_release_review.py -q -rs --basetemp=.tmp-resume-release-review
+237 passed in 645.29s (0:10:45), exit code 0; no skips.
+```
+
+Package resource/version validation for v0.1.34 and `git diff --check` passed again.
+
+The new cross-project SQL data-preservation instructions were checked against this feature's changes: no deployment SQL was added/modified and no data-clearing operation was introduced. Existing pinned-source and fingerprint checks remain in place. This plugin test result is not production database acceptance evidence.
+
+## Final verification and additional privacy repair
+
+Baseline code revision: `d56e9deaa2d2f16980ee46c7f3ba5cc0017cf6cb`.
+
+```text
+pytest.exe tests -q -rs --basetemp=.tmp-resume-final-all
+961 passed in 2523.18s (0:42:03), exit code 0; no skips.
+```
+
+During final inspection, a memory reproduction showed that an explicitly sensitive compound parameter could remain visible in `target_config`, even when its old/new values were masked. Five regression cases failed before the repair. The final renderer repair masks the complete logical setting value for list/object/number/bool/null, collects private string leaves for prose redaction, and handles every literal/nested/mixed colon-path alias. A separate alias regression failed before that fix. Original source structures and non-sensitive neighbors remain unchanged.
+
+The baseline suite above ran with its initially imported renderer and does **not** represent the later renderer repair. The later changes were verified separately:
+
+```text
+pytest.exe tests/test_release_documents.py tests/test_parameter_discovery.py tests/test_produce_release.py tests/test_analysis_metadata.py tests/test_end_to_end.py tests/test_packaging.py -q -rs --basetemp=.tmp-sensitive-context-impact
+187 passed in 434.82s (0:07:14), exit code 0; no skips.
+
+pytest.exe tests/test_release_documents.py -q -rs --basetemp=.tmp-sensitive-alias-green
+79 passed in 12.58s, exit code 0; no skips.
+```
+
+The impact suite covered the initial compound-value repair; the subsequent alias-only change was covered by the final complete renderer suite. Independent scoped re-review passed the final alias repair, repeat projection, memory-rendered JSON, original-input immutability, and preservation of typed neighboring arrays.
+
+Verification is complete using baseline full regression plus targeted verification of the final renderer changes. Do not describe this as a single full-suite run against the final renderer revision. No merge, push, version bump, or publication was performed.

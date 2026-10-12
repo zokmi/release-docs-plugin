@@ -275,6 +275,33 @@ def _nested_parameter_secrets(value):
             yield from _nested_parameter_secrets(item)
 
 
+def _parameter_strings(value):
+    if isinstance(value, str) and value:
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _parameter_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _parameter_strings(item)
+
+
+def _mask_parameter_context(value, parts):
+    if not parts:
+        return '[REDACTED]'
+    if isinstance(value, dict):
+        # A logical configuration path may have literal, nested, or mixed aliases.
+        # Mask every representation rather than stopping at the first match.
+        for length in range(1, len(parts) + 1):
+            key = ':'.join(parts[:length])
+            if key in value:
+                value[key] = _mask_parameter_context(value[key], parts[length:])
+    elif isinstance(value, list) and parts[0].isdigit() and int(parts[0]) < len(value):
+        index = int(parts[0])
+        value[index] = _mask_parameter_context(value[index], parts[1:])
+    return value
+
+
 def _source_reference(value, secrets):
     if not isinstance(value, dict):
         return _safe_parameter_value(value, secrets) if value is not None else "待確認"
@@ -292,7 +319,7 @@ def _parameter_projection(changes, secrets=()):
     secrets = {value for item in changes if isinstance(item, dict)
                and (PARAMETER_SENSITIVE.search(str(item.get("key", ""))) or item.get("sensitive") is True)
                for field in ("value", "raw_value", "old_value", "new_value", "format_example")
-               for value in [item.get(field)] if isinstance(value, str) and value}
+               for value in _parameter_strings(item.get(field))}
     secrets.update(supplied_secrets)
     secrets.update(secret for item in changes if isinstance(item, dict)
                    for field in ("value", "raw_value", "old_value", "new_value", "target_config")
@@ -310,6 +337,9 @@ def _parameter_projection(changes, secrets=()):
             if not isinstance(raw["target_config"], dict):
                 raise ValueError("Target configuration context must be a JSON object")
             item["target_config"] = _safe_parameter_value(raw["target_config"], secrets)
+            if item['sensitive']:
+                item['target_config'] = _mask_parameter_context(
+                    item['target_config'], item['key'].split(':'))
         for field in ("old_value", "new_value"):
             if field in raw:
                 item[field] = ("[REDACTED]" if item["sensitive"]

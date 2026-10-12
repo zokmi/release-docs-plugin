@@ -44,13 +44,13 @@
 - `ParameterDiscoveryResult.applicable: bool | None`
 - `ParameterDiscoveryResult.findings: list[dict]`
 
-- [ ] **Step 1: Write failing tests** for JSON object diff, add/update/remove, null/false/0 distinction, nested keys, array indices, source references, and no-change checked scope.
-- [ ] **Step 2: Run discovery tests and verify expected failure** because the module/API does not exist.
-- [ ] **Step 3: Implement minimal recursive JSON diff** with stable key ordering and explicit missing sentinel; preserve source path/revision/line metadata and presentation metadata supplied by caller.
-- [ ] **Step 4: Add environment variable mapping tests and implementation** for `Foo__Bar` → `Foo:Bar`, without assuming provider precedence when consumer/provider evidence is absent.
-- [ ] **Step 5: Add descriptor completeness validation** so missing environment/service/key yields a blocking finding rather than an omitted change.
-- [ ] **Step 6: Run `pytest tests/test_parameter_discovery.py -q` and verify pass.**
-- [ ] **Step 7: Commit** `feat: discover parameter changes from pinned sources`.
+- [x] **Step 1: Write failing tests** for JSON object diff, add/update/remove, null/false/0 distinction, nested keys, array indices, source references, and no-change checked scope.
+- [x] **Step 2: Run discovery tests and verify expected failure** because the module/API does not exist.
+- [x] **Step 3: Implement minimal recursive JSON diff** with stable key ordering and explicit missing sentinel; preserve source path/revision/line metadata and presentation metadata supplied by caller.
+- [x] **Step 4: Add environment variable mapping tests and implementation** for `Foo__Bar` → `Foo:Bar`, without assuming provider precedence when consumer/provider evidence is absent.
+- [x] **Step 5: Add descriptor completeness validation** so missing environment/service/key yields a blocking finding rather than an omitted change.
+- [x] **Step 6: Run `pytest tests/test_parameter_discovery.py -q` and verify pass.**
+- [x] **Step 7: Commit** `feat: discover parameter changes from pinned sources`.
 
 ### Task 2: 將 discovery 接入 analysis/production contract
 
@@ -65,13 +65,13 @@
 - Analysis keeps `parameter_changes`, `parameters_applicable`, and adds checked parameter source metadata without changing SQL unit contracts.
 - Production preflight rejects a confirmed config diff whose descriptor set is incomplete or missing.
 
-- [ ] **Step 1: Write failing integration tests** proving an appsettings-only change populates `analysis.parameter_changes`, sets applicability true, and cannot produce SQL-only output.
-- [ ] **Step 2: Run the focused tests and verify failure** showing the current empty-list default causes omission.
-- [ ] **Step 3: Wire discovery output into analysis preparation** using pinned source inventory, preserving checked sources and findings.
-- [ ] **Step 4: Tighten production preflight** to distinguish `no confirmed config changes` from `config changes detected but unresolved`; reject the latter before any operator output is written.
-- [ ] **Step 5: Persist `parameters_applicable` and checked-source evidence in lifecycle metadata** while preserving secret redaction.
-- [ ] **Step 6: Run focused producer/metadata tests and verify pass.**
-- [ ] **Step 7: Commit** `feat: enforce automatic parameter document eligibility`.
+- [x] **Step 1: Write failing integration tests** proving an appsettings-only change populates `analysis.parameter_changes`, sets applicability true, and cannot produce SQL-only output.
+- [x] **Step 2: Run the focused tests and verify failure** showing the current empty-list default causes omission.
+- [x] **Step 3: Wire discovery output into analysis preparation** using pinned source inventory, preserving checked sources and findings.
+- [x] **Step 4: Tighten production preflight** to distinguish `no confirmed config changes` from `config changes detected but unresolved`; reject the latter before any operator output is written.
+- [x] **Step 5: Persist `parameters_applicable` and checked-source evidence in lifecycle metadata** while preserving secret redaction.
+- [x] **Step 6: Run focused producer/metadata tests and verify pass.**
+- [x] **Step 7: Commit** `feat: enforce automatic parameter document eligibility`.
 
 ### Task 3: 產生範本式參數文件與可複製 JSON
 
@@ -80,13 +80,13 @@
 - Modify: `skills/release-docs/assets/02_參數異動.md`
 - Test: `tests/test_release_documents.py`
 
-- [ ] **Step 1: Write failing tests** asserting the parameter document follows the template order: source/safety preface, business/module table, grouped parameter sections, per-section configuration JSON, optional `text` environment overrides, deployment checklist, canonical fenced JSON array, and table/JSON values from the same sanitized descriptors.
-- [ ] **Step 2: Run the focused renderer tests and verify failure** because the current renderer emits only a table.
-- [ ] **Step 3: Implement one sanitized descriptor projection** used by table, business/module mapping, grouped configuration JSON, environment-variable examples, checklist, and canonical JSON; include `add`/`update`/`remove`, old/new values only after redaction, and `source_reference`.
-- [ ] **Step 4: Update the asset template** with stable sections, ` ```json ` and ` ```text ` blocks, business/module table, deployment checklist, and copy instructions.
-- [ ] **Step 5: Add parser and secret-leak assertions** for JSON validity, sensitive key masking, URL credentials, and known secret removal.
-- [ ] **Step 6: Run `pytest tests/test_release_documents.py -q` and verify pass.**
-- [ ] **Step 7: Commit** `feat: render copyable parameter change json`.
+- [x] **Step 1: Write failing tests** asserting the parameter document follows the template order: source/safety preface, business/module table, grouped parameter sections, per-section configuration JSON, optional `text` environment overrides, deployment checklist, canonical fenced JSON array, and table/JSON values from the same sanitized descriptors.
+- [x] **Step 2: Run the focused renderer tests and verify failure** because the current renderer emits only a table.
+- [x] **Step 3: Implement one sanitized descriptor projection** used by table, business/module mapping, grouped configuration JSON, environment-variable examples, checklist, and canonical JSON; include `add`/`update`/`remove`, old/new values only after redaction, and `source_reference`.
+- [x] **Step 4: Update the asset template** with stable sections, ` ```json ` and ` ```text ` blocks, business/module table, deployment checklist, and copy instructions.
+- [x] **Step 5: Add parser and secret-leak assertions** for JSON validity, sensitive key masking, URL credentials, and known secret removal.
+- [x] **Step 6: Run `pytest tests/test_release_documents.py -q` and verify pass.**
+- [x] **Step 7: Commit** `feat: render copyable parameter change json`.
 
 ### Task 4: End-to-end regression and documentation
 
@@ -97,12 +97,12 @@
 - Test: `tests/test_packaging.py`
 - Test: `tests/test_end_to_end.py`
 
-- [ ] **Step 1: Add end-to-end tests** for appsettings add/update/remove producing exactly `00_上線指引.md`, `01_部署SQL.sql`, and `02_參數異動.md`; no-change producing only the first two.
-- [ ] **Step 2: Add a blocked-case test** proving incomplete config evidence stops before partial output.
-- [ ] **Step 3: Update skill documentation** to state automatic discovery, JSON contract, and blocking behavior.
-- [ ] **Step 4: Run focused end-to-end/packaging tests and verify pass.**
-- [ ] **Step 5: Run the complete test suite, `git diff --check`, and release gate checks.**
-- [ ] **Step 6: Commit** `docs: document automatic parameter change delivery`.
+- [x] **Step 1: Add end-to-end tests** for appsettings add/update/remove producing exactly `00_上線指引.md`, `01_部署SQL.sql`, and `02_參數異動.md`; no-change producing only the first two.
+- [x] **Step 2: Add a blocked-case test** proving incomplete config evidence stops before partial output.
+- [x] **Step 3: Update skill documentation** to state automatic discovery, JSON contract, and blocking behavior.
+- [x] **Step 4: Run focused end-to-end/packaging tests and verify pass.**
+- [x] **Step 5: Run the complete test suite, `git diff --check`, and release gate checks.**
+- [x] **Step 6: Commit** `docs: document automatic parameter change delivery`.
 
 ## Verification Commands
 
@@ -111,6 +111,12 @@ pytest.exe tests/test_parameter_discovery.py tests/test_produce_release.py tests
 pytest.exe tests -q
 git diff --check
 ```
+
+## Completion evidence
+
+Tasks 1–4 completed. Full regression at baseline revision `d56e9de`: 961 passed, no skips. Later renderer privacy changes: impacted integration suite 187 passed; final alias-only renderer suite 79 passed; independent scoped review clean. These are separate verification runs, not one whole-suite result for the final renderer revision. Exact commands, revisions and limitations are in `task-4-report.md`.
+
+Package resources/version and whitespace gates passed. Tag/remote-main publication gates remain a release-time step; no merge, push or publication was performed in this feature task.
 
 ## Self-review
 
