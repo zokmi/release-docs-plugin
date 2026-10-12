@@ -196,6 +196,109 @@ def test_pinned_config_analysis_produces_parameter_document_and_checked_scope(tm
                for item in saved['checked_parameter_sources'])
 
 
+def parameter_update_inputs(tmp_path, *, unchanged=False, new_value=120):
+    from analyze_release_units import analyze_release_units
+    args = inputs(tmp_path)
+    def git(*parts):
+        return subprocess.run(['git', '-C', str(tmp_path), *parts], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    config = tmp_path / 'appsettings.json'
+    config.write_text('{"Cache":{"TTL":60}}', encoding='utf-8')
+    git('add', 'appsettings.json')
+    git('commit', '-qm', 'base config')
+    base = git('rev-parse', 'HEAD')
+    if not unchanged:
+        config.write_text(json.dumps({'Cache': {'TTL': new_value}}), encoding='utf-8')
+        git('add', 'appsettings.json')
+        git('commit', '-qm', 'update config')
+    target = git('rev-parse', 'HEAD')
+    args['evidence'].update(base_sha=base, target_sha=target,
+                            requested_base_sha=base, diff_base_sha=base,
+                            committed_changes=[] if unchanged else [
+                                {'path': 'appsettings.json', 'status': 'M'}])
+    args['evidence']['parameter_source_inventory'] = {'appsettings.json': {
+        'environment': 'Production', 'service': 'API', 'format_example': 'integer',
+        'apply': 'update config', 'reload': 'restart', 'validation': 'health'}}
+    analysis = analyze_release_units(tmp_path, args['evidence'], args['baseline_source'], None)
+    analysis.units = args['analysis'].units
+    analysis.units[0]['source_revision'] = target
+    analysis.structure_changes = args['analysis'].structure_changes
+    args['analysis'] = analysis
+    return args
+
+
+@pytest.mark.parametrize('unchanged', [False, True], ids=['modified', 'inventory'])
+@pytest.mark.parametrize('damage', ['missing_base', 'missing_target', 'duplicate_base',
+                                    'duplicate_target', 'missing_diff', 'duplicate_diff',
+                                    'wrong_revision', 'extra_source'])
+def test_parameter_preflight_requires_exact_pinned_tree_coverage(tmp_path, unchanged, damage):
+    from produce_release import produce_release, ProductionError
+    args = parameter_update_inputs(tmp_path, unchanged=unchanged)
+    analysis = args['analysis']
+    checked = analysis.checked_parameter_sources
+    if damage.startswith('missing_'):
+        role = damage.removeprefix('missing_')
+        analysis.checked_parameter_sources = [s for s in checked if s['role'] != role]
+    elif damage.startswith('duplicate_'):
+        role = damage.removeprefix('duplicate_')
+        checked.append(dict(next(s for s in checked if s['role'] == role)))
+    elif damage == 'wrong_revision':
+        next(s for s in checked if s['role'] == 'base')['revision'] = '0' * 40
+    else:
+        checked.append({'role': 'target', 'path': 'one.sql',
+                        'revision': args['evidence']['target_sha'],
+                        'source_hash': args['analysis'].units[0]['source_hash']})
+    # Forge internally consistent "add" descriptors after removing the old source.
+    # Rediscovery alone accepts these unless coverage is checked against Git trees.
+    if damage == 'missing_base' and not unchanged:
+        for change in analysis.parameter_changes:
+            change['change'] = 'add'
+            change.pop('old_value', None)
+    with pytest.raises(ProductionError) as error:
+        produce_release(**args)
+    assert error.value.stage == 'preflight'
+    assert not args['run_root'].exists()
+    assert not args['output_dir'].exists()
+
+
+def test_modified_config_is_delivered_as_update_with_both_pinned_sources(tmp_path):
+    from produce_release import produce_release
+    args = parameter_update_inputs(tmp_path)
+    produce_release(**args)
+    content = (args['output_dir'] / '02_參數異動.md').read_text(encoding='utf-8')
+    assert '| Production | API | Cache:TTL | update | 60 → 120 |' in content
+    saved = json.loads((args['run_root'] / 'source_unit_metadata.json').read_text(encoding='utf-8'))
+    assert {s['role'] for s in saved['checked_parameter_sources']} == {'diff', 'base', 'target'}
+
+
+@pytest.mark.parametrize('damage', ['forged', 'omitted'])
+def test_parameter_context_cannot_forge_copyable_configuration(tmp_path, damage):
+    from produce_release import produce_release, ProductionError
+    args = parameter_update_inputs(tmp_path)
+    if damage == 'forged':
+        args['analysis'].parameter_changes[0]['target_config'] = {'Cache': {'TTL': 999}}
+    else:
+        args['analysis'].parameter_changes[0].pop('target_config')
+    with pytest.raises(ProductionError) as error:
+        produce_release(**args)
+    assert error.value.stage == 'preflight'
+    assert not args['run_root'].exists()
+    assert not args['output_dir'].exists()
+
+
+def test_caller_secret_is_redacted_from_parameter_document(tmp_path):
+    from produce_release import produce_release
+    args = parameter_update_inputs(tmp_path, new_value='opaque-caller-secret')
+    change = args['analysis'].parameter_changes[0]
+    assert change['key'] == 'Cache:TTL'
+    assert change['new_value'] == 'opaque-caller-secret'
+    assert change.get('sensitive') is not True
+    produce_release(**args, secrets=(s for s in ['opaque-caller-secret']))
+    content = (args['output_dir'] / '02_參數異動.md').read_text(encoding='utf-8')
+    assert 'opaque-caller-secret' not in content
+    assert '[REDACTED]' in content
+
+
 def test_production_preserves_safe_parameter_projection_for_renderer(tmp_path):
     from analyze_release_units import analyze_release_units
     from produce_release import produce_release

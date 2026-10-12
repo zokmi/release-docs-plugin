@@ -15,7 +15,7 @@ from run_local_validation import run_local_validation
 from derived_sources import verify_source
 from evidence_redaction import normalize_secrets
 from analyze_release_units import (_pinned_change_evidence, _parameter_changed_paths,
-                                   _deployment_variables)
+                                   _deployment_variables, _tree_paths)
 from parameter_discovery import discover_parameter_changes
 import json
 
@@ -115,18 +115,30 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
             if changed_config - declared_config or changed_deployment - declared_deployment:
                 raise ValueError('Incomplete committed change evidence')
         checked = getattr(clean, 'checked_parameter_sources', [])
-        if set(inventory) - {item.get('path') for item in checked
-                             if isinstance(item, dict) and item.get('role') in ('base', 'target')}:
+        config_paths = changed_config | set(inventory)
+        trees = {role: _tree_paths(repo, scope[role + '_sha']) for role in ('base', 'target')}
+        if any(not isinstance(path, str) or not path.lower().endswith('.json')
+               or not any(path in tree for tree in trees.values()) for path in config_paths):
             raise ValueError('Unresolved parameter source inventory')
-        if changed_config - {item.get('path') for item in checked if isinstance(item, dict)}:
-            raise ValueError('Unresolved configuration source')
-        if changed_deployment - {item.get('path') for item in checked
-                                 if isinstance(item, dict) and item.get('role') == 'deployment'}:
-            raise ValueError('Unresolved deployment source')
-        if not checked:
+        expected_sources = {
+            (role, path, scope[role + '_sha'])
+            for role, tree in trees.items() for path in config_paths if path in tree}
+        expected_sources.update(
+            ('deployment', path, scope[role + '_sha'])
+            for role, tree in trees.items() for path in changed_deployment if path in tree)
+        # Legacy SQL-only analyses have no parameter evidence; pin their empty scan.
+        if not checked and not config_paths and not changed_deployment:
             checked = [{'role': 'diff', 'base_revision': scope['base_sha'],
                         'target_revision': scope['target_sha'], 'source_hash': diff_hash}]
             clean.checked_parameter_sources = checked
+        if not isinstance(checked, list) or any(not isinstance(item, dict) for item in checked):
+            raise ValueError('Invalid checked parameter sources')
+        actual_sources = [(item.get('role'), item.get('path'), item.get('revision'))
+                          for item in checked if item.get('role') != 'diff']
+        if (len(actual_sources) != len(set(actual_sources))
+                or set(actual_sources) != expected_sources
+                or sum(item.get('role') == 'diff' for item in checked) != 1):
+            raise ValueError('Incomplete or duplicate pinned parameter source coverage')
         pinned_sources = {'base': [], 'target': []}
         deployment_sources = {}
         for source in checked:
@@ -161,13 +173,14 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
                                     for path, variables in sorted(deployment_sources.items())])
             if discovered.findings or discovered.applicable != clean.parameters_applicable:
                 raise ValueError('Unresolved configuration discovery')
-            fields = ('environment', 'service', 'key', 'change', 'old_value', 'new_value')
+            fields = ('environment', 'service', 'key', 'change', 'old_value', 'new_value',
+                      'target_config')
             def signature(changes):
                 return sorted(json.dumps({key: item[key] for key in fields if key in item},
                                          sort_keys=True, ensure_ascii=True) for item in changes)
             if signature(discovered.changes) != signature(clean.parameter_changes):
                 raise ValueError('Incomplete or mismatched parameter descriptors')
-        clean.parameter_changes = _parameter_projection(clean.parameter_changes)
+        clean.parameter_changes = _parameter_projection(clean.parameter_changes, secrets=secrets)
         if type(clean.parameters_applicable) is not bool or clean.parameters_applicable != bool(clean.parameter_changes):
             raise ValueError('Unknown or conflicting parameter applicability')
         if clean.parameters_applicable and any(
