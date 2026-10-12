@@ -10,6 +10,26 @@ def source(content, **metadata):
             "environment": "Production", "service": "CustomerAPI", **metadata}
 
 
+def test_discovery_preserves_complete_target_array_context():
+    result = discover_parameter_changes([source({"Items": ["old", "keep"]})],
+                                        [source({"Items": ["new", "keep"]})])
+    assert len(result.changes) == 1
+    assert result.changes[0]["target_config"] == {"Items": ["new", "keep"]}
+
+
+def test_discovery_preserves_numeric_object_key_shape():
+    result = discover_parameter_changes([source({"Items": {"0": "old"}})],
+                                        [source({"Items": {"0": "new"}})])
+    assert result.changes[0]["target_config"] == {"Items": {"0": "new"}}
+
+
+def test_removed_source_has_no_synthetic_root_addition():
+    result = discover_parameter_changes([source({"Items": ["old", "keep"]})], [])
+    assert [(item["key"], item["change"]) for item in result.changes] == [
+        ("Items:0", "remove"), ("Items:1", "remove")]
+    assert all(item["target_config"] == {} for item in result.changes)
+
+
 def test_discovers_nested_json_add_update_remove_and_preserves_sources():
     base = [source('{"Cache":{"TTL":60,"Enabled":true},"Gone":1}')]
     target = [source('{"Cache":{"TTL":120,"Enabled":false},"New":null}')]

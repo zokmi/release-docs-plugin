@@ -1,5 +1,6 @@
 """Compare caller-pinned configuration sources and retain their provenance."""
 from dataclasses import dataclass, field
+from copy import deepcopy
 import json
 
 
@@ -68,6 +69,19 @@ def _same_json_value(left, right):
     return left == right
 
 
+def _target_config(document, key):
+    """Retain typed ancestors and the complete outermost target array."""
+    def fragment(value, parts):
+        if isinstance(value, list) or not parts:
+            return deepcopy(value)
+        if not isinstance(value, dict) or parts[0] not in value:
+            return _MISSING
+        child = fragment(value[parts[0]], parts[1:])
+        return _MISSING if child is _MISSING else {parts[0]: child}
+    result = fragment(document, key.split(":"))
+    return {} if result is _MISSING else result
+
+
 def discover_parameter_changes(base_sources: list[dict], target_sources: list[dict], *,
                                consumer_sources: list[dict] | None = None,
                                deployment_sources: list[dict] | None = None) -> ParameterDiscoveryResult:
@@ -88,7 +102,8 @@ def discover_parameter_changes(base_sources: list[dict], target_sources: list[di
         after_source = target_by_path.get(path)
         try:
             before = dict(_flatten(_document(before_source))) if before_source else {}
-            after = dict(_flatten(_document(after_source))) if after_source else {}
+            target_document = _document(after_source) if after_source else {}
+            after = dict(_flatten(target_document)) if after_source else {}
         except (ValueError, TypeError, UnicodeError) as error:
             unresolved = True
             result.findings.append({"blocking": True, "source": path,
@@ -105,6 +120,7 @@ def discover_parameter_changes(base_sources: list[dict], target_sources: list[di
             owner = after_source or before_source
             environment, service, scope_conflicts = _scope(owner, consumers)
             descriptor = {"environment": environment, "service": service, "key": key,
+                          "target_config": _target_config(target_document, key),
                           "change": kind, "source_reference": {
                               "base": _source_ref(before_source) if before_source else None,
                               "target": _source_ref(after_source) if after_source else None}}

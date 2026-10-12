@@ -18,6 +18,67 @@ def api():
     return importlib.import_module("render_release_documents")
 
 
+@pytest.mark.parametrize("before,after", [
+    ({"Items": ["old", "keep"]}, {"Items": ["new", "keep"]}),
+    ({"Items": {"0": "old"}}, {"Items": {"0": "new"}}),
+    ({"Items": ["old", "keep"]}, {"Items": ["old"]}),
+])
+def test_discovered_config_preserves_target_shape_and_array_tail(tmp_path, before, after):
+    from parameter_discovery import discover_parameter_changes
+    def source(content):
+        return {"path": "appsettings.json", "content": content,
+                "environment": "Production", "service": "API"}
+    changes = discover_parameter_changes([source(before)], [source(after)]).changes
+    analysis, artifact, manifest = inputs(tmp_path)
+    analysis.parameter_changes = api()._parameter_projection(changes)
+    api().render_release_documents(analysis, artifact, manifest, tmp_path / "operator")
+    text = (tmp_path / "operator/02_參數異動.md").read_text(encoding="utf-8")
+    config = json.loads(re.search(r"```json\n(.*?)\n```", text, re.S)[1])
+    assert config == after
+    assert api()._parameter_projection(changes)[0]["target_config"] == after
+    once = api()._parameter_projection(changes)
+    assert api()._parameter_projection(once)[0]["target_config"] == after
+
+
+def test_legacy_numeric_path_is_index_object_with_array_replacement_warning():
+    from types import SimpleNamespace
+    sections = api()._parameters(
+        [{"environment": "Production", "service": "API", "key": "Items:0",
+          "change": "update", "new_value": "new"}],
+        SimpleNamespace(source_scope={}), SimpleNamespace(release_id="test"))
+    text = sections["PARAMETERS"]
+    assert json.loads(re.search(r"```json\n(.*?)\n```", text, re.S)[1]) == {"Items": {"0": "new"}}
+    assert "不可取代陣列" in text
+
+
+def test_projection_redacts_known_secret_and_bearer_under_neutral_keys():
+    changes = [{"environment": "Production", "service": "API", "key": "Display",
+                "new_value": "known-value", "apply": "use known-value",
+                "target_config": {"Display": "known-value", "Other": "Bearer abc.def"}}]
+    projected = api()._parameter_projection(changes, secrets=("known-value",))
+    text = json.dumps(projected)
+    assert "known-value" not in text and "abc.def" not in text
+    assert projected[0]["target_config"]["Other"] == "Bearer [REDACTED]"
+    assert api()._parameter_projection(projected)[0]["target_config"] == projected[0]["target_config"]
+
+
+def test_discovered_array_context_masks_unchanged_credentials(tmp_path):
+    from parameter_discovery import discover_parameter_changes
+    def source(first):
+        return {"path": "appsettings.json", "environment": "Production", "service": "API",
+                "content": {"Items": [first, {"Secret": "hidden-value",
+                                               "Display": "hidden-value", "Other": "Bearer abc.def"}]}}
+    changes = discover_parameter_changes([source("old")], [source("new")]).changes
+    analysis, artifact, manifest = inputs(tmp_path)
+    analysis.parameter_changes = api()._parameter_projection(changes)
+    api().render_release_documents(analysis, artifact, manifest, tmp_path / "operator")
+    text = (tmp_path / "operator/02_參數異動.md").read_text(encoding="utf-8")
+    assert "hidden-value" not in text and "abc.def" not in text
+    config = json.loads(re.search(r"```json\n(.*?)\n```", text, re.S)[1])
+    assert config["Items"] == ["new", {"Secret": "[REDACTED]", "Display": "[REDACTED]",
+                                      "Other": "Bearer [REDACTED]"}]
+
+
 def inputs(tmp_path):
     from analyze_release_units import AnalysisResult
     from assemble_deployment_sql import assemble_deployment_sql
@@ -188,14 +249,15 @@ def test_parameter_document_template_order_and_copyable_grouped_json(tmp_path):
     assert content.count('### ["Production","CustomerAPI","Endpoints"]') == 1
     assert "1. " in content.split("## 參數部署查核", 1)[1]
     blocks = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", content, re.S)]
-    assert blocks[0] == {"Endpoints": [{"Url": "https://new.test/", "Enabled": False}]}
+    assert blocks[0] == {"Endpoints": {"0": {"Url": "https://new.test/", "Enabled": False}}}
+    assert "不可取代陣列" in content
     assert blocks[1] == {"Cache": {"TTL": 120}}
     descriptors = blocks[-1]
     assert [(item["key"], item["change"]) for item in descriptors] == [
         ("Endpoints:0:Url", "update"), ("Endpoints:0:Enabled", "add"),
         ("Endpoints:1:Url", "remove"), ("Cache:TTL", "update")]
     assert descriptors[0]["old_value"] == "https://old.test/"
-    assert descriptors[0]["new_value"] == blocks[0]["Endpoints"][0]["Url"]
+    assert descriptors[0]["new_value"] == blocks[0]["Endpoints"]["0"]["Url"]
     assert descriptors[0]["source_reference"] == "target:appsettings.json:12"
     assert "Endpoints__0__Url=https://new.test/" in content
     assert "```text\n" in content

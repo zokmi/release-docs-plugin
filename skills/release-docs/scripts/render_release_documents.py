@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import stat
 from parameter_metadata import redact_text, sanitize_parameter_changes, SENSITIVE as PARAMETER_SENSITIVE
+from evidence_redaction import redact_text as redact_evidence_text, normalize_secrets
 
 GUIDE = "00_上線指引.md"
 SQL = "01_部署SQL.sql"
@@ -243,13 +244,13 @@ def _current_evidence_hash(source, expected):
 def _safe_parameter_value(value, secrets=()):
     """Keep JSON types while removing credentials from every output surface."""
     if isinstance(value, str):
-        value = redact_text(value, secrets)
+        value = redact_evidence_text(redact_text(value, secrets), secrets)
         return re.sub(r"([a-z][a-z0-9+.-]*://)[^\s/@]+:[^\s/@]+@",
                       r"\1[REDACTED]@", value, flags=re.I)
     if isinstance(value, list):
         return [_safe_parameter_value(item, secrets) for item in value]
     if isinstance(value, dict):
-        return {_safe_parameter_value(key, secrets):
+        return {redact_text(key, secrets):
                 ("[REDACTED]" if PARAMETER_SENSITIVE.search(str(key)) else
                  _safe_parameter_value(item, secrets))
                 for key, item in value.items()}
@@ -278,24 +279,31 @@ def _source_reference(value, secrets):
             for role, source in value.items() if role in ("base", "target")}
 
 
-def _parameter_projection(changes):
+def _parameter_projection(changes, secrets=()):
     if not isinstance(changes, list):
         raise ValueError("Parameter changes must be explicit descriptors")
+    supplied_secrets = normalize_secrets(secrets)
     secrets = {value for item in changes if isinstance(item, dict)
                and (PARAMETER_SENSITIVE.search(str(item.get("key", ""))) or item.get("sensitive") is True)
                for field in ("value", "raw_value", "old_value", "new_value", "format_example")
                for value in [item.get(field)] if isinstance(value, str) and value}
+    secrets.update(supplied_secrets)
     secrets.update(secret for item in changes if isinstance(item, dict)
-                   for field in ("value", "raw_value", "old_value", "new_value")
+                   for field in ("value", "raw_value", "old_value", "new_value", "target_config")
                    for secret in _nested_parameter_secrets(item.get(field)))
     safe_input = [{key: value for key, value in item.items() if key != "source_reference"}
                   if isinstance(item, dict) else item for item in changes]
     base = sanitize_parameter_changes(safe_input)
     projected = []
     for raw, clean in zip(changes, base):
-        item = {key: _safe_parameter_value(value, secrets) for key, value in clean.items()}
+        item = {key: (redact_text(value, secrets) if key == "key"
+                      else _safe_parameter_value(value, secrets)) for key, value in clean.items()}
         item["change"] = _safe_parameter_value(raw.get("change", "待確認"), secrets)
         item["source_reference"] = _source_reference(raw.get("source_reference"), secrets)
+        if "target_config" in raw:
+            if not isinstance(raw["target_config"], dict):
+                raise ValueError("Target configuration context must be a JSON object")
+            item["target_config"] = _safe_parameter_value(raw["target_config"], secrets)
         for field in ("old_value", "new_value"):
             if field in raw:
                 item[field] = ("[REDACTED]" if item["sensitive"]
@@ -338,7 +346,8 @@ def _insert_config(root, key, value):
         if last:
             cursor[slot] = value
         else:
-            following = [] if parts[index + 1].isdigit() else {}
+            # Legacy paths cannot prove whether a numeric segment is an array index.
+            following = {}
             if isinstance(cursor, list):
                 if cursor[slot] is _ARRAY_GAP:
                     cursor[slot] = following
@@ -362,6 +371,14 @@ def _safe_config_shape(value):
             return {str(index): item for index, (item, _) in children}, pending
         return [item for _, (item, _) in children], pending
     return value, False
+
+
+def _merge_config(root, fragment):
+    for key, value in fragment.items():
+        if isinstance(value, dict) and isinstance(root.get(key), dict):
+            _merge_config(root[key], value)
+        else:
+            root[key] = value
 
 
 def _parameters(changes, analysis, artifact):
@@ -402,9 +419,13 @@ def _parameters(changes, analysis, artifact):
     for number, (identity, items) in enumerate(groups.items(), 2):
         name = label(identity)
         config = {}
+        legacy_numeric = False
         for item in items:
-            if item["change"] != "remove":
+            if "target_config" in item:
+                _merge_config(config, item["target_config"])
+            elif item["change"] != "remove":
                 _insert_config(config, item["key"], item.get("new_value", "[待確認]"))
+                legacy_numeric |= any(part.isdigit() for part in item["key"].split(":"))
         config, partial = _safe_config_shape(config)
         summary = "；".join(_text(item["change"] + " " + item["key"]) for item in items)
         instructions = "\n".join("- " + _text(item["key"]) + "：用途／行為影響 " +
@@ -416,7 +437,9 @@ def _parameters(changes, analysis, artifact):
         env = [item["environment_variable"] + "=" + str(item.get("new_value", "[待確認]"))
                for item in items if item["environment_variable"] != "待確認"
                and item["change"] != "remove"]
-        config_note = ("部分設定 JSON：陣列索引不連續，缺少的項目待確認；此區塊不可直接套用，"
+        config_note = ("部分設定 JSON：原始容器型別與完整陣列待確認，以索引物件顯示；不可直接套用，亦不可取代陣列，"
+                       "請核對完整陣列後再設定。" if legacy_numeric else
+                      "部分設定 JSON：陣列索引不連續，缺少的項目待確認；此區塊不可直接套用，"
                        "請核對完整陣列後再設定。" if partial else
                        "可複製設定 JSON（remove 項請從設定來源刪除）：")
         section = ("### " + _text(name) + "\n\n異動摘要：" + summary +
