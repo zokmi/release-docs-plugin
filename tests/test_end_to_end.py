@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 from pathlib import Path
 import sys
@@ -282,3 +283,100 @@ def test_unprovable_ef_column_definition_blocks_before_assembly(tmp_path):
     analysis = analyze_release_units(repo, evidence, baseline, None, ef_detection=detection)
     assert analysis.blocked and not analysis.units
     assert "unsupported_migration_operation" in {item["code"] for item in analysis.findings}
+
+
+def _pinned_parameter_case(tmp_path, before, after, *, inventory=True):
+    """Run the parameter path through Git collection, analysis and production."""
+    from test_produce_release import inputs
+    from collect_release_evidence import collect_release_evidence
+    from analyze_release_units import analyze_release_units
+
+    args = inputs(tmp_path)
+    config = tmp_path / "appsettings.json"
+    _write(config, before)
+    _git(tmp_path, "add", "appsettings.json")
+    _git(tmp_path, "commit", "-qm", "pinned base config")
+    base = _git(tmp_path, "rev-parse", "HEAD")
+    _write(config, after)
+    _git(tmp_path, "add", "appsettings.json")
+    _git(tmp_path, "commit", "--allow-empty", "-qm", "pinned target config")
+    target = _git(tmp_path, "rev-parse", "HEAD")
+    evidence = collect_release_evidence(tmp_path, base, target)
+    evidence["workspace_policy"] = "excluded"
+    if inventory:
+        evidence["parameter_source_inventory"] = {"appsettings.json": {
+            "environment": "Production", "service": "CustomerAPI",
+            "format_example": "JSON value", "apply": "update app settings",
+            "reload": "restart API", "validation": "health check"}}
+    # A changed working tree must never replace the target commit's config.
+    _write(config, '{"Cache":{"TTL":999}}')
+    analysis = analyze_release_units(tmp_path, evidence, args["baseline_source"], None)
+    unit = args["analysis"].units[0]
+    unit["source_revision"] = target
+    analysis.units = [unit]
+    analysis.structure_changes = args["analysis"].structure_changes
+    args["evidence"] = evidence
+    args["analysis"] = analysis
+    return args
+
+
+@pytest.mark.parametrize("before,after,change,old_value,new_value", [
+    ('{"Cache":{"Keep":1}}', '{"Cache":{"Keep":1,"TTL":120}}', "add", None, 120),
+    ('{"Cache":{"Keep":1,"TTL":60}}', '{"Cache":{"Keep":1,"TTL":120}}', "update", 60, 120),
+    ('{"Cache":{"Keep":1,"TTL":60}}', '{"Cache":{"Keep":1}}', "remove", 60, None),
+])
+def test_pinned_appsettings_changes_deliver_three_operator_files(
+        tmp_path, before, after, change, old_value, new_value):
+    from produce_release import produce_release
+
+    args = _pinned_parameter_case(tmp_path, before, after)
+    result = produce_release(**args)
+
+    expected_files = {"00_上線指引.md", "01_部署SQL.sql", "02_參數異動.md"}
+    assert set(result.inventory.files) == expected_files
+    assert {path.name for path in args["output_dir"].iterdir()} == expected_files
+    assert (args["output_dir"] / "01_部署SQL.sql").read_bytes() == result.artifact.path.read_bytes()
+    document = (args["output_dir"] / "02_參數異動.md").read_text(encoding="utf-8")
+    headings = ("## 來源範圍", "## 安全與套用前提", "## 業務情境與模組對照",
+                "## 參數區塊", "## 參數部署查核", "## 脫敏異動 descriptor JSON")
+    assert [document.index(heading) for heading in headings] == sorted(document.index(heading) for heading in headings)
+    blocks = re.findall(r"```json\n(.*?)\n```", document, re.S)
+    assert len(blocks) >= 2
+    assert all(json.loads(block) is not None for block in blocks)
+    descriptors = json.loads(blocks[-1])
+    assert len(descriptors) == 1
+    assert (descriptors[0]["key"], descriptors[0]["change"]) == ("Cache:TTL", change)
+    if old_value is not None:
+        assert descriptors[0]["old_value"] == old_value
+    if new_value is not None:
+        assert descriptors[0]["new_value"] == new_value
+    assert "999" not in document
+
+
+def test_pinned_appsettings_no_change_delivers_only_guide_and_sql(tmp_path):
+    from produce_release import produce_release
+
+    args = _pinned_parameter_case(tmp_path, '{"Cache":{"TTL":60}}', '{"Cache":{"TTL":60}}')
+    result = produce_release(**args)
+
+    expected_files = {"00_上線指引.md", "01_部署SQL.sql"}
+    assert args["analysis"].parameters_applicable is False
+    assert set(result.inventory.files) == expected_files
+    assert {path.name for path in args["output_dir"].iterdir()} == expected_files
+    saved = json.loads((args["run_root"] / "source_unit_metadata.json").read_text(encoding="utf-8"))
+    assert saved["parameters_applicable"] is False
+    assert {item["role"] for item in saved["checked_parameter_sources"]} >= {"base", "target"}
+
+
+def test_incomplete_pinned_config_evidence_blocks_before_operator_output(tmp_path):
+    from produce_release import ProductionError, produce_release
+
+    args = _pinned_parameter_case(tmp_path, '{"Cache":{"TTL":60}}',
+                                  '{"Cache":{"TTL":120}}', inventory=False)
+    assert args["analysis"].blocked
+    with pytest.raises(ProductionError) as error:
+        produce_release(**args)
+
+    assert error.value.stage == "preflight"
+    assert not args["run_root"].exists()
+    assert not args["output_dir"].exists()

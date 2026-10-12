@@ -28,7 +28,9 @@
 
 依主技能四輪推導契約，先解析 DATA predicates、轉換與保留規則，產生 fixture SQL、seed rows、coverage、expected_assertions 與 expected_preserved_data_summary。每個適用 case 對應明確 seed_row_id；不適用有來源理由，未知不能填不適用。物化 fixture 前先核對 baseline constraints、FK 順序、必填值與唯一性，使用合成資料，不複製正式資料或機密。先固定預期，再取得實測；不是只產出 remediation-plan.md。
 
-從設定 diff、consumer 與部署文件推導 parameter_changes／parameters_applicable、服務、環境與 reload／validation。檢查到無異動可附查核範圍與理由明確記錄 false；未檢查或無法判定維持未知。讀取時避免輸出 secret 原值，描述依現有遮罩契約保存。交易模式遵循插件契約，不把固定安全機制重新當成待使用者選擇的資料。
+先從 pinned base／target tree 與 diff 建立設定來源清單；對 `appsettings*.json`、`settings*.json` 與其他經核對的 JSON 設定來源，於 `evidence["parameter_source_inventory"]` 按 path 記錄有證據的 environment、service、格式、套用、reload 與驗證 metadata。核對 consumer／provider／部署來源及優先序；部署 manifest 的 `Foo__Bar` 對應完整鍵 `Foo:Bar`，無法證明 provider 順序或 base value 時保留阻擋 finding，不推定正式覆寫值。`.config` 或無法解析的來源仍需列在未解析清單，不能當作無異動。不得讀工作區版本替代 pinned blob，也不得只憑檔名、key 或 commit 標題推測業務情境、模組、使用者與影響；缺證據標「待確認」。
+
+呼叫 analyzer 自動取得 `parameter_changes`、`parameters_applicable` 與 `checked_parameter_sources`，不要用手填空清單或 false 覆蓋 discovery。每個 add／update／remove descriptor 需保留完整巢狀鍵（陣列含索引）、environment、service、前後值與來源；缺三個必填識別欄位、設定 diff 未核對或 descriptor 不完整，須在 `produce_release` 寫入 operator output 前阻擋。確認無異動時保存已查核的 base／target 範圍並記錄 false；未檢查或無法判定維持 null。已確認異動須交付 `02_參數異動.md`；其順序為來源／安全前提、業務與模組表、分組設定 JSON、適用時的 `text` 環境覆寫、部署查核、末尾 canonical JSON array。表格與 JSON 使用同一批脫敏 descriptors；原始 secret、URL 帳密與敏感 assignment 留在受控 evidence／密鑰來源，不進操作文件。交易模式遵循插件契約，不把固定安全機制重新當成待使用者選擇的資料。
 
 ## 5. 重跑資格檢查，持續完成可做部分
 

@@ -107,6 +107,10 @@ base v1.2.0、target v1.3.0、direct，工作區不納入。
 
 SQL Server 最低支援 2016。交付目錄只包含 `00_上線指引.md`、唯一人工執行的 `01_部署SQL.sql`，以及有參數異動時的 `02_參數異動.md`。新版 `database_tool_minimal` profile 的 SQL 只保留依序排列的 SCHEMA、REPAIR、DATA、VALIDATION 基礎 T-SQL；資料庫工具負責 connection、最高權限、transaction、commit／rollback、錯誤與執行證據，不依賴 GO、sqlcmd 或 SQL 內的 session SET。`SET IDENTITY_INSERT` 僅在有來源證據時例外允許；舊 framework wrapper 只作相容 fallback。
 
+參數文件由 pinned base／target 設定來源自動發現。提供已核對的 `parameter_source_inventory`（來源路徑、environment、service 與可證明的套用／reload／驗證資訊）後，analyzer 比對 `appsettings*.json`、`settings*.json` 等 JSON 設定，保留巢狀鍵與陣列索引，並記錄查核範圍；工作區檔案不取代 Git revision。部署來源中的雙底線鍵會映射到冒號設定鍵，provider 優先序未證明時停止交付。已確認新增、修改或刪除必須產出 `02`；已確認無異動只產出 `00`、`01`。缺環境、服務、完整鍵或設定證據時，在產出部分 operator 目錄前阻擋。
+
+`02` 依序提供來源與安全前提、業務情境／模組對照、依區塊分組的設定範例（合法 `json`）、適用時的環境變數覆寫（`text`）、部署查核，以及末尾可解析的脫敏 descriptor JSON array。表格與 JSON 共用同一批脫敏資料；正式密鑰、連線字串、JWT secret、URL 帳密及敏感 assignment 不進操作文件，須由部署平台注入。無來源可證明的業務情境、模組、使用者與影響明示「待確認」，不依設定鍵猜測。SQL 正確性、業務資料分離、排除與獨立審查門檻維持原契約。
+
 framework fallback 未設定 `SESSION_CONTEXT(N'ReleaseDocs.ValidateOnly')` 時預設 ValidateOnly=1，完整執行並驗證後 rollback。minimal profile 由資料庫工具 API 傳入 validate-only／commit policy，不要求上板人員在 SQL 前手動設定 session context。上板人員先確認唯讀 preflight、備份與維護窗口，再依工具契約執行整份 SQL，才可 commit：
 
 ```sql

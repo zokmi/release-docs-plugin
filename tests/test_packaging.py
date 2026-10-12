@@ -48,7 +48,8 @@ class PackagingTests(unittest.TestCase):
             self.assertTrue((ROOT / name).is_file(), name)
 
     def test_transactional_pipeline_resources_are_packaged(self):
-        for name in ('detect_entity_framework.py', 'analyze_release_units.py', 'assemble_deployment_sql.py',
+        for name in ('detect_entity_framework.py', 'analyze_release_units.py', 'parameter_discovery.py',
+                     'assemble_deployment_sql.py',
                      'run_local_validation.py', 'render_release_documents.py', 'lifecycle_store.py'):
             self.assertTrue((ROOT / 'skills/release-docs/scripts' / name).is_file(), name)
         for name in ('validate_release_output.py', 'review_fingerprint.py'):

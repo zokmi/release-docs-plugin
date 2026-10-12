@@ -81,8 +81,7 @@ evidence["workspace_policy"] = "excluded"  # 必須來自使用者已確認的�
 analysis = analyze_release_units(repo, evidence, baseline_schema, exclusion_intent,
                                  ef_detection=detect_entity_framework(repo, evidence["source_scope"]))
 analysis.structure_changes = confirmed_structure_descriptions
-analysis.parameter_changes = confirmed_parameter_descriptors
-analysis.parameters_applicable = confirmed_parameters_applicable  # bool；None 是未知
+# parameter_changes／parameters_applicable 由 pinned source discovery 填入；不得覆寫成空清單或 false。
 # included DATA units 也必須先補齊 expected_assertions。
 result = produce_release(repo, evidence, analysis, release_id=release_id,
     run_root=run_root, output_dir=output_dir, baseline_source=baseline_schema,
@@ -111,7 +110,13 @@ renderer 寫入前檢查全部輸入與輸出，拒絕 traversal、symlink、jun
 
 產製文件前，根據已確認的來源語意補充 `analysis.structure_changes`，每項包含 `kind`（table、column、index、fk、constraint、extended_property）、`name`、`description`、`impact`，並以必填 `unit_id` 關聯有效 included source unit。renderer 會移除排除單位的描述；缺少或未知單位的 top-level 描述會省略且標待確認，不能將其物件寫入結構異動範圍。也可在 `units[].structure_changes` 提供同格式資訊，其來源 ID 繼承包含它的 unit，只有 included units 會被讀取。列出實際異動物件、目的與影響；不得憑 SQL 關鍵字、檔名或 commit 標題猜測說明。沒有說明時 `00` 會顯示「結構異動說明待確認」，必須補齊後再交付。排除摘要只投影 lifecycle 的 issue、理由、物件範圍、保留操作與重新納入條件。
 
-有參數異動時提供 `analysis.parameter_changes` list；每項含 `environment`、`service`、完整 `key`，以及 `format_example`、`apply`、`reload`、`validation`。缺必要環境／服務／完整 key 即阻擋；操作細節缺值顯示待確認。敏感 key 或 `sensitive=True` 的格式範例固定遮罩，raw value／old_value／new_value 不輸出，且其已知機密值會從操作描述移除。一般範例中的 URL 帳密與機密 assignment 也遮罩；機密原值留在受控機密儲存。沒有參數異動時不產出 `02_參數異動.md`。
+### 自動參數異動與 `02` 文件
+
+在 analyzer 前，以已核對的 consumer、部署與設定來源建立 `evidence["parameter_source_inventory"]`，依來源路徑提供可證明的 `environment`、`service`、`format_example`、`apply`、`reload`、`validation` 等 metadata；不得由 key 名稱猜測環境、服務或業務用途。analyzer 自動比對 pinned base／target Git blob 的 `appsettings*.json`、`settings*.json` 與已確認 JSON 設定來源，記錄 `checked_parameter_sources`，產生 `parameter_changes` 與 `parameters_applicable`。巢狀物件與陣列保留完整鍵路徑；部署來源中的 `Foo__Bar` 映射為 `Foo:Bar`，provider 優先序或 base value 未證明時保留 blocking finding。工作區內容不取代 pinned revision。
+
+一筆已確認異動即須產出 `02_參數異動.md`，不得因上游未傳 descriptor 靜默交付 SQL-only 目錄。每項 descriptor 記錄環境、服務、完整設定鍵、add／update／remove、前後值、格式、套用、reload、驗證、來源，以及有證據的參數區塊／業務情境／模組／使用者／影響。後五項缺證據時標「待確認」並保留 finding；`environment`、`service` 或 `key` 不完整、設定 diff 未核對、descriptor 與 pinned source 不一致或適用性未知時，在 operator output 寫入前停止。確認無異動時保存查核範圍與 `parameters_applicable=false`，只交付 `00`、`01`。
+
+`02` 固定依序包含來源與安全前提、業務情境／模組對照表、依參數區塊分組的異動摘要與完整鍵、保持設定階層的可複製 `json` 範例、適用時獨立的 `text` 環境變數覆寫、部署查核編號清單，最後是可解析的脫敏 descriptor JSON array。異動表、分節 JSON 與末尾 canonical JSON 使用同一批 sanitized descriptors。密鑰、連線字串、JWT secret、SFTP 密碼、私鑰路徑、URL credential、secret assignment 與已知機密值不得進入操作文件；正式值由部署平台環境變數或 Application Settings 注入。敏感欄位使用遮罩或安全來源提示，不得把 secret 當作可複製正式值。此參數路徑不改變 `01` SQL 的內容正確性、DATA 預期、排除與獨立審查規則。
 
 `00` 是給 DBA 閱讀的異動摘要，只列 release/source、實際新增或異動的 table／column／index／FK／constraint／extended property、持久資料異動與排除項目。執行摘要只保留 `01_部署SQL.sql`、DBA 工具、ValidateOnly=1 rollback／ValidateOnly=0 COMMIT／ROLLBACK、備份與查核要求；完整 execution evidence 留在 run。LocalDB 預設「未執行」，SQL 內容審核預設「待確認」，兩者不互相取代。
 
