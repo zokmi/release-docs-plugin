@@ -94,6 +94,18 @@
 
 ## 驗證與錯誤處理
 
+### 來源契約與支援邊界
+
+- 同一 base 或 target 角色不得包含重複的設定來源 path，即使值相同也須阻擋，不能用最後一筆來源覆蓋前面的證據。Compose `extends`（包括空值）同樣屬未解析繼承來源，必須阻擋，不能把本機 environment 當成完整設定。
+
+- `key` 是 consumer 的邏輯設定鍵；`key_segments` 是來源的實體路徑，字串表示 object key、整數表示 array index。字面 `A:B` 不得誤讀為 `A`／`B` 巢狀物件；邏輯鍵大小寫或冒號映射衝突必須阻擋，不能覆寫後宣稱無異動。
+- JSON 與標準 XML `.config` 可從 pinned base／target 發現異動。XML 僅支援本機 `appSettings`、`connectionStrings` 的 `add`；connection string 的 `providerName` 也屬異動。`clear`／`remove` 因無法核對繼承設定而不支援；自訂 section、外部設定、DTD／entity 同樣必須明確回報 unresolved，不得只比對本機 dictionary 後宣稱無異動。
+- 部署來源僅支援 literal dotenv、JSON 變數映射及有明確服務／容器歸屬的 JSON Compose／Kubernetes environment。YAML、插值、`env_file`／`envFrom`、外部 secret／`valueFrom` 與無法辨識 provider 的來源不得猜測；即使本機 environment 為空，也不得將未知外部來源當成空集合。
+- 部署來源需提供環境、服務與已審查的 provider precedence 證據；引用的 consumer 程式碼需以 target revision、path、source hash 核對。只填 `true` 不構成 precedence 證據，也不由鍵名自動推論 provider 優先序。
+- 產製 preflight 必須重新核對來源引用與實體路徑，不接受竄改的 path、revision、hash、line 或缺少的 base／target role。資料值相同不表示追溯契約相同。
+- 同環境、同服務、同參數群組但不同來源的設定片段須分節，不得合併後互相覆蓋。XML／環境變數附的 JSON 僅為邏輯設定範例，必須標示不得直接取代原格式。
+- 共用完整陣列／物件片段的 descriptors 必須套用同來源所有 sensitive paths 的遮罩；不得讓相鄰非敏感 descriptor 恢復敏感的數字、布林、null 或複合值。遮罩不得改動原始來源，也不得跨來源遮罩相同路徑的公開值。
+
 - appsettings 新增、修改、刪除均須有測試。
 - nested key 與 array index 必須保留完整路徑。
 - environment variable mapping 必須測試雙底線映射。

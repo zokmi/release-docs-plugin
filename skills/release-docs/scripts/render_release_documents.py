@@ -312,6 +312,19 @@ def _source_reference(value, secrets):
             for role, source in value.items() if role in ("base", "target")}
 
 
+def _parameter_context_scope(item):
+    reference = item.get('source_reference')
+    if isinstance(reference, dict):
+        origin = tuple((role, source.get('path'), source.get('revision'))
+                       for role, source in sorted(reference.items()) if isinstance(source, dict))
+    elif isinstance(reference, str) and reference != '待確認':
+        prefix, separator, line = reference.rpartition(':')
+        origin = prefix if separator and line.isdigit() else reference
+    else:
+        origin = None
+    return item.get('environment'), item.get('service'), (origin, item.get('configuration_provider'))
+
+
 def _parameter_projection(changes, secrets=()):
     if not isinstance(changes, list):
         raise ValueError("Parameter changes must be explicit descriptors")
@@ -352,7 +365,33 @@ def _parameter_projection(changes, secrets=()):
             value = raw.get(field)
             item[field] = (_safe_parameter_value(value, secrets)
                            if isinstance(value, str) and value.strip() else "待確認")
+        for field in ('key_segments', 'configuration_provider', 'provider_precedence'):
+            if field in raw:
+                item[field] = _safe_parameter_value(raw[field], secrets)
         projected.append(item)
+    private_paths = {}
+    for item in projected:
+        if item['sensitive']:
+            private_paths.setdefault(_parameter_context_scope(item), set()).add(item['key'])
+    for item in projected:
+        for path in sorted(private_paths.get(_parameter_context_scope(item), ())):
+            if 'target_config' in item:
+                item['target_config'] = _mask_parameter_context(item['target_config'], path.split(':'))
+            if path == item['key'] or item['key'].startswith(path + ':'):
+                item['sensitive'] = True
+                item['format_example'] = '[REDACTED]'
+                for field in ('old_value', 'new_value', 'value'):
+                    if field in item:
+                        item[field] = '[REDACTED]'
+            elif path.startswith(item['key'] + ':'):
+                # Free-form examples can serialize a sensitive descendant with
+                # arbitrary formatting; masking the entire example is safer
+                # than guessing its encoding or replacing global numbers.
+                item['format_example'] = '[REDACTED]'
+                relative = path[len(item['key']) + 1:].split(':')
+                for field in ('old_value', 'new_value', 'value'):
+                    if field in item:
+                        item[field] = _mask_parameter_context(item[field], relative)
     return projected
 
 
@@ -431,8 +470,14 @@ def _parameters(changes, analysis, artifact):
     mapping = ["| 參數區塊 | 使用業務情境 | 使用模組／功能 | 主要使用者 | 異動影響 |",
                "| --- | --- | --- | --- | --- |"]
     groups = {}
+    origins = {}
+    for item in descriptors:
+        identity = (item['environment'], item['service'], item['parameter_group'])
+        origins.setdefault(identity, set()).add(_parameter_context_scope(item)[2])
     for item in descriptors:
         identity = (item["environment"], item["service"], item["parameter_group"])
+        if len(origins[identity]) > 1:
+            identity += (_parameter_context_scope(item)[2],)
         groups.setdefault(identity, []).append(item)
     def label(identity):
         return json.dumps(identity, ensure_ascii=False, separators=(",", ":"))
@@ -478,6 +523,9 @@ def _parameters(changes, analysis, artifact):
                       "部分設定 JSON：陣列索引不連續，缺少的項目待確認；此區塊不可直接套用，"
                        "請核對完整陣列後再設定。" if partial else
                        "可複製設定 JSON（remove 項請從設定來源刪除）：")
+        if any(item.get('configuration_provider') in ('xml', 'environment') for item in items):
+            config_note += ('\n\n邏輯設定 JSON：供複製與核對設定值，不是來源檔案格式；'
+                            '請依 XML／環境變數 provider 的套用方式操作，不可直接取代來源檔案。')
         section = ("### " + _text(name) + "\n\n異動摘要：" + summary +
                    "\n\n完整設定鍵、用途與操作：\n\n" + instructions +
                    "\n\n" + config_note + "\n\n" + _json_block(config))

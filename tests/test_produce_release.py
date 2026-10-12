@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from pathlib import Path
 import sys
 import subprocess
@@ -286,6 +287,28 @@ def test_parameter_context_cannot_forge_copyable_configuration(tmp_path, damage)
     assert not args['output_dir'].exists()
 
 
+@pytest.mark.parametrize('damage', ['path', 'revision', 'source_hash', 'line', 'missing_role', 'string', 'segments'])
+def test_parameter_preflight_rejects_forged_descriptor_provenance(tmp_path, damage):
+    from produce_release import produce_release, ProductionError
+    args = parameter_update_inputs(tmp_path)
+    item = args['analysis'].parameter_changes[0]
+    if damage == 'segments':
+        item['key_segments'] = ['Wrong', 'TTL']
+    elif damage == 'missing_role':
+        item['source_reference'].pop('base')
+    elif damage == 'string':
+        item['source_reference'] = 'target:forged.json:1'
+    else:
+        item['source_reference']['target'][damage] = {
+            'path': 'forged.json', 'revision': '0' * 40,
+            'source_hash': '0' * 64, 'line': 999}[damage]
+    with pytest.raises(ProductionError) as error:
+        produce_release(**args)
+    assert error.value.stage == 'preflight'
+    assert not args['run_root'].exists()
+    assert not args['output_dir'].exists()
+
+
 def test_caller_secret_is_redacted_from_parameter_document(tmp_path):
     from produce_release import produce_release
     args = parameter_update_inputs(tmp_path, new_value='opaque-caller-secret')
@@ -338,6 +361,51 @@ def test_production_preserves_safe_parameter_projection_for_renderer(tmp_path):
                       if item['key'] == 'Cache:TTL')
     assert descriptor['key'] == 'Cache:TTL'
     assert 'new_value' not in descriptor
+
+
+@pytest.mark.parametrize('provider', ['xml', 'environment'])
+def test_pinned_non_json_parameter_provider_delivers_document(tmp_path, provider):
+    from analyze_release_units import analyze_release_units
+    from produce_release import produce_release
+    args = inputs(tmp_path)
+    def git(*parts):
+        return subprocess.run(['git', '-C', str(tmp_path), *parts], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    path = 'Web.config' if provider == 'xml' else '.env.production'
+    content = ('<configuration><appSettings><add key="Cache:TTL" value="120"/>'
+               '</appSettings></configuration>' if provider == 'xml' else 'Cache__TTL=120\n')
+    (tmp_path / path).write_text(content, encoding='utf-8')
+    git('add', path)
+    if provider == 'environment':
+        consumer = 'builder.AddJsonFile("appsettings.json").AddEnvironmentVariables();\n'
+        (tmp_path / 'Provider.cs').write_text(consumer, encoding='utf-8')
+        git('add', 'Provider.cs')
+    git('commit', '-qm', 'parameter provider change')
+    target = git('rev-parse', 'HEAD')
+    args['evidence'].update(target_sha=target, committed_changes=[{'path': path, 'status': 'A'}])
+    metadata = {'environment': 'Production', 'service': 'API', 'format_example': 'integer',
+                'apply': 'update provider', 'reload': 'restart', 'validation': 'health'}
+    if provider == 'environment':
+        args['evidence']['committed_changes'].append({'path': 'Provider.cs', 'status': 'A'})
+        metadata['provider_precedence'] = {'conclusion': 'passed', 'reason': 'Reviewed JSON before environment',
+            'source_reference': {'path': 'Provider.cs', 'revision': target,
+                                 'source_hash': hashlib.sha256(subprocess.run(
+                                     ['git', '-C', str(tmp_path), 'show', target + ':Provider.cs'],
+                                     check=True, capture_output=True).stdout).hexdigest()}}
+    args['evidence']['parameter_source_inventory' if provider == 'xml' else 'deployment_source_inventory'] = {path: metadata}
+    analysis = analyze_release_units(tmp_path, args['evidence'], args['baseline_source'], None)
+    assert not analysis.blocked, analysis.findings
+    analysis.units = args['analysis'].units
+    analysis.units[0]['source_revision'] = target
+    analysis.structure_changes = args['analysis'].structure_changes
+    args['analysis'] = analysis
+    result = produce_release(**args)
+    assert '02_參數異動.md' in result.inventory.files
+    content = (args['output_dir'] / '02_參數異動.md').read_text(encoding='utf-8')
+    blocks = [json.loads(block) for block in re.findall(r'```json\n(.*?)\n```', content, re.S)]
+    assert blocks[-1][0]['configuration_provider'] == provider
+    assert blocks[-1][0]['key_segments'] == (['Cache:TTL'] if provider == 'xml' else ['Cache', 'TTL'])
+    assert '邏輯設定 JSON' in content
 
 
 def test_delivery_preserves_bytes_and_no_adapter_is_not_run(tmp_path):

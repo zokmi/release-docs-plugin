@@ -164,9 +164,9 @@ def test_inventory_listed_config_is_a_parameter_source():
 @pytest.mark.parametrize('source_path', ['Web.config', 'service/wEb.CoNfIg',
                                        'App.config', 'service/aPP.CONFIG'])
 @pytest.mark.parametrize('with_inventory', [False, True])
-def test_canonical_config_without_parser_blocks_analysis(tmp_path, source_path, with_inventory):
+def test_canonical_config_unsupported_section_blocks_analysis(tmp_path, source_path, with_inventory):
     evidence = _config_evidence(tmp_path, '<configuration/>',
-                                '<configuration><appSettings/></configuration>', source_path)
+                                '<configuration><custom/></configuration>', source_path)
     if with_inventory:
         evidence['parameter_source_inventory'] = {
             source_path: {'environment': 'Production', 'service': 'API'}}
@@ -177,8 +177,88 @@ def test_canonical_config_without_parser_blocks_analysis(tmp_path, source_path, 
 
     assert analysis.blocked
     assert analysis.parameters_applicable is None
-    assert {'code': 'unsupported_parameter_source', 'blocking': True,
-            'source_path': source_path} in analysis.findings
+    assert any(f['code'] == 'unresolved_parameter_change' and f.get('source_path') == source_path
+               for f in analysis.findings)
+
+
+def test_standard_xml_setting_change_is_discovered_from_pinned_source(tmp_path):
+    evidence = _config_evidence(tmp_path,
+        '<configuration><appSettings><add key="Cache:TTL" value="60"/></appSettings></configuration>',
+        '<configuration><appSettings><add key="Cache:TTL" value="120"/></appSettings></configuration>', 'Web.config')
+    evidence['parameter_source_inventory'] = {'Web.config': {
+        'environment': 'Production', 'service': 'API'}}
+    baseline = tmp_path / 'baseline.sql'
+    baseline.write_text('', encoding='utf-8')
+    analysis = analyze_release_units(tmp_path, evidence, baseline, None)
+    assert not analysis.blocked, analysis.findings
+    assert analysis.parameters_applicable is True
+    assert analysis.parameter_changes[0]['key_segments'] == ['Cache:TTL']
+    assert analysis.parameter_changes[0]['target_config'] == {'Cache:TTL': '120'}
+    assert analysis.parameter_changes[0]['configuration_provider'] == 'xml'
+
+
+@pytest.mark.parametrize('operation', ['<clear/>', '<remove key="Inherited"/>'])
+def test_xml_inherited_operation_cannot_be_reported_as_no_change(tmp_path, operation):
+    before = '<configuration><appSettings><add key="Cache:TTL" value="60"/></appSettings></configuration>'
+    after = before.replace('<appSettings>', '<appSettings>' + operation)
+    evidence = _config_evidence(tmp_path, before, after, 'Web.config')
+    evidence['parameter_source_inventory'] = {'Web.config': {
+        'environment': 'Production', 'service': 'API'}}
+    baseline = tmp_path / 'baseline.sql'
+    baseline.write_text('', encoding='utf-8')
+    analysis = analyze_release_units(tmp_path, evidence, baseline, None)
+    assert analysis.blocked
+    assert analysis.parameters_applicable is None
+    assert any(f['code'] == 'unresolved_parameter_change' for f in analysis.findings)
+
+
+def _deployment_evidence(tmp_path):
+    evidence = _config_evidence(tmp_path, 'Foo__Bar=60\n', 'Foo__Bar=120\n', '.env.production')
+    provider = tmp_path / 'Provider.cs'
+    provider.write_text('builder.AddJsonFile("appsettings.json").AddEnvironmentVariables();', encoding='utf-8')
+    def git(*parts):
+        return subprocess.run(['git', '-C', str(tmp_path), *parts], capture_output=True,
+                              check=True, text=True).stdout.strip()
+    git('add', 'Provider.cs')
+    git('commit', '-qm', 'provider proof')
+    evidence = collect_release_evidence(tmp_path, evidence['base_sha'], git('rev-parse', 'HEAD'))
+    import hashlib
+    evidence['deployment_source_inventory'] = {'.env.production': {
+        'environment': 'Production', 'service': 'API',
+        'provider_precedence': {'conclusion': 'passed', 'reason': 'Consumer registers JSON before environment.',
+            'source_reference': {'path': 'Provider.cs', 'revision': evidence['target_sha'],
+                                 'source_hash': hashlib.sha256(provider.read_bytes()).hexdigest()}}}}
+    return evidence
+
+
+def test_reviewed_deployment_proof_enables_parameter_discovery(tmp_path):
+    evidence = _deployment_evidence(tmp_path)
+    baseline = tmp_path / 'baseline.sql'
+    baseline.write_text('', encoding='utf-8')
+    analysis = analyze_release_units(tmp_path, evidence, baseline, None)
+    assert not analysis.blocked, analysis.findings
+    assert analysis.parameters_applicable is True
+    item = analysis.parameter_changes[0]
+    assert (item['key'], item['old_value'], item['new_value']) == ('Foo:Bar', '60', '120')
+    assert item['environment_variable'] == 'Foo__Bar'
+    assert any(source['role'] == 'provider' for source in analysis.checked_parameter_sources)
+
+
+@pytest.mark.parametrize('damage', ['source_hash', 'revision', 'path', 'boolean'])
+def test_invalid_deployment_proof_is_blocked(tmp_path, damage):
+    evidence = _deployment_evidence(tmp_path)
+    metadata = evidence['deployment_source_inventory']['.env.production']
+    if damage == 'boolean':
+        metadata['provider_precedence'] = True
+    else:
+        metadata['provider_precedence']['source_reference'][damage] = {
+            'source_hash': '0' * 64, 'revision': evidence['base_sha'], 'path': 'missing.cs'}[damage]
+    baseline = tmp_path / 'baseline.sql'
+    baseline.write_text('', encoding='utf-8')
+    analysis = analyze_release_units(tmp_path, evidence, baseline, None)
+    assert analysis.blocked
+    assert analysis.parameters_applicable is None
+    assert any(f['code'] == 'unresolved_deployment_source' for f in analysis.findings)
 
 
 @pytest.mark.parametrize('source_path', ['client.config', 'packages.config', 'service/PACKAGES.CONFIG'])

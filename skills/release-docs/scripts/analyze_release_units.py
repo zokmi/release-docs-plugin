@@ -14,6 +14,7 @@ import subprocess
 from assemble_deployment_sql import _hazards
 from collect_release_evidence import parse_changes
 from parameter_discovery import discover_parameter_changes
+from deployment_parameters import parse_deployment_source
 
 PHASES = ("SCHEMA", "REPAIR", "DATA", "VALIDATION")
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_.:-]*\Z")
@@ -242,7 +243,8 @@ def _config_path(path):
 def _deployment_path(path):
     name = PurePosixPath(path).name.lower()
     return (name == '.env' or name.startswith('.env.') or
-            name in ('compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml') or
+            name in ('compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
+                     'compose.json', 'docker-compose.json') or
             (name.endswith(('.yaml', '.yml', '.json')) and
              any(part in path.lower() for part in ('deploy', 'manifest', 'values', 'k8s', 'helm'))))
 
@@ -275,9 +277,27 @@ def _deployment_variables(raw):
     return {name: '[pinned source]' for name in names}
 
 
+def _verified_provider(repo, target_revision, metadata):
+    """Verify reviewed proof against the exact target Git bytes; never infer priority."""
+    proof = metadata.get('provider_precedence')
+    if (not isinstance(proof, dict) or proof.get('conclusion') != 'passed'
+            or not isinstance(proof.get('reason'), str) or not proof['reason'].strip()):
+        raise ValueError('Missing reviewed provider proof')
+    reference = proof.get('source_reference')
+    if not isinstance(reference, dict) or reference.get('revision') != target_revision:
+        raise ValueError('Provider proof must reference the pinned target')
+    path = _safe_path(reference.get('path'))
+    sha, raw = _read_revision(repo, target_revision, path)
+    if sha != target_revision or hashlib.sha256(raw).hexdigest() != reference.get('source_hash'):
+        raise ValueError('Provider proof source mismatch')
+    return {'role': 'provider', 'path': path, 'revision': sha,
+            'source_hash': hashlib.sha256(raw).hexdigest()}
+
+
 def _analyze_parameters(result, repo, evidence):
     inventory = evidence.get('parameter_source_inventory', {})
-    if not isinstance(inventory, dict):
+    deployment_inventory = evidence.get('deployment_source_inventory', {})
+    if not isinstance(inventory, dict) or not isinstance(deployment_inventory, dict):
         _finding(result, 'invalid_parameter_source_inventory')
         return
     try:
@@ -285,13 +305,21 @@ def _analyze_parameters(result, repo, evidence):
         base_paths = _tree_paths(repo, evidence['base_sha'])
         target_paths = _tree_paths(repo, evidence['target_sha'])
         changed, deployment_paths = _parameter_changed_paths(pinned_changes, inventory)
+        deployment_paths |= {_safe_path(path) for path in deployment_inventory}
         paths = changed | {_safe_path(path) for path in inventory}
         supplied = evidence.get('committed_changes')
         if supplied is not None:
             declared_config, declared_deployment = _parameter_changed_paths(supplied, inventory)
-            if (changed - declared_config) or (deployment_paths - declared_deployment):
+            # Inventory may include unchanged sources; only changed paths require declarations.
+            _, actual_deployment = _parameter_changed_paths(pinned_changes, inventory)
+            actual_deployment |= {p for c in pinned_changes for p in (c['path'], c.get('old_path'))
+                                  if p in deployment_inventory}
+            declared_deployment |= {p for c in supplied for p in (c['path'], c.get('old_path'))
+                                    if p in deployment_inventory}
+            if (changed - declared_config) or (actual_deployment - declared_deployment):
                 _finding(result, 'incomplete_committed_change_evidence')
-        elif changed or deployment_paths:
+        elif changed or any(c['path'] in deployment_paths or c.get('old_path') in deployment_paths
+                            for c in pinned_changes):
             _finding(result, 'missing_committed_change_evidence')
     except (KeyError, ValueError, subprocess.CalledProcessError):
         _finding(result, 'unavailable_parameter_source_tree')
@@ -301,7 +329,7 @@ def _analyze_parameters(result, repo, evidence):
     base_sources, target_sources, deployment_sources = [], [], []
     result.checked_parameter_sources = [scan]
     for path in sorted(paths):
-        if not path.lower().endswith('.json'):
+        if not path.lower().endswith(('.json', '.config')):
             _finding(result, 'unsupported_parameter_source', path)
             continue
         if path not in base_paths and path not in target_paths:
@@ -329,24 +357,52 @@ def _analyze_parameters(result, repo, evidence):
         if path not in base_paths and path not in target_paths:
             _finding(result, 'unavailable_deployment_source', path)
             continue
-        variables = {}
-        for revision, tree in ((evidence['base_sha'], base_paths),
-                               (evidence['target_sha'], target_paths)):
+        metadata = deployment_inventory.get(path, {})
+        references = {'base': None, 'target': None}
+        pinned = {}
+        for role, revision, tree in (('base', evidence['base_sha'], base_paths),
+                                     ('target', evidence['target_sha'], target_paths)):
             if path not in tree:
                 continue
             try:
                 sha, raw = _read_revision(repo, revision, path)
-                variables.update(_deployment_variables(raw))
+                references[role] = {'path': path, 'revision': sha,
+                                    'source_hash': hashlib.sha256(raw).hexdigest()}
+                pinned[role] = raw
             except (ValueError, UnicodeError):
                 _finding(result, 'unavailable_deployment_source', path)
                 continue
             result.checked_parameter_sources.append({
                 'role': 'deployment', 'path': path, 'revision': sha,
                 'source_hash': hashlib.sha256(raw).hexdigest()})
-        if variables:
-            deployment_sources.append({'path': path, 'environment_variables': variables})
-        else:
+        try:
+            if not isinstance(metadata, dict):
+                raise ValueError('Invalid deployment inventory')
+            # Parse only bounded JSON/dotenv; YAML stays explicitly unresolved.
+            variables = {role: parse_deployment_source(
+                {'path': path, 'content': raw,
+                 'service': metadata.get('manifest_service', metadata.get('service'))})
+                for role, raw in pinned.items()}
+            if any(path in tree and role not in pinned for role, tree in
+                   (('base', base_paths), ('target', target_paths))):
+                raise ValueError('Unknown deployment baseline or target')
+            provider = _verified_provider(repo, evidence['target_sha'], metadata)
+            if provider not in result.checked_parameter_sources:
+                result.checked_parameter_sources.append(provider)
+            deployment_sources.append({
+                'path': path, 'environment': metadata.get('environment'),
+                'service': metadata.get('service'), 'source_configuration_provider': 'environment',
+                'base_environment_variables': variables.get('base', {}),
+                'environment_variables': variables.get('target', {}),
+                'source_reference': references, 'provider_precedence': metadata['provider_precedence']})
+        except (ValueError, TypeError, UnicodeError):
             _finding(result, 'unresolved_deployment_source', path)
+            # A lexical name is diagnostic evidence only, never a parsed value
+            # or a successful descriptor (notably for unsupported YAML).
+            names = {name for raw in pinned.values() for name in _deployment_variables(raw)}
+            for name in sorted(names):
+                result.findings.append({'code': 'unresolved_deployment_source', 'blocking': True,
+                                        'source_path': path, 'key': name.replace('__', ':')})
     discovery = discover_parameter_changes(base_sources, target_sources,
                                            deployment_sources=deployment_sources)
     result.checked_parameter_sources.extend(
@@ -358,9 +414,9 @@ def _analyze_parameters(result, repo, evidence):
             role: ({key: value for key, value in source.items()
                     if key not in ('content', 'bytes', 'data')} if source else None)
             for role, source in change['source_reference'].items()}
-        metadata = inventory.get(change['source_reference']['target']['path']
-                                 if change['source_reference']['target'] else
-                                 change['source_reference']['base']['path'], {})
+        path = (change['source_reference']['target'] or change['source_reference']['base'])['path']
+        metadata = (deployment_inventory if change.get('configuration_provider') == 'environment'
+                    else inventory).get(path, {})
         for field_name in ('format_example', 'apply', 'reload', 'validation',
                            'parameter_group', 'business_context', 'module', 'users',
                            'impact', 'environment_variable'):

@@ -16,6 +16,8 @@ RESOURCES = [
     'assets/03_例外排除.json', 'assets/04_參數異動.md', 'assets/05_版更審查報告.md',
     'references/sql-review-rules.md', 'references/config-rules.md',
     'skills/release-docs/scripts/collect_release_evidence.py',
+    'skills/release-docs/scripts/parameter_discovery.py',
+    'skills/release-docs/scripts/deployment_parameters.py',
     'skills/release-docs/scripts/review_fingerprint.py',
     'skills/release-docs/scripts/validate_release_artifacts.py',
     '.claude-plugin/marketplace.json', '.agents/plugins/marketplace.json', 'LICENSE', 'README.md',

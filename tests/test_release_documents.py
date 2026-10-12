@@ -344,7 +344,7 @@ def test_parameter_json_and_environment_examples_redact_known_secrets(tmp_path):
     blocks = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", content, re.S)]
     assert blocks[0]["Auth"]["JwtSecret"] == "[REDACTED]"
     assert blocks[-1][0]["old_value"] == blocks[-1][0]["new_value"] == "[REDACTED]"
-    assert blocks[-1][1]["new_value"] == blocks[0]["Service"]["Url"]
+    assert blocks[-1][1]["new_value"] == blocks[1]["Service"]["Url"]
     assert "Auth__JwtSecret=[REDACTED]" in content
     assert "待確認" in content
 
@@ -798,6 +798,88 @@ def test_sensitive_context_masks_all_colon_and_nested_aliases():
     assert safe == {'A:B:C': '[REDACTED]', 'A:B': {'C': '[REDACTED]'},
                     'A': {'B:C': '[REDACTED]', 'B': {'C': '[REDACTED]'}}, 'Keep': 456}
     assert context['A:B:C'] == 123
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_neighboring_descriptor_context_cannot_restore_sensitive_array_value(tmp_path, reverse):
+    module = api()
+    analysis, artifact, manifest = inputs(tmp_path)
+    context = {'Items': [{'Opaque': 123}, {'Name': 'new'}]}
+    reference = {'base': {'path': 'settings.json', 'revision': 'base'},
+                 'target': {'path': 'settings.json', 'revision': 'target'}}
+    common = {'environment': 'Production', 'service': 'API', 'change': 'update',
+              'source_reference': reference, 'target_config': context}
+    changes = [{**common, 'key': 'Items:0:Opaque', 'sensitive': True, 'new_value': 123},
+               {**common, 'key': 'Items:1:Name', 'new_value': 'new'}]
+    if reverse:
+        changes.reverse()
+    expected = {'Items': [{'Opaque': '[REDACTED]'}, {'Name': 'new'}]}
+    projected = module._parameter_projection(changes)
+    assert all(item['target_config'] == expected for item in projected)
+    assert all(item['target_config'] == expected for item in module._parameter_projection(projected))
+    analysis.parameter_changes = changes
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / 'shared-private')
+    content = (tmp_path / 'shared-private/02_參數異動.md').read_text(encoding='utf-8')
+    blocks = [json.loads(block) for block in re.findall(r'```json\n(.*?)\n```', content, re.S)]
+    assert blocks[0] == expected
+    assert all(item['target_config'] == expected for item in blocks[-1])
+    assert context['Items'][0]['Opaque'] == 123
+
+
+def test_sensitive_paths_are_scoped_to_the_actual_configuration_source():
+    module = api()
+    common = {'environment': 'Production', 'service': 'API', 'key': 'Opaque',
+              'change': 'update', 'new_value': 123, 'target_config': {'Opaque': 123}}
+    changes = [{**common, 'sensitive': True, 'source_reference': {
+                    'base': None, 'target': {'path': 'private.json', 'revision': 'target'}}},
+               {**common, 'source_reference': {
+                    'base': None, 'target': {'path': 'public.json', 'revision': 'target'}}}]
+    projected = module._parameter_projection(changes)
+    assert projected[0]['target_config'] == {'Opaque': '[REDACTED]'}
+    assert projected[1]['target_config'] == {'Opaque': 123}
+
+
+def test_provider_paths_and_precedence_survive_projection():
+    module = api()
+    change = {'environment': 'Production', 'service': 'API', 'key': 'A:B',
+              'change': 'update', 'new_value': '120', 'key_segments': ['A:B'],
+              'configuration_provider': 'xml', 'provider_precedence': {
+                  'conclusion': 'passed', 'reason': 'reviewed'}}
+    projected = module._parameter_projection([change])[0]
+    for field in ('key_segments', 'configuration_provider', 'provider_precedence'):
+        assert projected[field] == change[field]
+    assert module._parameter_projection([projected])[0]['key_segments'] == ['A:B']
+
+
+@pytest.mark.parametrize('private_value', [123, True, None, {'Plain': 123}])
+def test_sensitive_descendant_masks_ancestor_format_example(private_value):
+    module = api()
+    common = {'environment': 'Production', 'service': 'API', 'change': 'update',
+              'source_reference': 'target:settings.json:4'}
+    changes = [{**common, 'key': 'Items:Opaque', 'sensitive': True, 'new_value': private_value},
+               {**common, 'key': 'Items', 'new_value': {'Opaque': private_value},
+                'format_example': json.dumps({'Opaque': private_value})}]
+    assert module._parameter_projection(changes)[1]['format_example'] == '[REDACTED]'
+
+
+@pytest.mark.parametrize('same_reference', [False, True])
+def test_different_providers_are_not_merged_into_one_copyable_fragment(tmp_path, same_reference):
+    module = api()
+    analysis, artifact, manifest = inputs(tmp_path)
+    common = {'environment': 'Production', 'service': 'API', 'parameter_group': 'Cache',
+              'key': 'Cache:TTL', 'change': 'update'}
+    analysis.parameter_changes = [{**common, 'new_value': 60,
+        'configuration_provider': 'json', 'target_config': {'Cache': {'TTL': 60}},
+        'source_reference': {'base': None, 'target': {'path': 'appsettings.json', 'revision': 'target'}}},
+        {**common, 'new_value': '120', 'configuration_provider': 'environment',
+         'target_config': {'Cache': {'TTL': '120'}}, 'environment_variable': 'Cache__TTL',
+         'source_reference': {'base': None, 'target': {
+             'path': 'appsettings.json' if same_reference else '.env.production', 'revision': 'target'}}}]
+    module.render_release_documents(analysis, artifact, manifest, tmp_path / 'providers')
+    content = (tmp_path / 'providers/02_參數異動.md').read_text(encoding='utf-8')
+    blocks = [json.loads(block) for block in re.findall(r'```json\n(.*?)\n```', content, re.S)]
+    assert blocks[:-1] == [{'Cache': {'TTL': 60}}, {'Cache': {'TTL': '120'}}]
+    assert '邏輯設定 JSON' in content
 
 
 def test_injected_failure_without_recorded_expected_error_remains_pending(tmp_path):

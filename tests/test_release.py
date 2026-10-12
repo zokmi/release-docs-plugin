@@ -49,6 +49,10 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Missing'):
                 self.check.check_package(root, 'v0.1.0')
 
+    def test_parameter_discovery_modules_are_required_package_resources(self):
+        for module in ('parameter_discovery.py', 'deployment_parameters.py'):
+            self.assertIn('skills/release-docs/scripts/' + module, self.check.RESOURCES)
+
     def test_real_git_tag_must_resolve_on_main_and_match_checkout(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp:
             root = Path(temp)

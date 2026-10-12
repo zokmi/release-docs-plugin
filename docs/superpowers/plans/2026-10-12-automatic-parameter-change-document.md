@@ -120,6 +120,8 @@ Package resources/version and whitespace gates passed. Tag/remote-main publicati
 
 ## Self-review
 
+2026-10-12 獨立審查後另開修正回合；以上 Completion evidence 僅代表原先版本。新來源契約、provider 分組、遮罩、XML／部署成功與拒絕路徑的實測紀錄見 `docs/development-reviews/2026-10-12-parameter-review-remediation.md`。修正後完整回歸 1084 passed，0 failed／skipped，獨立複審所有 finding 已關閉；v0.1.35 版本調整後套件測試另 13 passed。使用者已要求合併與發布，仍須核對 release workflow 實際結果，不以本機測試代替遠端發布證據。
+
 - Spec coverage: discovery, applicability, blocking, redaction, JSON, no-change behavior, and regression tests are mapped to Tasks 1–4.
 - Step scan: each task has a failing-test step before implementation and an independently runnable verification command.
 - Type consistency: discovery result fields feed the existing analysis fields; renderer consumes the sanitized descriptor list without changing SQL artifact interfaces.

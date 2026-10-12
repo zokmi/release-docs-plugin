@@ -14,9 +14,7 @@ from render_release_documents import render_release_documents, _parameter_projec
 from run_local_validation import run_local_validation
 from derived_sources import verify_source
 from evidence_redaction import normalize_secrets
-from analyze_release_units import (_pinned_change_evidence, _parameter_changed_paths,
-                                   _deployment_variables, _tree_paths)
-from parameter_discovery import discover_parameter_changes
+from analyze_release_units import AnalysisResult, _analyze_parameters
 import json
 
 
@@ -101,85 +99,47 @@ def produce_release(repo, evidence, analysis, *, release_id, run_root, output_di
                                      capture_output=True, check=True).stdout
             if hashlib.sha256(raw).hexdigest() != unit.get('source_hash'):
                 raise ValueError('Source hash mismatch')
-        actual_changes, diff_hash = _pinned_change_evidence(repo, scope)
-        inventory = evidence.get('parameter_source_inventory', {})
-        if not isinstance(inventory, dict):
-            raise ValueError('Invalid parameter source inventory')
-        changed_config, changed_deployment = _parameter_changed_paths(actual_changes, inventory)
-        supplied = evidence.get('committed_changes')
-        if supplied is None:
-            if changed_config or changed_deployment:
-                raise ValueError('Missing committed change evidence')
-        else:
-            declared_config, declared_deployment = _parameter_changed_paths(supplied, inventory)
-            if changed_config - declared_config or changed_deployment - declared_deployment:
-                raise ValueError('Incomplete committed change evidence')
+        # Rebuild independently from Git and the declared inventories, including
+        # provider proof verification. Never derive expected coverage from caller descriptors.
+        discovered = AnalysisResult()
+        _analyze_parameters(discovered, repo, evidence)
+        if discovered.blocked or discovered.parameters_applicable != clean.parameters_applicable:
+            raise ValueError('Unresolved configuration discovery')
         checked = getattr(clean, 'checked_parameter_sources', [])
-        config_paths = changed_config | set(inventory)
-        trees = {role: _tree_paths(repo, scope[role + '_sha']) for role in ('base', 'target')}
-        if any(not isinstance(path, str) or not path.lower().endswith('.json')
-               or not any(path in tree for tree in trees.values()) for path in config_paths):
-            raise ValueError('Unresolved parameter source inventory')
-        expected_sources = {
-            (role, path, scope[role + '_sha'])
-            for role, tree in trees.items() for path in config_paths if path in tree}
-        expected_sources.update(
-            ('deployment', path, scope[role + '_sha'])
-            for role, tree in trees.items() for path in changed_deployment if path in tree)
-        # Legacy SQL-only analyses have no parameter evidence; pin their empty scan.
-        if not checked and not config_paths and not changed_deployment:
-            checked = [{'role': 'diff', 'base_revision': scope['base_sha'],
-                        'target_revision': scope['target_sha'], 'source_hash': diff_hash}]
+        # Legacy SQL-only analyses may omit only an otherwise empty pinned scan.
+        if not checked and all(source.get('role') == 'diff'
+                               for source in discovered.checked_parameter_sources):
+            checked = deepcopy(discovered.checked_parameter_sources)
             clean.checked_parameter_sources = checked
         if not isinstance(checked, list) or any(not isinstance(item, dict) for item in checked):
             raise ValueError('Invalid checked parameter sources')
-        actual_sources = [(item.get('role'), item.get('path'), item.get('revision'))
-                          for item in checked if item.get('role') != 'diff']
-        if (len(actual_sources) != len(set(actual_sources))
-                or set(actual_sources) != expected_sources
-                or sum(item.get('role') == 'diff' for item in checked) != 1):
+
+        def without_content(value):
+            if isinstance(value, dict):
+                return {key: without_content(child) for key, child in value.items()
+                        if key not in ('content', 'bytes', 'data')}
+            if isinstance(value, list):
+                return [without_content(child) for child in value]
+            return value
+
+        def source_signature(sources):
+            return sorted(json.dumps(without_content(item), sort_keys=True, ensure_ascii=True)
+                          for item in sources)
+
+        if source_signature(checked) != source_signature(discovered.checked_parameter_sources):
             raise ValueError('Incomplete or duplicate pinned parameter source coverage')
-        pinned_sources = {'base': [], 'target': []}
-        deployment_sources = {}
-        for source in checked:
-            path, revision, role = source.get('path'), source.get('revision'), source.get('role')
-            if role == 'diff':
-                if (source.get('base_revision') != scope['base_sha']
-                        or source.get('target_revision') != scope['target_sha']
-                        or source.get('source_hash') != diff_hash):
-                    raise ValueError('Pinned diff evidence mismatch')
-                continue
-            if (not isinstance(path, str) or not path or '\\' in path or ':' in path
-                    or Path(path).is_absolute() or '..' in Path(path).parts
-                    or role not in (*pinned_sources, 'deployment')
-                    or (role in pinned_sources and revision != scope[role + '_sha'])
-                    or (role == 'deployment' and revision not in (scope['base_sha'], scope['target_sha']))):
-                raise ValueError('Unpinned configuration source')
-            raw = subprocess.run(['git', '-C', str(repo), 'show', revision + ':' + path],
-                                 capture_output=True, check=True).stdout
-            if hashlib.sha256(raw).hexdigest() != source.get('source_hash'):
-                raise ValueError('Configuration source hash mismatch')
-            if role == 'deployment':
-                deployment_sources.setdefault(path, {}).update(_deployment_variables(raw))
-            else:
-                pinned_sources[role].append({**{key: value for key, value in source.items()
-                                                if key != 'role'}, 'content': raw})
-        if changed_deployment and any(not deployment_sources.get(path) for path in changed_deployment):
-            raise ValueError('Unresolved deployment source')
-        if checked:
-            discovered = discover_parameter_changes(
-                pinned_sources['base'], pinned_sources['target'],
-                deployment_sources=[{'path': path, 'environment_variables': variables}
-                                    for path, variables in sorted(deployment_sources.items())])
-            if discovered.findings or discovered.applicable != clean.parameters_applicable:
-                raise ValueError('Unresolved configuration discovery')
-            fields = ('environment', 'service', 'key', 'change', 'old_value', 'new_value',
-                      'target_config')
-            def signature(changes):
-                return sorted(json.dumps({key: item[key] for key in fields if key in item},
-                                         sort_keys=True, ensure_ascii=True) for item in changes)
-            if signature(discovered.changes) != signature(clean.parameter_changes):
-                raise ValueError('Incomplete or mismatched parameter descriptors')
+        fields = ('environment', 'service', 'key', 'change', 'old_value', 'new_value',
+                  'target_config', 'source_reference', 'key_segments',
+                  'configuration_provider', 'provider_precedence', 'environment_variable')
+
+        def signature(changes):
+            return sorted(json.dumps({key: without_content(item[key]) if key in
+                                      ('source_reference', 'provider_precedence') else item[key]
+                                      for key in fields if key in item},
+                                     sort_keys=True, ensure_ascii=True) for item in changes)
+
+        if signature(discovered.parameter_changes) != signature(clean.parameter_changes):
+            raise ValueError('Incomplete or mismatched parameter descriptors')
         clean.parameter_changes = _parameter_projection(clean.parameter_changes, secrets=secrets)
         if type(clean.parameters_applicable) is not bool or clean.parameters_applicable != bool(clean.parameter_changes):
             raise ValueError('Unknown or conflicting parameter applicability')
